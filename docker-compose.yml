@@ -1,0 +1,345 @@
+# ============================================================
+# Shared Airflow environment variables
+# ============================================================
+x-airflow-env: &airflow-env
+  AIRFLOW__CORE__EXECUTOR: LocalExecutor
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+  AIRFLOW__CORE__FERNET_KEY: ''
+  AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
+  AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+  AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+  AIRFLOW__LOG__LOG_RETENTION_DAYS: '7'
+  AIRFLOW__SCHEDULER__SCHEDULER_HEARTBEAT_SEC: '30'
+  AIRFLOW__SCHEDULER__SCHEDULER_HEALTH_CHECK_THRESHOLD: '120'
+  AIRFLOW__SCHEDULER__JOB_HEARTBEAT_SEC: '30'
+  AIRFLOW__SCHEDULER__LOCAL_TASK_JOB_HEARTBEAT_SEC: '30'
+
+# ============================================================
+# Oracle + MinIO environment variables (shared across services)
+# ============================================================
+x-oracle-minio-env: &oracle-minio-env
+  # Oracle connection — ORACLE_DSN is the EZConnect string used by the
+  # extract scripts (e.g. "oracle-db:1521/ORCL"). Set it explicitly in
+  # .env; the default is built from ORACLE_HOST/PORT/SERVICE below.
+  ORACLE_HOST: ${ORACLE_HOST:-oracle-db}
+  ORACLE_PORT: ${ORACLE_PORT:-1521}
+  ORACLE_SID: ${ORACLE_SID:-}
+  ORACLE_SERVICE: ${ORACLE_SERVICE:-}
+  ORACLE_DSN: ${ORACLE_DSN:-oracle-db:1521/ORCL}
+  ORACLE_USER: ${ORACLE_USER:-HOA}
+  ORACLE_PASSWORD: ${ORACLE_PASSWORD:-changeme}
+  ORACLE_SCHEMA: ${ORACLE_SCHEMA:-JNE}
+  ORACLE_PARALLEL_DEGREE: ${ORACLE_PARALLEL_DEGREE:-2}
+  # MinIO (S3-compatible bronze storage)
+  MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
+  MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+  MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+  MINIO_BUCKET: ${MINIO_BUCKET:-jne-bronze}
+
+x-airflow-volumes: &airflow-volumes
+  - ./airflow/dags:/opt/airflow/dags
+  - ./airflow/logs:/opt/airflow/logs
+  - ./airflow/plugins:/opt/airflow/plugins
+  - ./scripts:/opt/airflow/scripts
+
+services:
+  # ============================================================
+  # MinIO — S3-compatible bronze layer storage
+  # ============================================================
+  minio:
+    container_name: jne-minio
+    image: minio/minio:latest
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - jne-network
+
+  # ============================================================
+  # MinIO Init — creates the bronze bucket (one-shot)
+  # ============================================================
+  minio-init:
+    container_name: jne-minio-init
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-jne-bronze}
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 $$MINIO_ACCESS_KEY $$MINIO_SECRET_KEY &&
+        mc mb --ignore-existing local/$$MINIO_BUCKET &&
+        echo 'Bucket ready: '$$MINIO_BUCKET
+      "
+    restart: "no"
+    networks:
+      - jne-network
+
+  # ============================================================
+  # Bronze Extract — one-shot: Oracle tables → MinIO Parquet
+  # Hidden behind profile; run explicitly with:
+  #   docker compose --profile bronze up bronze-extract --build
+  # ============================================================
+  bronze-extract:
+    container_name: jne-bronze-extract
+    profiles: [bronze]
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *oracle-minio-env
+      BRONZE_WORKERS: ${BRONZE_WORKERS:-4}
+      BRONZE_CHUNKSIZE: ${BRONZE_CHUNKSIZE:-100000}
+    volumes:
+      - ./scripts:/opt/airflow/scripts
+    command: >-
+      python /opt/airflow/scripts/extract/extract_bronze.py
+        --config /opt/airflow/scripts/extract/tables.yaml
+        --workers ${BRONZE_WORKERS:-4}
+        --chunksize ${BRONZE_CHUNKSIZE:-100000}
+    restart: "no"
+    networks:
+      - jne-network
+
+  # ============================================================
+  # PostgreSQL — silver layer data store
+  # ============================================================
+  postgres:
+    container_name: jne-postgres
+    image: postgres:15-alpine
+    restart: unless-stopped
+    shm_size: 2g
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-jne_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jne_secure_password_2024}
+      POSTGRES_DB: ${POSTGRES_DB:-jne_dashboard}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db:/docker-entrypoint-initdb.d:ro
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=1GB"
+      - "-c"
+      - "work_mem=64MB"
+      - "-c"
+      - "maintenance_work_mem=512MB"
+      - "-c"
+      - "effective_cache_size=4GB"
+      - "-c"
+      - "max_parallel_workers_per_gather=4"
+      - "-c"
+      - "max_parallel_workers=8"
+      - "-c"
+      - "max_parallel_maintenance_workers=4"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "jit=off"
+      - "-c"
+      - "wal_compression=on"
+      - "-c"
+      - "max_wal_size=1GB"
+      - "-c"
+      - "temp_file_limit=4GB"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jne_user} -d ${POSTGRES_DB:-jne_dashboard}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jne-network
+
+  # ============================================================
+  # Zookeeper + Kafka
+  # ============================================================
+  zookeeper:
+    container_name: jne-zookeeper
+    image: confluentinc/cp-zookeeper:7.5.0
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - jne-network
+
+  kafka:
+    container_name: jne-kafka
+    image: confluentinc/cp-kafka:7.5.0
+    restart: unless-stopped
+    depends_on:
+      - zookeeper
+    ports:
+      - "${KAFKA_PORT:-9092}:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://jne-kafka:29092,PLAINTEXT_HOST://localhost:${KAFKA_PORT:-9092}
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    networks:
+      - jne-network
+
+  # ============================================================
+  # Airflow metadata DB
+  # ============================================================
+  airflow-postgres:
+    container_name: jne-airflow-postgres
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jne-network
+
+  # ============================================================
+  # Airflow Init (one-shot: db migrate + create admin user)
+  # ============================================================
+  airflow-init:
+    container_name: jne-airflow-init
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+    environment:
+      <<: *airflow-env
+      _AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:-admin}
+      _AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-admin}
+    volumes: *airflow-volumes
+    command: bash -c "airflow db migrate && airflow users create --username $$_AIRFLOW_ADMIN_USER --password $$_AIRFLOW_ADMIN_PASSWORD --firstname Admin --lastname User --role Admin --email admin@jne.local || true"
+    restart: "no"
+    networks:
+      - jne-network
+
+  # ============================================================
+  # Airflow Webserver
+  # ============================================================
+  airflow-webserver:
+    container_name: jne-airflow-webserver
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: [*airflow-env, *oracle-minio-env]
+      AIRFLOW__WEBSERVER__RBAC: "True"
+      POSTGRES_USER: ${POSTGRES_USER:-jne_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jne_secure_password_2024}
+      POSTGRES_DB: ${POSTGRES_DB:-jne_dashboard}
+      DB_HOST: jne-postgres
+      DB_PORT: "5432"
+    volumes: *airflow-volumes
+    ports:
+      - "${AIRFLOW_PORT:-8080}:8080"
+    command: webserver
+    networks:
+      - jne-network
+
+  # ============================================================
+  # Airflow Scheduler
+  # ============================================================
+  airflow-scheduler:
+    container_name: jne-airflow-scheduler
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+    environment:
+      <<: [*airflow-env, *oracle-minio-env]
+      POSTGRES_USER: ${POSTGRES_USER:-jne_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jne_secure_password_2024}
+      POSTGRES_DB: ${POSTGRES_DB:-jne_dashboard}
+      DB_HOST: jne-postgres
+      DB_PORT: "5432"
+    volumes: *airflow-volumes
+    command: scheduler
+    networks:
+      - jne-network
+
+  # ============================================================
+  # pgAdmin
+  # ============================================================
+  pgadmin:
+    container_name: jne-pgadmin
+    image: dpage/pgadmin4:latest
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@admin.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin123}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - jne-network
+
+volumes:
+  minio_data:
+    name: jne-v2-minio-data
+  postgres_data:
+    name: jne-v2-postgres-data
+  pgadmin_data:
+    name: jne-v2-pgadmin-data
+  airflow_postgres_data:
+    name: jne-v2-airflow-postgres-data
+
+networks:
+  jne-network:
+    name: jne-v2-pipeline-network
+    driver: bridge

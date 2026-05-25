@@ -1,0 +1,17 @@
+FROM apache/airflow:2.8.0-python3.11
+
+USER airflow
+
+# Core pipeline dependencies
+RUN pip install --no-cache-dir \
+    kafka-python \
+    pandas \
+    sqlalchemy \
+    psycopg2-binary \
+    openpyxl \
+    pyarrow \
+    boto3 \
+    pyyaml
+
+# Oracle driver — thin mode, no Instant Client required
+RUN pip install --no-cache-dir oracledb

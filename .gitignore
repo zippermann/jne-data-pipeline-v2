@@ -1,0 +1,25 @@
+# Credentials — never commit
+.env
+
+# Data files — may contain PII
+data/
+*.csv
+*.parquet
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Airflow logs and run artifacts
+airflow/logs/
+airflow/plugins/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
