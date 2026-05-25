@@ -20,9 +20,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
 import boto3
+import oracledb
 import pandas as pd
 import yaml
-from sqlalchemy import create_engine, text
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,17 +36,26 @@ log = logging.getLogger(__name__)
 # Connection helpers
 # ---------------------------------------------------------------------------
 
-def _oracle_engine():
-    """Build a SQLAlchemy engine for Oracle using oracledb in thin mode."""
-    return create_engine(
-        "oracle+oracledb://",
-        connect_args={
-            "user": os.environ["ORACLE_USER"],
-            "password": os.environ["ORACLE_PASSWORD"],
-            "dsn": os.environ["ORACLE_DSN"],
-        },
-        pool_pre_ping=True,
+def _oracle_conn() -> oracledb.Connection:
+    """Open an oracledb thin-mode connection (no Instant Client required)."""
+    return oracledb.connect(
+        user=os.environ["ORACLE_USER"],
+        password=os.environ["ORACLE_PASSWORD"],
+        dsn=os.environ["ORACLE_DSN"],
     )
+
+
+def _fetch_chunks(conn: oracledb.Connection, query: str, chunksize: int):
+    """Yield DataFrames of up to chunksize rows. Columns are lowercased."""
+    cursor = conn.cursor()
+    cursor.execute(query)
+    columns = [col[0].lower() for col in cursor.description]
+    while True:
+        rows = cursor.fetchmany(chunksize)
+        if not rows:
+            break
+        yield pd.DataFrame(rows, columns=columns)
+    cursor.close()
 
 
 def _s3_client():
@@ -94,24 +103,19 @@ def extract_one(
         query += f" ORDER BY {pk}"
 
     try:
-        engine = _oracle_engine()
+        conn = _oracle_conn()
         s3 = _s3_client()
         part = 0
         total = 0
 
-        with engine.connect() as conn:
-            result = pd.read_sql(text(query), conn, chunksize=chunksize)
+        for chunk in _fetch_chunks(conn, query, chunksize):
+            key = f"bronze/{out}/part-{part:04d}.parquet"
+            _upload_df(s3, bucket, key, chunk)
+            total += len(chunk)
+            part += 1
+            log.debug(f"  {out}: wrote part {part:04d} ({len(chunk):,} rows)")
 
-            # pd.read_sql returns a generator when chunksize is set, but guard
-            # against versions that return a plain DataFrame.
-            chunks = [result] if isinstance(result, pd.DataFrame) else result
-
-            for chunk in chunks:
-                key = f"bronze/{out}/part-{part:04d}.parquet"
-                _upload_df(s3, bucket, key, chunk)
-                total += len(chunk)
-                part += 1
-                log.debug(f"  {out}: wrote part {part:04d} ({len(chunk):,} rows)")
+        conn.close()
 
         if part == 0:
             log.warning(f"{out}: table is empty — no parts written")

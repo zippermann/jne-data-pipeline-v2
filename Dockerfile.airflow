@@ -4,9 +4,7 @@ USER airflow
 
 # Core pipeline dependencies
 RUN pip install --no-cache-dir \
-    kafka-python \
     pandas \
-    sqlalchemy \
     psycopg2-binary \
     openpyxl \
     pyarrow \
