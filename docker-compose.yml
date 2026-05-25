@@ -18,9 +18,7 @@ x-airflow-env: &airflow-env
 # Oracle + MinIO environment variables (shared across services)
 # ============================================================
 x-oracle-minio-env: &oracle-minio-env
-  # Oracle connection — ORACLE_DSN is the EZConnect string used by the
-  # extract scripts (e.g. "oracle-db:1521/ORCL"). Set it explicitly in
-  # .env; the default is built from ORACLE_HOST/PORT/SERVICE below.
+  # Oracle — SID takes precedence over SERVICE, matching v1 pipeline_config.py
   ORACLE_HOST: ${ORACLE_HOST:-oracle-db}
   ORACLE_PORT: ${ORACLE_PORT:-1521}
   ORACLE_SID: ${ORACLE_SID:-}
@@ -29,11 +27,18 @@ x-oracle-minio-env: &oracle-minio-env
   ORACLE_PASSWORD: ${ORACLE_PASSWORD:-changeme}
   ORACLE_SCHEMA: ${ORACLE_SCHEMA:-JNE}
   ORACLE_PARALLEL_DEGREE: ${ORACLE_PARALLEL_DEGREE:-2}
+  # Extraction window
+  EXTRACTION_WINDOW_MONTHS: ${EXTRACTION_WINDOW_MONTHS:-3}
+  EXTRACTION_WINDOW_DAYS: ${EXTRACTION_WINDOW_DAYS:-}
+  INCREMENTAL_OVERLAP_DAYS: ${INCREMENTAL_OVERLAP_DAYS:-1}
   # MinIO (S3-compatible bronze storage)
   MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
   MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
   MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
   MINIO_BUCKET: ${MINIO_BUCKET:-jne-bronze}
+  MINIO_SECURE: ${MINIO_SECURE:-false}
+  # Audit
+  AUDIT_RETENTION_MONTHS: ${AUDIT_RETENTION_MONTHS:-6}
 
 x-airflow-volumes: &airflow-volumes
   - ./airflow/dags:/opt/airflow/dags

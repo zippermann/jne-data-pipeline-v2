@@ -39,13 +39,26 @@ log = logging.getLogger(__name__)
 def _oracle_conn() -> oracledb.Connection:
     """Open an oracledb thin-mode connection (no Instant Client required).
 
-    ORACLE_DSN takes precedence. If unset, it is built from ORACLE_HOST,
-    ORACLE_PORT, and ORACLE_SERVICE — matching v1 pipeline behaviour.
+    DSN resolution order (mirrors v1 pipeline_config.py):
+      1. ORACLE_DSN if explicitly set
+      2. SID-format if ORACLE_SID is set
+      3. EZConnect host:port/service otherwise
     """
-    dsn = os.environ.get("ORACLE_DSN") or (
-        f"{os.environ['ORACLE_HOST']}:{os.environ.get('ORACLE_PORT', '1521')}"
-        f"/{os.environ['ORACLE_SERVICE']}"
-    )
+    host = os.environ["ORACLE_HOST"]
+    port = os.environ.get("ORACLE_PORT", "1521")
+    sid = os.environ.get("ORACLE_SID", "").strip()
+    service = os.environ.get("ORACLE_SERVICE", "").strip()
+
+    if os.environ.get("ORACLE_DSN", "").strip():
+        dsn = os.environ["ORACLE_DSN"].strip()
+    elif sid:
+        dsn = (
+            f"(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST={host})(PORT={port}))"
+            f"(CONNECT_DATA=(SID={sid})))"
+        )
+    else:
+        dsn = f"{host}:{port}/{service}"
+
     return oracledb.connect(
         user=os.environ["ORACLE_USER"],
         password=os.environ["ORACLE_PASSWORD"],
