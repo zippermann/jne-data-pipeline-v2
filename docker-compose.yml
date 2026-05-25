@@ -47,7 +47,7 @@ services:
   # MinIO — S3-compatible bronze layer storage
   # ============================================================
   minio:
-    container_name: jne-minio
+    container_name: jne-v2-minio
     image: minio/minio:latest
     restart: unless-stopped
     environment:
@@ -71,7 +71,7 @@ services:
   # MinIO Init — creates the bronze bucket (one-shot)
   # ============================================================
   minio-init:
-    container_name: jne-minio-init
+    container_name: jne-v2-minio-init
     image: minio/mc:latest
     depends_on:
       minio:
@@ -96,7 +96,7 @@ services:
   #   docker compose --profile bronze up bronze-extract --build
   # ============================================================
   bronze-extract:
-    container_name: jne-bronze-extract
+    container_name: jne-v2-bronze-extract
     profiles: [bronze]
     build:
       context: .
@@ -123,7 +123,7 @@ services:
   # PostgreSQL — silver layer data store
   # ============================================================
   postgres:
-    container_name: jne-postgres
+    container_name: jne-v2-postgres
     image: postgres:15-alpine
     restart: unless-stopped
     shm_size: 2g
@@ -132,7 +132,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jne_secure_password_2024}
       POSTGRES_DB: ${POSTGRES_DB:-jne_dashboard}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init-db:/docker-entrypoint-initdb.d:ro
@@ -173,43 +173,10 @@ services:
       - jne-network
 
   # ============================================================
-  # Zookeeper + Kafka
-  # ============================================================
-  zookeeper:
-    container_name: jne-zookeeper
-    image: confluentinc/cp-zookeeper:7.5.0
-    restart: unless-stopped
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    networks:
-      - jne-network
-
-  kafka:
-    container_name: jne-kafka
-    image: confluentinc/cp-kafka:7.5.0
-    restart: unless-stopped
-    depends_on:
-      - zookeeper
-    ports:
-      - "${KAFKA_PORT:-9092}:9092"
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://jne-kafka:29092,PLAINTEXT_HOST://localhost:${KAFKA_PORT:-9092}
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
-    networks:
-      - jne-network
-
-  # ============================================================
   # Airflow metadata DB
   # ============================================================
   airflow-postgres:
-    container_name: jne-airflow-postgres
+    container_name: jne-v2-airflow-postgres
     image: postgres:15-alpine
     restart: unless-stopped
     environment:
@@ -230,7 +197,7 @@ services:
   # Airflow Init (one-shot: db migrate + create admin user)
   # ============================================================
   airflow-init:
-    container_name: jne-airflow-init
+    container_name: jne-v2-airflow-init
     build:
       context: .
       dockerfile: Dockerfile.airflow
@@ -251,7 +218,7 @@ services:
   # Airflow Webserver
   # ============================================================
   airflow-webserver:
-    container_name: jne-airflow-webserver
+    container_name: jne-v2-airflow-webserver
     build:
       context: .
       dockerfile: Dockerfile.airflow
@@ -267,11 +234,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-jne_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jne_secure_password_2024}
       POSTGRES_DB: ${POSTGRES_DB:-jne_dashboard}
-      DB_HOST: jne-postgres
+      DB_HOST: postgres
       DB_PORT: "5432"
     volumes: *airflow-volumes
     ports:
-      - "${AIRFLOW_PORT:-8080}:8080"
+      - "${AIRFLOW_PORT:-8081}:8080"
     command: webserver
     networks:
       - jne-network
@@ -280,7 +247,7 @@ services:
   # Airflow Scheduler
   # ============================================================
   airflow-scheduler:
-    container_name: jne-airflow-scheduler
+    container_name: jne-v2-airflow-scheduler
     build:
       context: .
       dockerfile: Dockerfile.airflow
@@ -301,7 +268,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-jne_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jne_secure_password_2024}
       POSTGRES_DB: ${POSTGRES_DB:-jne_dashboard}
-      DB_HOST: jne-postgres
+      DB_HOST: postgres
       DB_PORT: "5432"
     volumes: *airflow-volumes
     command: scheduler
@@ -312,7 +279,7 @@ services:
   # pgAdmin
   # ============================================================
   pgadmin:
-    container_name: jne-pgadmin
+    container_name: jne-v2-pgadmin
     image: dpage/pgadmin4:latest
     restart: unless-stopped
     environment:
@@ -320,7 +287,7 @@ services:
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin123}
       PGADMIN_CONFIG_SERVER_MODE: 'False'
     ports:
-      - "${PGADMIN_PORT:-5050}:80"
+      - "${PGADMIN_PORT:-5051}:80"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
     depends_on:
