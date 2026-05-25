@@ -37,11 +37,19 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _oracle_conn() -> oracledb.Connection:
-    """Open an oracledb thin-mode connection (no Instant Client required)."""
+    """Open an oracledb thin-mode connection (no Instant Client required).
+
+    ORACLE_DSN takes precedence. If unset, it is built from ORACLE_HOST,
+    ORACLE_PORT, and ORACLE_SERVICE — matching v1 pipeline behaviour.
+    """
+    dsn = os.environ.get("ORACLE_DSN") or (
+        f"{os.environ['ORACLE_HOST']}:{os.environ.get('ORACLE_PORT', '1521')}"
+        f"/{os.environ['ORACLE_SERVICE']}"
+    )
     return oracledb.connect(
         user=os.environ["ORACLE_USER"],
         password=os.environ["ORACLE_PASSWORD"],
-        dsn=os.environ["ORACLE_DSN"],
+        dsn=dsn,
     )
 
 
