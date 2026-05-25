@@ -9,10 +9,19 @@ x-airflow-env: &airflow-env
   AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
   AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
   AIRFLOW__LOG__LOG_RETENTION_DAYS: '7'
+  # -- Scheduler heartbeat --
   AIRFLOW__SCHEDULER__SCHEDULER_HEARTBEAT_SEC: '30'
-  AIRFLOW__SCHEDULER__SCHEDULER_HEALTH_CHECK_THRESHOLD: '120'
-  AIRFLOW__SCHEDULER__JOB_HEARTBEAT_SEC: '30'
-  AIRFLOW__SCHEDULER__LOCAL_TASK_JOB_HEARTBEAT_SEC: '30'
+  AIRFLOW__SCHEDULER__JOB_HEARTBEAT_SEC: '60'
+  AIRFLOW__SCHEDULER__LOCAL_TASK_JOB_HEARTBEAT_SEC: '60'
+  # Allow up to 10 min of missed heartbeats before killing a task.
+  # Prevents transient Docker DNS blips from aborting multi-hour extracts.
+  AIRFLOW__SCHEDULER__SCHEDULER_HEALTH_CHECK_THRESHOLD: '600'
+  # -- DB connection resilience --
+  # Recycle connections after 30 min and pre-ping before use so a brief
+  # network hiccup doesn't permanently break the metadata DB connection.
+  AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_RECYCLE: '1800'
+  AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_PRE_PING: 'True'
+  AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_SIZE: '5'
 
 # ============================================================
 # Oracle + MinIO environment variables (shared across services)

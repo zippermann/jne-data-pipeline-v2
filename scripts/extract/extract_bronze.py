@@ -120,7 +120,9 @@ def extract_one(
     oracle_table = entry["oracle"]
     pk = entry.get("pk") or None
 
-    query = f"SELECT * FROM {oracle_table}"
+    schema = os.environ.get("ORACLE_SCHEMA", "").strip()
+    qualified = f"{schema}.{oracle_table}" if schema else oracle_table
+    query = f"SELECT * FROM {qualified}"
     if pk:
         query += f" ORDER BY {pk}"
 

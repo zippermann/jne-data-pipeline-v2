@@ -26,13 +26,13 @@ tables:
     out: drcnote
     pk: DRCNOTE_NO
 
-  # --- Letter E: CMS_MHIHOC (flat prefix: mhi_) ---
-  - oracle: CMS_MHIHOC
+  # --- Letter E: CMS_MHI_HOC (flat prefix: mhi_) ---
+  - oracle: CMS_MHI_HOC
     out: mhihoc
     pk: MHI_HOC_NO
 
-  # --- Letter F: CMS_DHIHOC (flat prefix: dhi_) ---
-  - oracle: CMS_DHIHOC
+  # --- Letter F: CMS_DHI_HOC (flat prefix: dhi_) ---
+  - oracle: CMS_DHI_HOC
     out: dhihoc
     pk: DHI_NO
 
