@@ -1,6 +1,9 @@
 # Credentials — never commit
 .env
 
+# Markdown context/handoff docs
+*.md
+
 # Data files — may contain PII
 data/
 *.csv
