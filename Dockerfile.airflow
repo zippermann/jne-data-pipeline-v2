@@ -9,7 +9,8 @@ RUN pip install --no-cache-dir \
     openpyxl \
     pyarrow \
     boto3 \
-    pyyaml
+    pyyaml \
+    tqdm
 
 # Oracle driver — thin mode, no Instant Client required
 RUN pip install --no-cache-dir oracledb

@@ -23,6 +23,7 @@ import boto3
 import oracledb
 import pandas as pd
 import yaml
+from tqdm import tqdm
 
 logging.basicConfig(
     level=logging.INFO,
@@ -129,26 +130,35 @@ def extract_one(
         part = 0
         total = 0
 
+        row_bar = tqdm(
+            unit=" rows",
+            desc=f"  {out:<28}",
+            ascii=True,
+            dynamic_ncols=False,
+            ncols=88,
+            leave=False,
+        )
         for chunk in _fetch_chunks(conn, query, chunksize):
             key = f"bronze/{out}/part-{part:04d}.parquet"
             _upload_df(s3, bucket, key, chunk)
             total += len(chunk)
             part += 1
-            log.debug(f"  {out}: wrote part {part:04d} ({len(chunk):,} rows)")
+            row_bar.update(len(chunk))
+        row_bar.close()
 
         conn.close()
 
         if part == 0:
-            log.warning(f"{out}: table is empty — no parts written")
+            tqdm.write(f"  [WARN]  {out}: table is empty — no parts written")
         else:
-            log.info(
-                f"{out}: {total:,} rows → s3://{bucket}/bronze/{out}/ ({part} part{'s' if part > 1 else ''})"
+            tqdm.write(
+                f"  [OK]    {out}: {total:,} rows → bronze/{out}/ ({part} part{'s' if part > 1 else ''})"
             )
 
         return out, total, None
 
     except Exception as exc:
-        log.error(f"{out}: FAILED — {exc}")
+        tqdm.write(f"  [ERROR] {out}: FAILED — {exc}")
         return out, -1, str(exc)
 
 
@@ -208,13 +218,26 @@ def main() -> int:
     # Parallel extract — one thread per table, chunks within a table are serial
     results: list[tuple[str, int, Optional[str]]] = []
 
+    table_bar = tqdm(
+        total=len(tables),
+        desc="Tables",
+        unit=" table",
+        ascii=True,
+        dynamic_ncols=False,
+        ncols=88,
+    )
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = {
             pool.submit(extract_one, entry, args.chunksize, bucket): entry["out"]
             for entry in tables
         }
         for fut in as_completed(futures):
-            results.append(fut.result())
+            result = fut.result()
+            results.append(result)
+            out, rows, err = result
+            table_bar.set_postfix_str(f"last: {out}")
+            table_bar.update(1)
+    table_bar.close()
 
     # Summary
     results.sort(key=lambda r: r[0])
