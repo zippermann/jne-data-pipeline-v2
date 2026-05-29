@@ -1,0 +1,58 @@
+oracle:
+  host: "${ORACLE_HOST}"
+  port: "${ORACLE_PORT:-1521}"
+  sid: "${ORACLE_SID}"
+  service_name: "${ORACLE_SERVICE}"
+  user: "${ORACLE_USER}"
+  password: "${ORACLE_PASSWORD}"
+  source_schema: "${ORACLE_SCHEMA}"
+  fetch_arraysize: 50000
+
+extraction:
+  anchor_table: "CMS_CNOTE"
+  anchor_date_column: "CNOTE_DATE"
+  window:
+    mode: "relative"
+    anchor_month: "2026-03"
+    num_months: 1
+    start_date: "2026-03-01"
+    end_date: "2026-04-01"
+
+output:
+  root: "data/bronze"
+  compression: "zstd"
+  zstd_level: 9
+  rows_per_file: 250000
+  write_run_manifest: true
+
+minio:
+  enabled: true
+  endpoint: "${MINIO_ENDPOINT:-localhost:9000}"
+  access_key: "${MINIO_ACCESS_KEY:-minioadmin}"
+  secret_key: "${MINIO_SECRET_KEY:-minioadmin123}"
+  bucket: "${MINIO_BUCKET:-jne-bronze}"
+  secure: "${MINIO_SECURE:-false}"
+  prefix: "bronze/jne"
+
+scoping:
+  push_down: true
+  materialize_run_scope: true
+  scope_schema: "HOA"
+  scope_table_prefix: "BRONZE_SCOPE_"
+  reference_tables_mode: "full"
+
+columns:
+  mode: "all"
+  pii_exclude_file: "config/pii_exclude.yaml"
+
+postgres:
+  enabled: true
+  host: "${POSTGRES_HOST:-localhost}"
+  port: "${POSTGRES_PORT:-5433}"
+  database: "${POSTGRES_DB:-jne_pipeline_v2}"
+  user: "${POSTGRES_USER:-jne_user}"
+  password: "${POSTGRES_PASSWORD:-jne_secure_password_2024}"
+  bronze_schema: "bronze"
+  governance_schema: "governance"
+  audit_schema: "audit"
+  load_batch_rows: 50000

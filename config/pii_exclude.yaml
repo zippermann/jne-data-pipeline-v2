@@ -1,0 +1,9 @@
+# Optional PII exclusions. Keep columns grouped by Oracle table name.
+# The first bronze extraction should normally run with columns.mode: all.
+CMS_CNOTE: []
+CMS_APICUST: []
+CMS_CNOTE_POD: []
+CMS_DRSHEET: []
+ORA_USER: []
+ORA_ZONE: []
+LASTMILE_COURIER: []

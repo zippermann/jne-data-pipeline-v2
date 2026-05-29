@@ -22,7 +22,7 @@ x-airflow-env: &airflow-env
   AIRFLOW__SCHEDULER__LOCAL_TASK_JOB_HEARTBEAT_SEC: '30'
 
 # Oracle env vars shared across Airflow services
-x-oracle-minio-env: &oracle-minio-env
+x-oracle-env: &oracle-env
   ORACLE_HOST: ${ORACLE_HOST:-oracle-db}
   ORACLE_PORT: ${ORACLE_PORT:-1521}
   ORACLE_SID: ${ORACLE_SID:-}
@@ -30,79 +30,48 @@ x-oracle-minio-env: &oracle-minio-env
   ORACLE_USER: ${ORACLE_USER:-HOA}
   ORACLE_PASSWORD: ${ORACLE_PASSWORD:-changeme}
   ORACLE_SCHEMA: ${ORACLE_SCHEMA:-JNE}
-  EXTRACTION_WINDOW_MONTHS: ${EXTRACTION_WINDOW_MONTHS:-3}
-  EXTRACTION_WINDOW_DAYS: ${EXTRACTION_WINDOW_DAYS:-}
-  INCREMENTAL_OVERLAP_DAYS: ${INCREMENTAL_OVERLAP_DAYS:-1}
-  ORACLE_PARALLEL_DEGREE: ${ORACLE_PARALLEL_DEGREE:-2}
-  SCRATCH_PARALLEL_WORKERS: ${SCRATCH_PARALLEL_WORKERS:-2}
+  BRONZE_WORKERS: ${BRONZE_WORKERS:-4}
+
+x-postgres-env: &postgres-env
+  POSTGRES_HOST: jne-postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: ${POSTGRES_USER:-jne_user}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jne_secure_password_2024}
+  POSTGRES_DB: ${POSTGRES_DB:-jne_pipeline_v2}
+
+x-minio-env: &minio-env
+  MINIO_ENDPOINT: minio:9000
+  MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+  MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin123}
+  MINIO_BUCKET: ${MINIO_BUCKET:-jne-bronze}
+  MINIO_SECURE: "false"
 
 x-airflow-volumes: &airflow-volumes
+  - .:/opt/airflow/project
   - ./airflow/dags:/opt/airflow/dags
   - ./airflow/logs:/opt/airflow/logs
   - ./airflow/plugins:/opt/airflow/plugins
-  - ./scripts:/opt/airflow/scripts
   - ./data:/opt/airflow/data
-  - ./pipeline_config.py:/opt/airflow/pipeline_config.py:ro
 
 services:
   # ============================================================
-  # PostgreSQL Database (data)
+  # MinIO Object Storage (bronze data lake)
   # ============================================================
-  postgres:
-    container_name: jne-postgres
-    image: postgres:15-alpine
+  minio:
+    container_name: jne-minio
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     restart: unless-stopped
-    shm_size: 2g
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-jne_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jne_secure_password_2024}
-      POSTGRES_DB: ${POSTGRES_DB:-jne_dashboard}
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin123}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init-db:/docker-entrypoint-initdb.d:ro
-    command:
-      - "postgres"
-      # -- Memory --
-      - "-c"
-      - "shared_buffers=1GB"
-      - "-c"
-      - "work_mem=64MB"
-      - "-c"
-      - "maintenance_work_mem=512MB"
-      - "-c"
-      - "effective_cache_size=4GB"
-      # -- Parallelism --
-      - "-c"
-      - "max_parallel_workers_per_gather=4"
-      - "-c"
-      - "max_parallel_workers=8"
-      - "-c"
-      - "max_parallel_maintenance_workers=4"
-      # -- Planner --
-      - "-c"
-      - "random_page_cost=1.1"
-      - "-c"
-      - "effective_io_concurrency=200"
-      - "-c"
-      - "jit=off"
-      # -- Storage safeguards --
-      # Compress WAL records to cut WAL volume during heavy CREATE TABLE AS SELECT.
-      - "-c"
-      - "wal_compression=on"
-      # Cap WAL accumulation.  Default is 1 GB; stated explicitly so it is
-      # visible and doesn't silently grow if autovacuum falls behind.
-      - "-c"
-      - "max_wal_size=1GB"
-      # Hard limit on temp files per backend.  Prevents runaway sort / hash
-      # spills from filling the volume when work_mem is exceeded.
-      # 4 GB is enough headroom for the 37-CTE unification while still
-      # catching any runaway query before it exhausts the disk.
-      - "-c"
-      - "temp_file_limit=4GB"
+      - minio_data:/data
+    command: server /data --console-address ":9001"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jne_user} -d ${POSTGRES_DB:-jne_dashboard}"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -110,38 +79,39 @@ services:
       - jne-network
 
   # ============================================================
-  # Zookeeper (required for Kafka)
+  # PostgreSQL Database (bronze landing + future governance)
   # ============================================================
-  zookeeper:
-    container_name: jne-zookeeper
-    image: confluentinc/cp-zookeeper:7.5.0
+  postgres:
+    container_name: jne-postgres
+    image: postgres:15-alpine
     restart: unless-stopped
+    shm_size: 1g
     environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    networks:
-      - jne-network
-
-  # ============================================================
-  # Kafka Broker
-  # ============================================================
-  kafka:
-    container_name: jne-kafka
-    image: confluentinc/cp-kafka:7.5.0
-    restart: unless-stopped
-    depends_on:
-      - zookeeper
+      POSTGRES_USER: ${POSTGRES_USER:-jne_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jne_secure_password_2024}
+      POSTGRES_DB: ${POSTGRES_DB:-jne_pipeline_v2}
     ports:
-      - "${KAFKA_PORT:-9092}:9092"
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://jne-kafka:29092,PLAINTEXT_HOST://localhost:${KAFKA_PORT:-9092}
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=512MB"
+      - "-c"
+      - "work_mem=32MB"
+      - "-c"
+      - "maintenance_work_mem=256MB"
+      - "-c"
+      - "effective_cache_size=2GB"
+      - "-c"
+      - "wal_compression=on"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jne_user} -d ${POSTGRES_DB:-jne_pipeline_v2}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - jne-network
 
@@ -177,6 +147,10 @@ services:
     depends_on:
       airflow-postgres:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     environment:
       <<: *airflow-env
       _AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:-admin}
@@ -188,7 +162,7 @@ services:
       - jne-network
 
   # ============================================================
-  # Data Init (one-shot: unify -> load -> DQ)
+  # Data Init (one-shot: bronze extract)
   # Hidden behind profile — not started by 'docker compose up'.
   # Run explicitly with:
   #   docker compose --profile init up data-init
@@ -200,36 +174,17 @@ services:
       context: .
       dockerfile: Dockerfile.airflow
     depends_on:
+      airflow-postgres:
+        condition: service_healthy
       postgres:
         condition: service_healthy
+      minio:
+        condition: service_healthy
     environment:
-      <<: *oracle-minio-env
-      POSTGRES_USER: ${POSTGRES_USER:-jne_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jne_secure_password_2024}
-      POSTGRES_DB: ${POSTGRES_DB:-jne_dashboard}
-      DB_HOST: jne-postgres
-      DB_PORT: "5432"
-      LOAD_BATCH_MAX_ROWS: "10000"
-      DQ_THRESHOLD: ${DQ_THRESHOLD:-85.0}
-      DQ_BATCH_SIZE: ${DQ_BATCH_SIZE:-2000}
-      DQ_RUN_ID: ${DQ_RUN_ID:-}
+      <<: [*oracle-env, *postgres-env, *minio-env]
     volumes: *airflow-volumes
     command: >-
-      bash -c "
-        python /opt/airflow/scripts/etl/unify_oracle.py --force-full &&
-        python /opt/airflow/scripts/etl/copy_to_postgres.py --force-full &&
-        python /opt/airflow/scripts/governance/main.py \
-          --from-postgres \
-          --save-to-postgres \
-          --skip-csv-output \
-          --skip-inline-output \
-          --compact-summary \
-          --resumable \
-          --resume \
-          --run-id \"$${DQ_RUN_ID:-dq_init_$$(date -u +%Y%m%dT%H%M%S)}\" \
-          --batch-size $${DQ_BATCH_SIZE} \
-          --threshold $${DQ_THRESHOLD}
-      "
+      bash -c "cd /opt/airflow/project && python -m src.bronze --config config/config.yaml --run-id bronze_init_$$(date -u +%Y%m%dT%H%M%S)"
     restart: "no"
     networks:
       - jne-network
@@ -248,14 +203,11 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      minio:
+        condition: service_healthy
     environment:
-      <<: [*airflow-env, *oracle-minio-env]
+      <<: [*airflow-env, *oracle-env, *postgres-env, *minio-env]
       AIRFLOW__WEBSERVER__RBAC: "True"
-      POSTGRES_USER: ${POSTGRES_USER:-jne_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jne_secure_password_2024}
-      POSTGRES_DB: ${POSTGRES_DB:-jne_dashboard}
-      DB_HOST: jne-postgres
-      DB_PORT: "5432"
     volumes: *airflow-volumes
     ports:
       - "${AIRFLOW_PORT:-8080}:8080"
@@ -275,6 +227,10 @@ services:
     depends_on:
       airflow-init:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -284,44 +240,18 @@ services:
           cpus: '2'
           memory: 4G
     environment:
-      <<: [*airflow-env, *oracle-minio-env]
-      POSTGRES_USER: ${POSTGRES_USER:-jne_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jne_secure_password_2024}
-      POSTGRES_DB: ${POSTGRES_DB:-jne_dashboard}
-      DB_HOST: jne-postgres
-      DB_PORT: "5432"
+      <<: [*airflow-env, *oracle-env, *postgres-env, *minio-env]
     volumes: *airflow-volumes
     command: scheduler
     networks:
       - jne-network
 
-  # ============================================================
-  # pgAdmin - Web-based PostgreSQL management
-  # ============================================================
-  pgadmin:
-    container_name: jne-pgadmin
-    image: dpage/pgadmin4:latest
-    restart: unless-stopped
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@admin.com}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin123}
-      PGADMIN_CONFIG_SERVER_MODE: 'False'
-    ports:
-      - "${PGADMIN_PORT:-5050}:80"
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - jne-network
-
 # Persistent storage volumes
 volumes:
+  minio_data:
+    name: jne-minio-data
   postgres_data:
     name: jne-postgres-data
-  pgadmin_data:
-    name: jne-pgadmin-data
   airflow_postgres_data:
 
 # Docker network for service communication

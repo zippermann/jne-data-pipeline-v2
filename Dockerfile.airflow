@@ -3,15 +3,10 @@ FROM apache/airflow:2.8.0-python3.11
 # Install packages as airflow user
 USER airflow
 
-# Core dependencies (needed by all pipeline steps)
+# Bronze extraction dependencies
 RUN pip install --no-cache-dir \
-    kafka-python \
-    pandas \
-    sqlalchemy \
+    pyarrow \
+    pyyaml \
+    oracledb \
     psycopg2-binary \
-    openpyxl \
-    minio \
-    pyarrow
-
-# Oracle driver (only needed for extract_oracle.py — thin mode, no client libs)
-RUN pip install --no-cache-dir oracledb
+    minio
