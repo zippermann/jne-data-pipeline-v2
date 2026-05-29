@@ -1,16 +1,17 @@
 FROM apache/airflow:2.8.0-python3.11
 
+# Install packages as airflow user
 USER airflow
 
-# Core pipeline dependencies
+# Core dependencies (needed by all pipeline steps)
 RUN pip install --no-cache-dir \
+    kafka-python \
     pandas \
+    sqlalchemy \
     psycopg2-binary \
     openpyxl \
-    pyarrow \
-    boto3 \
-    pyyaml \
-    tqdm
+    minio \
+    pyarrow
 
-# Oracle driver — thin mode, no Instant Client required
+# Oracle driver (only needed for extract_oracle.py — thin mode, no client libs)
 RUN pip install --no-cache-dir oracledb
