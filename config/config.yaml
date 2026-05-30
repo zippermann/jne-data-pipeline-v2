@@ -44,15 +44,3 @@ scoping:
 columns:
   mode: "all"
   pii_exclude_file: "config/pii_exclude.yaml"
-
-postgres:
-  enabled: true
-  host: "${POSTGRES_HOST:-localhost}"
-  port: "${POSTGRES_PORT:-5433}"
-  database: "${POSTGRES_DB:-jne_pipeline_v2}"
-  user: "${POSTGRES_USER:-jne_user}"
-  password: "${POSTGRES_PASSWORD:-jne_secure_password_2024}"
-  bronze_schema: "bronze"
-  governance_schema: "governance"
-  audit_schema: "audit"
-  load_batch_rows: 50000

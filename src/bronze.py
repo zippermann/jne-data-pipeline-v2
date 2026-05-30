@@ -9,13 +9,10 @@ around stable boundaries; for now one file is easier to audit.
 from __future__ import annotations
 
 import argparse
-import csv
-import io
 import json
 import logging
 import os
 import re
-import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
@@ -580,8 +577,6 @@ class TableResult:
     file_count: int
     size_bytes: int
     elapsed_seconds: float
-    postgres_rows: int = 0
-    postgres_elapsed_seconds: float = 0.0
 
 
 class RunManifest:
@@ -597,7 +592,6 @@ class RunManifest:
             "tables": [],
             "totals": {"row_count": 0, "file_count": 0, "size_bytes": 0},
             "minio": {"enabled": False, "bucket": None, "prefix": None, "uploaded_files": 0},
-            "postgres": {"enabled": False, "loaded_rows": 0},
         }
         self._table_index: dict[str, int] = {}
 
@@ -611,15 +605,6 @@ class RunManifest:
         self.data["totals"]["row_count"] += result.row_count
         self.data["totals"]["file_count"] += result.file_count
         self.data["totals"]["size_bytes"] += result.size_bytes
-        self.write()
-
-    def add_postgres_load(self, result: "LoadResult") -> None:
-        self.data["postgres"]["enabled"] = True
-        self.data["postgres"]["loaded_rows"] += result.row_count
-        index = self._table_index.get(result.output_name)
-        if index is not None:
-            self.data["tables"][index]["postgres_rows"] = result.row_count
-            self.data["tables"][index]["postgres_elapsed_seconds"] = result.elapsed_seconds
         self.write()
 
     def set_minio_upload(self, result: "MinioUploadResult") -> None:
@@ -877,305 +862,6 @@ def upload_manifest_to_minio(config: dict, window: Window, run_id: str, manifest
     client.fput_object(settings.bucket, object_name, str(manifest.path))
 
 
-def _minio_part_objects(config: dict, window: Window, run_id: str, output_name: str) -> tuple[MinioSettings, list[str]]:
-    settings = MinioSettings.from_config(config)
-    if not settings.enabled:
-        return settings, []
-    client = _minio_client(settings)
-    prefix = f"{_lake_prefix(settings, window, run_id)}/{output_name}/"
-    objects = [
-        obj.object_name
-        for obj in client.list_objects(settings.bucket, prefix=prefix, recursive=True)
-        if obj.object_name and Path(obj.object_name).name.startswith("part-") and obj.object_name.endswith(".parquet")
-    ]
-    return settings, sorted(objects)
-
-
-# ============================================================
-# POSTGRES LOAD
-# ============================================================
-
-@dataclass(frozen=True)
-class PostgresSettings:
-    enabled: bool
-    host: str
-    port: int
-    database: str
-    user: str
-    password: str
-    bronze_schema: str
-    governance_schema: str
-    audit_schema: str
-    batch_size: int = 50000
-
-    @classmethod
-    def from_config(cls, config: dict) -> "PostgresSettings":
-        postgres = config.get("postgres", {})
-        return cls(
-            enabled=_as_bool(postgres.get("enabled", False)),
-            host=postgres.get("host", "localhost"),
-            port=int(postgres.get("port", 5432)),
-            database=postgres.get("database", "jne_pipeline_v2"),
-            user=postgres.get("user", "jne_user"),
-            password=postgres.get("password", ""),
-            bronze_schema=postgres.get("bronze_schema", "bronze"),
-            governance_schema=postgres.get("governance_schema", "governance"),
-            audit_schema=postgres.get("audit_schema", "audit"),
-            batch_size=int(postgres.get("load_batch_rows", 50000)),
-        )
-
-    @property
-    def dsn(self) -> str:
-        return (
-            f"host={self.host} port={self.port} dbname={self.database} "
-            f"user={self.user} password={self.password}"
-        )
-
-
-@dataclass(frozen=True)
-class LoadResult:
-    output_name: str
-    table_name: str
-    row_count: int
-    elapsed_seconds: float
-
-
-def _pg_identifier(name: str) -> str:
-    cleaned = re.sub(r"[^a-zA-Z0-9_]", "_", name).lower()
-    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
-    if not cleaned:
-        raise ValueError("Identifier cannot be empty")
-    if cleaned[0].isdigit():
-        cleaned = f"c_{cleaned}"
-    return cleaned[:63]
-
-
-def _pg_type(arrow_type: Any) -> str:
-    import pyarrow as pa
-
-    if pa.types.is_boolean(arrow_type):
-        return "BOOLEAN"
-    if pa.types.is_int8(arrow_type) or pa.types.is_int16(arrow_type) or pa.types.is_int32(arrow_type):
-        return "INTEGER"
-    if pa.types.is_int64(arrow_type) or pa.types.is_uint64(arrow_type):
-        return "BIGINT"
-    if pa.types.is_uint8(arrow_type) or pa.types.is_uint16(arrow_type) or pa.types.is_uint32(arrow_type):
-        return "BIGINT"
-    if pa.types.is_float16(arrow_type) or pa.types.is_float32(arrow_type) or pa.types.is_float64(arrow_type):
-        return "DOUBLE PRECISION"
-    if pa.types.is_decimal(arrow_type):
-        return f"NUMERIC({arrow_type.precision},{arrow_type.scale})"
-    if pa.types.is_date(arrow_type):
-        return "DATE"
-    if pa.types.is_timestamp(arrow_type):
-        return "TIMESTAMPTZ" if arrow_type.tz else "TIMESTAMP"
-    if pa.types.is_binary(arrow_type) or pa.types.is_large_binary(arrow_type):
-        return "BYTEA"
-    return "TEXT"
-
-
-def _quote_ident(identifier: str) -> str:
-    return '"' + identifier.replace('"', '""') + '"'
-
-
-def _postgres_connect(settings: PostgresSettings) -> Any:
-    try:
-        import psycopg2
-    except ModuleNotFoundError as exc:
-        raise RuntimeError(
-            "psycopg2-binary is required to load Parquet into Postgres. "
-            "Install dependencies with `pip install -r requirements.txt` or rebuild the Airflow image."
-        ) from exc
-
-    return psycopg2.connect(settings.dsn)
-
-
-def _table_dir(root: Path, window: Window, run_id: str, output_name: str) -> Path:
-    return _output_dir(root, window, run_id, output_name)
-
-
-def _ensure_postgres_table(
-    conn: Any,
-    settings: PostgresSettings,
-    spec: TableSpec,
-    parquet_schema: Any,
-    run_id: str,
-) -> tuple[str, list[str]]:
-    schema_name = _pg_identifier(settings.bronze_schema)
-    table_name = _pg_identifier(spec.output_name)
-    data_columns = [_pg_identifier(field.name) for field in parquet_schema]
-    seen: set[str] = set()
-    duplicate_columns = {name for name in data_columns if name in seen or seen.add(name)}
-    if duplicate_columns:
-        raise RuntimeError(f"{spec.table} has duplicate column names after normalization: {sorted(duplicate_columns)}")
-
-    column_defs = [
-        f"{_quote_ident(_pg_identifier(field.name))} {_pg_type(field.type)}"
-        for field in parquet_schema
-    ]
-    metadata_defs = [
-        ("_bronze_run_id", "TEXT NOT NULL"),
-        ("_window_start", "DATE NOT NULL"),
-        ("_window_end", "DATE NOT NULL"),
-        ("_loaded_at", "TIMESTAMPTZ NOT NULL DEFAULT now()"),
-    ]
-    qualified_table = f"{_quote_ident(schema_name)}.{_quote_ident(table_name)}"
-
-    with conn.cursor() as cursor:
-        cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {_quote_ident(schema_name)}")
-        cursor.execute(
-            f"CREATE TABLE IF NOT EXISTS {qualified_table} "
-            f"({', '.join(column_defs + [f'{_quote_ident(name)} {definition}' for name, definition in metadata_defs])})"
-        )
-        for field in parquet_schema:
-            cursor.execute(
-                f"ALTER TABLE {qualified_table} "
-                f"ADD COLUMN IF NOT EXISTS {_quote_ident(_pg_identifier(field.name))} {_pg_type(field.type)}"
-            )
-        for name, definition in metadata_defs:
-            cursor.execute(
-                f"ALTER TABLE {qualified_table} "
-                f"ADD COLUMN IF NOT EXISTS {_quote_ident(name)} {definition}"
-            )
-        cursor.execute(
-            f"DELETE FROM {qualified_table} WHERE _bronze_run_id = %s",
-            (run_id,),
-        )
-    return table_name, data_columns
-
-
-def _copy_batch_to_postgres(
-    cursor: Any,
-    schema_name: str,
-    table_name: str,
-    columns: list[str],
-    rows: list[dict[str, Any]],
-) -> None:
-    if not rows:
-        return
-    buffer = io.StringIO()
-    writer = csv.writer(buffer, lineterminator="\n", quoting=csv.QUOTE_MINIMAL)
-    for row in rows:
-        writer.writerow([_copy_value(row[column]) for column in columns])
-    buffer.seek(0)
-    copy_sql = (
-        f"COPY {_quote_ident(schema_name)}.{_quote_ident(table_name)} "
-        f"({', '.join(_quote_ident(column) for column in columns)}) "
-        "FROM STDIN WITH (FORMAT CSV, NULL '\\N')"
-    )
-    cursor.copy_expert(copy_sql, buffer)
-
-
-def _copy_value(value: Any) -> Any:
-    if value is None:
-        return "\\N"
-    if isinstance(value, (datetime, date)):
-        return value.isoformat()
-    if isinstance(value, bytes):
-        return "\\x" + value.hex()
-    return value
-
-
-def load_table_to_postgres(
-    config: dict,
-    settings: PostgresSettings,
-    window: Window,
-    run_id: str,
-    spec: TableSpec,
-) -> LoadResult:
-    import pyarrow.parquet as pq
-
-    start = time.monotonic()
-    minio_settings, object_names = _minio_part_objects(config, window, run_id, spec.output_name)
-    if object_names:
-        with tempfile.TemporaryDirectory(prefix=f"bronze_{spec.output_name}_") as tmp_dir:
-            client = _minio_client(minio_settings)
-            part_files = []
-            for object_name in object_names:
-                local_path = Path(tmp_dir) / Path(object_name).name
-                client.fget_object(minio_settings.bucket, object_name, str(local_path))
-                part_files.append(local_path)
-            return _load_part_files_to_postgres(settings, window, run_id, spec, sorted(part_files), start)
-
-    output_root = Path(config["output"]["root"])
-    table_dir = _table_dir(output_root, window, run_id, spec.output_name)
-    part_files = sorted(table_dir.glob("part-*.parquet"))
-    return _load_part_files_to_postgres(settings, window, run_id, spec, part_files, start)
-
-
-def _load_part_files_to_postgres(
-    settings: PostgresSettings,
-    window: Window,
-    run_id: str,
-    spec: TableSpec,
-    part_files: list[Path],
-    start: float,
-) -> LoadResult:
-    import pyarrow.parquet as pq
-
-    if not part_files:
-        logger.info("Skipping Postgres load for %s: no Parquet parts", spec.output_name)
-        return LoadResult(spec.output_name, spec.output_name, 0, 0.0)
-
-    parquet_schema = pq.ParquetFile(part_files[0]).schema_arrow
-    schema_name = _pg_identifier(settings.bronze_schema)
-
-    conn = _postgres_connect(settings)
-    loaded_rows = 0
-    try:
-        table_name, data_columns = _ensure_postgres_table(conn, settings, spec, parquet_schema, run_id)
-        copy_columns = data_columns + ["_bronze_run_id", "_window_start", "_window_end"]
-        with conn.cursor() as cursor:
-            for part_file in part_files:
-                parquet_file = pq.ParquetFile(part_file)
-                for batch in parquet_file.iter_batches(batch_size=settings.batch_size):
-                    table = batch.to_pydict()
-                    row_count = batch.num_rows
-                    rows = []
-                    original_names = list(table)
-                    for index in range(row_count):
-                        row = {
-                            _pg_identifier(name): table[name][index]
-                            for name in original_names
-                        }
-                        row["_bronze_run_id"] = run_id
-                        row["_window_start"] = window.start
-                        row["_window_end"] = window.end
-                        rows.append(row)
-                    _copy_batch_to_postgres(cursor, schema_name, table_name, copy_columns, rows)
-                    loaded_rows += row_count
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
-    elapsed = time.monotonic() - start
-    logger.info("Loaded %s rows into %s.%s in %.1fs", f"{loaded_rows:,}", schema_name, table_name, elapsed)
-    return LoadResult(spec.output_name, f"{schema_name}.{table_name}", loaded_rows, elapsed)
-
-
-def load_postgres(config: dict, window: Window, run_id: str, workers: int, manifest: RunManifest) -> None:
-    settings = PostgresSettings.from_config(config)
-    if not settings.enabled:
-        logger.info("Skipping Postgres load because postgres.enabled=false")
-        return
-
-    specs = [
-        spec for spec in TABLE_SPECS
-        if spec.stage != Stage.REFERENCE or config["scoping"].get("reference_tables_mode", "full") != "skip"
-    ]
-    logger.info("Loading %s Parquet datasets into Postgres schema %s", len(specs), settings.bronze_schema)
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {
-            pool.submit(load_table_to_postgres, config, settings, window, run_id, spec): spec.output_name
-            for spec in specs
-        }
-        for future in as_completed(futures):
-            manifest.add_postgres_load(future.result())
-
-
 # ============================================================
 # RUNNER
 # ============================================================
@@ -1251,7 +937,6 @@ def run(config_path: str, run_id: str, keep_scope: bool = False) -> None:
         _extract_stage(config, oracle_settings, scope, window, safe_run_id, Stage.RUNSHEET_DO, workers, manifest)
         _extract_stage(config, oracle_settings, scope, window, safe_run_id, Stage.REFERENCE, workers, manifest)
         upload_run_to_minio(config, window, safe_run_id, manifest)
-        load_postgres(config, window, safe_run_id, workers, manifest)
         manifest.complete()
         upload_manifest_to_minio(config, window, safe_run_id, manifest)
     finally:

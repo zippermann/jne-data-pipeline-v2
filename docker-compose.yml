@@ -32,13 +32,6 @@ x-oracle-env: &oracle-env
   ORACLE_SCHEMA: ${ORACLE_SCHEMA:-JNE}
   BRONZE_WORKERS: ${BRONZE_WORKERS:-4}
 
-x-postgres-env: &postgres-env
-  POSTGRES_HOST: jne-postgres
-  POSTGRES_PORT: "5432"
-  POSTGRES_USER: ${POSTGRES_USER:-jne_user}
-  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jne_secure_password_2024}
-  POSTGRES_DB: ${POSTGRES_DB:-jne_pipeline_v2}
-
 x-minio-env: &minio-env
   MINIO_ENDPOINT: minio:9000
   MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
@@ -79,43 +72,6 @@ services:
       - jne-network
 
   # ============================================================
-  # PostgreSQL Database (bronze landing + future governance)
-  # ============================================================
-  postgres:
-    container_name: jne-postgres
-    image: postgres:15-alpine
-    restart: unless-stopped
-    shm_size: 1g
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-jne_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jne_secure_password_2024}
-      POSTGRES_DB: ${POSTGRES_DB:-jne_pipeline_v2}
-    ports:
-      - "${POSTGRES_PORT:-5433}:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./postgres/init:/docker-entrypoint-initdb.d:ro
-    command:
-      - "postgres"
-      - "-c"
-      - "shared_buffers=512MB"
-      - "-c"
-      - "work_mem=32MB"
-      - "-c"
-      - "maintenance_work_mem=256MB"
-      - "-c"
-      - "effective_cache_size=2GB"
-      - "-c"
-      - "wal_compression=on"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jne_user} -d ${POSTGRES_DB:-jne_pipeline_v2}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - jne-network
-
-  # ============================================================
   # Airflow PostgreSQL (metadata DB, separate from data DB)
   # ============================================================
   airflow-postgres:
@@ -147,8 +103,6 @@ services:
     depends_on:
       airflow-postgres:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
       minio:
         condition: service_healthy
     environment:
@@ -176,12 +130,10 @@ services:
     depends_on:
       airflow-postgres:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
       minio:
         condition: service_healthy
     environment:
-      <<: [*oracle-env, *postgres-env, *minio-env]
+      <<: [*oracle-env, *minio-env]
     volumes: *airflow-volumes
     command: >-
       bash -c "cd /opt/airflow/project && python -m src.bronze --config config/config.yaml --run-id bronze_init_$$(date -u +%Y%m%dT%H%M%S)"
@@ -201,12 +153,10 @@ services:
     depends_on:
       airflow-init:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
       minio:
         condition: service_healthy
     environment:
-      <<: [*airflow-env, *oracle-env, *postgres-env, *minio-env]
+      <<: [*airflow-env, *oracle-env, *minio-env]
       AIRFLOW__WEBSERVER__RBAC: "True"
     volumes: *airflow-volumes
     ports:
@@ -227,8 +177,6 @@ services:
     depends_on:
       airflow-init:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
       minio:
         condition: service_healthy
     deploy:
@@ -240,7 +188,7 @@ services:
           cpus: '2'
           memory: 4G
     environment:
-      <<: [*airflow-env, *oracle-env, *postgres-env, *minio-env]
+      <<: [*airflow-env, *oracle-env, *minio-env]
     volumes: *airflow-volumes
     command: scheduler
     networks:
@@ -250,8 +198,6 @@ services:
 volumes:
   minio_data:
     name: jne-minio-data
-  postgres_data:
-    name: jne-postgres-data
   airflow_postgres_data:
 
 # Docker network for service communication

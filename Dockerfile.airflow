@@ -8,5 +8,4 @@ RUN pip install --no-cache-dir \
     pyarrow \
     pyyaml \
     oracledb \
-    psycopg2-binary \
     minio
