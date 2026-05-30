@@ -335,7 +335,8 @@ def materialize_scope_tables(
 ) -> dict[str, int]:
     src = settings.source_schema
     cnote_scope = settings.table("CNOTE")
-    binds = {"start_date": window.start, "end_date": window.end}
+    start_literal = f"DATE '{window.start_label}'"
+    end_literal = f"DATE '{window.end_label}'"
     counts = {
         "CNOTE": _create_scope(
             conn,
@@ -344,10 +345,10 @@ def materialize_scope_tables(
             f"""
             SELECT CNOTE_NO
             FROM {src}.{anchor_table}
-            WHERE {anchor_date_column} >= :start_date
-              AND {anchor_date_column} < :end_date
+            WHERE {anchor_date_column} >= {start_literal}
+              AND {anchor_date_column} < {end_literal}
             """,
-            binds,
+            {},
         )
     }
     counts["BAG"] = _create_scope(
