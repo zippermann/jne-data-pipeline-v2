@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
@@ -509,12 +510,14 @@ class PartitionedParquetWriter:
         rows_per_file: int,
         compression: str,
         compression_level: int | None,
+        overwrite: bool = False,
     ) -> None:
         self.output_dir = output_dir
         self.columns = list(columns)
         self.rows_per_file = rows_per_file
         self.compression = compression
         self.compression_level = compression_level
+        self.overwrite = overwrite
         self.writer = None
         self.schema = None
         self.part_no = 0
@@ -522,9 +525,12 @@ class PartitionedParquetWriter:
         self.row_count = 0
 
     def __enter__(self) -> "PartitionedParquetWriter":
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        if list(self.output_dir.glob("part-*.parquet")):
+        existing_parts = list(self.output_dir.glob("part-*.parquet"))
+        if existing_parts and self.overwrite:
+            shutil.rmtree(self.output_dir)
+        elif existing_parts:
             raise RuntimeError(f"{self.output_dir} already contains Parquet parts")
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         return self
 
     def __exit__(self, _exc_type, _exc, _tb) -> None:
@@ -715,6 +721,7 @@ def extract_table(
             rows_per_file,
             compression,
             compression_level,
+            overwrite=True,
         ) as writer:
             cursor.arraysize = oracle_settings.fetch_arraysize
             cursor.execute(sql, binds)
