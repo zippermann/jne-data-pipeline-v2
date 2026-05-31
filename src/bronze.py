@@ -25,6 +25,7 @@ from typing import Any, Iterable, Iterator, Sequence
 
 
 logger = logging.getLogger(__name__)
+CODE_VERSION = "bronze-minio-v2026-05-31-01"
 ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)(?::-(.*?))?\}")
 VALID_IDENTIFIER = re.compile(r"[^A-Z0-9_]")
 
@@ -673,6 +674,14 @@ def _output_dir(root: Path, window: Window, run_id: str, output_name: str) -> Pa
     )
 
 
+def _prepare_table_output_dir(table_dir: Path) -> None:
+    if table_dir.exists():
+        existing_parts = list(table_dir.glob("part-*.parquet"))
+        if existing_parts:
+            logger.info("Removing existing partial output before retry: %s", table_dir)
+            shutil.rmtree(table_dir)
+
+
 def _build_sql(config: dict, spec: TableSpec, columns: list[str], scope: ScopeSettings) -> tuple[str, dict]:
     source_schema = config["oracle"].get("source_schema", "JNE").upper()
     alias = "src"
@@ -706,6 +715,7 @@ def extract_table(
     compression_level = zstd_level if compression == "zstd" else None
     exclusions = _load_pii_exclusions(config)
     table_dir = _output_dir(output_root, window, run_id, spec.output_name)
+    _prepare_table_output_dir(table_dir)
 
     with connect(oracle_settings) as conn:
         source_schema = config["oracle"].get("source_schema", "JNE")
@@ -920,8 +930,9 @@ def run(config_path: str, run_id: str, keep_scope: bool = False) -> None:
     started = time.monotonic()
 
     logger.info(
-        "Bronze run %s window=[%s, %s) workers=%s",
+        "Bronze run %s code_version=%s window=[%s, %s) workers=%s",
         safe_run_id,
+        CODE_VERSION,
         window.start_label,
         window.end_label,
         workers,
