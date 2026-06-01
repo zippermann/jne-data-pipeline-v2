@@ -227,7 +227,7 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
     TableSpec("CMS_MHI_HOC", "cms_mhi_hoc", Stage.CNOTE, "MHI_NO", "CNOTE"),
     TableSpec("CMS_DHI_HOC", "cms_dhi_hoc", Stage.CNOTE, "DHI_CNOTE_NO", "CNOTE"),
     TableSpec("CMS_DSTATUS", "cms_dstatus", Stage.CNOTE, "DSTATUS_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_CNOTE_POD", "cms_cnote_pod", Stage.CNOTE, "CNOTE_NO", "CNOTE"),
+    TableSpec("CMS_CNOTE_POD", "cms_cnote_pod", Stage.CNOTE, "CNOTE_POD_NO", "CNOTE"),
     TableSpec("CMS_DHOV_RSHEET", "cms_dhov_rsheet", Stage.CNOTE, "DHOV_RSHEET_CNOTE", "CNOTE"),
     TableSpec("CMS_MHOUNDEL_POD", "cms_mhoundel_pod", Stage.CNOTE, "MHOUNDEL_NO", "CNOTE"),
     TableSpec("CMS_DHOUNDEL_POD", "cms_dhoundel_pod", Stage.CNOTE, "DHOUNDEL_CNOTE_NO", "CNOTE"),
@@ -844,7 +844,7 @@ def _projection(columns: Iterable[str], spec: TableSpec, exclusions: dict[str, s
 
 
 def _output_dir(root: Path, window: Window, run_id: str, output_name: str) -> Path:
-    extract_date = date.today().isoformat()
+    extract_date = _extract_date_label(run_id)
     return (
         root
         / f"window_start={window.start_label}"
@@ -852,6 +852,39 @@ def _output_dir(root: Path, window: Window, run_id: str, output_name: str) -> Pa
         / f"extract_date={extract_date}"
         / f"run_id={run_id}"
         / output_name
+    )
+
+
+def _extract_date_label(run_id: str) -> str:
+    match = re.search(r"(\d{4})(\d{2})(\d{2})T", run_id)
+    if match:
+        year, month, day = match.groups()
+        return f"{year}-{month}-{day}"
+    return date.today().isoformat()
+
+
+def _existing_table_result(table_dir: Path, spec: TableSpec, start: float) -> TableResult | None:
+    success_file = table_dir / "_SUCCESS"
+    part_files = list(table_dir.glob("part-*.parquet"))
+    if not success_file.exists() or not part_files:
+        return None
+    row_count = int(success_file.read_text(encoding="ascii").strip() or "0")
+    size_bytes = sum(path.stat().st_size for path in part_files)
+    elapsed = time.monotonic() - start
+    logger.info(
+        "Skipping %s because completed Parquet output already exists: %s rows, %s part(s)",
+        spec.table,
+        f"{row_count:,}",
+        len(part_files),
+    )
+    return TableResult(
+        table=spec.table,
+        output_name=spec.output_name,
+        stage=spec.stage.value,
+        row_count=row_count,
+        file_count=len(part_files),
+        size_bytes=size_bytes,
+        elapsed_seconds=elapsed,
     )
 
 
@@ -876,8 +909,35 @@ def _build_sql(config: dict, spec: TableSpec, columns: list[str], scope: ScopeSe
     elif spec.stage != Stage.REFERENCE:
         if not spec.scope_name or not spec.scope_column:
             raise RuntimeError(f"Missing scope declaration for {spec.table}")
-        sql += " WHERE " + scope_predicate(scope, alias, spec.scope_name, spec.scope_column)
+        sql += " WHERE " + table_scope_predicate(source_schema, scope, spec, alias)
     return sql, binds
+
+
+def table_scope_predicate(source_schema: str, scope: ScopeSettings, spec: TableSpec, table_alias: str) -> str:
+    cnote_scope = scope.table("CNOTE")
+    special_predicates = {
+        "CMS_MRCNOTE": (
+            f"{table_alias}.MRCNOTE_NO IN ("
+            f"SELECT DRCNOTE_NO FROM {source_schema}.CMS_DRCNOTE "
+            f"WHERE DRCNOTE_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})"
+            ")"
+        ),
+        "CMS_MHI_HOC": (
+            f"{table_alias}.MHI_NO IN ("
+            f"SELECT DHI_NO FROM {source_schema}.CMS_DHI_HOC "
+            f"WHERE DHI_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})"
+            ")"
+        ),
+        "CMS_MHOUNDEL_POD": (
+            f"{table_alias}.MHOUNDEL_NO IN ("
+            f"SELECT DHOUNDEL_NO FROM {source_schema}.CMS_DHOUNDEL_POD "
+            f"WHERE DHOUNDEL_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})"
+            ")"
+        ),
+    }
+    if spec.table in special_predicates:
+        return special_predicates[spec.table]
+    return scope_predicate(scope, table_alias, spec.scope_name, spec.scope_column)
 
 
 def extract_table(
@@ -897,6 +957,9 @@ def extract_table(
     compression_level = zstd_level if compression == "zstd" else None
     exclusions = _load_pii_exclusions(config)
     table_dir = _output_dir(output_root, window, run_id, spec.output_name)
+    existing_result = _existing_table_result(table_dir, spec, start)
+    if existing_result is not None:
+        return existing_result
     _prepare_table_output_dir(table_dir)
 
     with connect(oracle_settings) as conn:
@@ -909,7 +972,10 @@ def extract_table(
         logger.info("Extracting %s to %s", spec.table, table_dir)
         with conn.cursor() as cursor:
             cursor.arraysize = oracle_settings.fetch_arraysize
-            cursor.execute(sql, binds)
+            try:
+                cursor.execute(sql, binds)
+            except Exception as exc:
+                raise RuntimeError(f"Oracle query failed for {spec.table}: {exc}\nSQL: {sql}") from exc
             arrow_schema = _oracle_arrow_schema(cursor.description)
             with PartitionedParquetWriter(
                 table_dir,
@@ -950,7 +1016,7 @@ def extract_table(
         size_bytes=size_bytes,
         elapsed_seconds=elapsed,
     )
-    logger.info("Finished %s: %,d rows in %.1fs", spec.table, result.row_count, elapsed)
+    logger.info("Finished %s: %s rows in %.1fs", spec.table, f"{result.row_count:,}", elapsed)
     return result
 
 
@@ -1009,7 +1075,7 @@ def _minio_client(settings: MinioSettings) -> Any:
 
 
 def _run_dir(root: Path, window: Window, run_id: str) -> Path:
-    extract_date = date.today().isoformat()
+    extract_date = _extract_date_label(run_id)
     return (
         root
         / f"window_start={window.start_label}"
@@ -1020,7 +1086,7 @@ def _run_dir(root: Path, window: Window, run_id: str) -> Path:
 
 
 def _lake_prefix(settings: MinioSettings, window: Window, run_id: str) -> str:
-    extract_date = date.today().isoformat()
+    extract_date = _extract_date_label(run_id)
     prefix = settings.prefix.strip("/")
     return (
         f"{prefix}/window_start={window.start_label}/window_end={window.end_label}/"
@@ -1082,11 +1148,12 @@ def upload_manifest_to_minio(config: dict, window: Window, run_id: str, manifest
 # ============================================================
 
 def _manifest_path(config: dict, window: Window, run_id: str) -> Path:
+    extract_date = _extract_date_label(run_id)
     return (
         Path(config["output"]["root"])
         / f"window_start={window.start_label}"
         / f"window_end={window.end_label}"
-        / f"extract_date={datetime.now().date().isoformat()}"
+        / f"extract_date={extract_date}"
         / f"run_id={run_id}"
         / "run_manifest.json"
     )
