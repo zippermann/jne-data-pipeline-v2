@@ -25,7 +25,7 @@ from typing import Any, Iterable, Iterator, Sequence
 
 
 logger = logging.getLogger(__name__)
-CODE_VERSION = "bronze-minio-v2026-05-31-01"
+CODE_VERSION = "bronze-minio-v2026-06-01-01"
 ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)(?::-(.*?))?\}")
 VALID_IDENTIFIER = re.compile(r"[^A-Z0-9_]")
 
@@ -264,6 +264,31 @@ def specs_for_stage(stage: Stage) -> list[TableSpec]:
     return [spec for spec in TABLE_SPECS if spec.stage == stage]
 
 
+def selected_specs(config: dict) -> list[TableSpec]:
+    requested = config.get("extraction", {}).get("tables") or []
+    if not requested:
+        return list(TABLE_SPECS)
+    requested_normalized = {_normalize_table_name(item) for item in requested}
+    specs = [
+        spec for spec in TABLE_SPECS
+        if _normalize_table_name(spec.table) in requested_normalized
+        or _normalize_table_name(spec.output_name) in requested_normalized
+    ]
+    found = {_normalize_table_name(spec.table) for spec in specs} | {_normalize_table_name(spec.output_name) for spec in specs}
+    missing = sorted(item for item in requested_normalized if item not in found)
+    if missing:
+        raise ValueError(f"Unknown extraction table(s): {missing}")
+    return specs
+
+
+def specs_for_stage_from(specs: Sequence[TableSpec], stage: Stage) -> list[TableSpec]:
+    return [spec for spec in specs if spec.stage == stage]
+
+
+def _normalize_table_name(value: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", value.upper())
+
+
 # ============================================================
 # SCOPING
 # ============================================================
@@ -334,13 +359,21 @@ def materialize_scope_tables(
     window: Window,
     anchor_table: str,
     anchor_date_column: str,
+    required_scopes: set[str] | None = None,
 ) -> dict[str, int]:
+    required_scopes = _expand_required_scopes(required_scopes or _all_scope_names())
+    if not required_scopes:
+        logger.info("No Oracle scope tables required for selected extraction tables")
+        return {}
+
     src = settings.source_schema
     cnote_scope = settings.table("CNOTE")
     start_literal = f"DATE '{window.start_label}'"
     end_literal = f"DATE '{window.end_label}'"
-    counts = {
-        "CNOTE": _create_scope(
+    counts = {}
+    if "CNOTE" in required_scopes:
+        logger.info("Creating Oracle scope CNOTE")
+        counts["CNOTE"] = _create_scope(
             conn,
             cnote_scope,
             "CNOTE_NO",
@@ -352,8 +385,11 @@ def materialize_scope_tables(
             """,
             {},
         )
-    }
-    counts["BAG"] = _create_scope(
+        logger.info("Oracle scope CNOTE: %s rows", f"{counts['CNOTE']:,}")
+
+    if "BAG" in required_scopes:
+        logger.info("Creating Oracle scope BAG")
+        counts["BAG"] = _create_scope(
         conn,
         settings.table("BAG"),
         "BAG_NO",
@@ -368,7 +404,11 @@ def materialize_scope_tables(
         """,
         {},
     )
-    counts["DMBAG"] = _create_scope(
+        logger.info("Oracle scope BAG: %s rows", f"{counts['BAG']:,}")
+
+    if "DMBAG" in required_scopes:
+        logger.info("Creating Oracle scope DMBAG")
+        counts["DMBAG"] = _create_scope(
         conn,
         settings.table("DMBAG"),
         "DMBAG_NO",
@@ -379,7 +419,11 @@ def materialize_scope_tables(
         """,
         {},
     )
-    counts["MANIFEST"] = _create_scope(
+        logger.info("Oracle scope DMBAG: %s rows", f"{counts['DMBAG']:,}")
+
+    if "MANIFEST" in required_scopes:
+        logger.info("Creating Oracle scope MANIFEST")
+        counts["MANIFEST"] = _create_scope(
         conn,
         settings.table("MANIFEST"),
         "MANIFEST_NO",
@@ -398,7 +442,11 @@ def materialize_scope_tables(
         """,
         {},
     )
-    counts["SMU"] = _create_scope(
+        logger.info("Oracle scope MANIFEST: %s rows", f"{counts['MANIFEST']:,}")
+
+    if "SMU" in required_scopes:
+        logger.info("Creating Oracle scope SMU")
+        counts["SMU"] = _create_scope(
         conn,
         settings.table("SMU"),
         "SMU_NO",
@@ -409,7 +457,11 @@ def materialize_scope_tables(
         """,
         {},
     )
-    counts["MMBAG"] = _create_scope(
+        logger.info("Oracle scope SMU: %s rows", f"{counts['SMU']:,}")
+
+    if "MMBAG" in required_scopes:
+        logger.info("Creating Oracle scope MMBAG")
+        counts["MMBAG"] = _create_scope(
         conn,
         settings.table("MMBAG"),
         "MMBAG_NO",
@@ -422,7 +474,11 @@ def materialize_scope_tables(
         """,
         {},
     )
-    counts["RUNSHEET"] = _create_scope(
+        logger.info("Oracle scope MMBAG: %s rows", f"{counts['MMBAG']:,}")
+
+    if "RUNSHEET" in required_scopes:
+        logger.info("Creating Oracle scope RUNSHEET")
+        counts["RUNSHEET"] = _create_scope(
         conn,
         settings.table("RUNSHEET"),
         "RUNSHEET_NO",
@@ -437,7 +493,11 @@ def materialize_scope_tables(
         """,
         {},
     )
-    counts["HVI"] = _create_scope(
+        logger.info("Oracle scope RUNSHEET: %s rows", f"{counts['RUNSHEET']:,}")
+
+    if "HVI" in required_scopes:
+        logger.info("Creating Oracle scope HVI")
+        counts["HVI"] = _create_scope(
         conn,
         settings.table("HVI"),
         "HVI_NO",
@@ -448,7 +508,11 @@ def materialize_scope_tables(
         """,
         {},
     )
-    counts["HVO"] = _create_scope(
+        logger.info("Oracle scope HVI: %s rows", f"{counts['HVI']:,}")
+
+    if "HVO" in required_scopes:
+        logger.info("Creating Oracle scope HVO")
+        counts["HVO"] = _create_scope(
         conn,
         settings.table("HVO"),
         "HVO_NO",
@@ -459,7 +523,11 @@ def materialize_scope_tables(
         """,
         {},
     )
-    counts["MSJ"] = _create_scope(
+        logger.info("Oracle scope HVO: %s rows", f"{counts['HVO']:,}")
+
+    if "MSJ" in required_scopes:
+        logger.info("Creating Oracle scope MSJ")
+        counts["MSJ"] = _create_scope(
         conn,
         settings.table("MSJ"),
         "MSJ_NO",
@@ -474,6 +542,7 @@ def materialize_scope_tables(
         """,
         {},
     )
+        logger.info("Oracle scope MSJ: %s rows", f"{counts['MSJ']:,}")
     return counts
 
 
@@ -481,6 +550,43 @@ def cleanup_scope_tables(conn: Any, settings: ScopeSettings) -> None:
     for name in ("MSJ", "HVO", "HVI", "RUNSHEET", "MMBAG", "SMU", "MANIFEST", "DMBAG", "BAG", "CNOTE"):
         _drop_table(conn, settings.table(name))
     conn.commit()
+
+
+def required_scopes_for_specs(specs: Sequence[TableSpec]) -> set[str]:
+    scopes = {
+        spec.scope_name
+        for spec in specs
+        if spec.stage not in {Stage.ANCHOR, Stage.REFERENCE} and spec.scope_name
+    }
+    return _expand_required_scopes({scope for scope in scopes if scope})
+
+
+def _all_scope_names() -> set[str]:
+    return {"CNOTE", "BAG", "DMBAG", "MANIFEST", "SMU", "MMBAG", "RUNSHEET", "HVI", "HVO", "MSJ"}
+
+
+def _expand_required_scopes(scopes: set[str]) -> set[str]:
+    dependencies = {
+        "BAG": {"CNOTE"},
+        "DMBAG": {"BAG"},
+        "MANIFEST": {"CNOTE"},
+        "SMU": {"DMBAG"},
+        "MMBAG": {"BAG", "DMBAG"},
+        "RUNSHEET": {"CNOTE"},
+        "HVI": {"CNOTE"},
+        "HVO": {"CNOTE"},
+        "MSJ": {"HVI", "HVO"},
+    }
+    expanded = {scope.upper() for scope in scopes}
+    changed = True
+    while changed:
+        changed = False
+        for scope in list(expanded):
+            for dependency in dependencies.get(scope, set()):
+                if dependency not in expanded:
+                    expanded.add(dependency)
+                    changed = True
+    return expanded
 
 
 def scope_predicate(scope: ScopeSettings, table_alias: str, scope_name: str, scope_column: str) -> str:
@@ -511,6 +617,7 @@ class PartitionedParquetWriter:
         rows_per_file: int,
         compression: str,
         compression_level: int | None,
+        schema: Any | None = None,
         overwrite: bool = False,
     ) -> None:
         self.output_dir = output_dir
@@ -520,7 +627,7 @@ class PartitionedParquetWriter:
         self.compression_level = compression_level
         self.overwrite = overwrite
         self.writer = None
-        self.schema = None
+        self.schema = schema
         self.part_no = 0
         self.rows_in_part = 0
         self.row_count = 0
@@ -543,12 +650,13 @@ class PartitionedParquetWriter:
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        table = pa.Table.from_pylist(
-            [dict(zip(self.columns, row)) for row in rows],
-            schema=self.schema,
-        )
         if self.schema is None:
-            self.schema = table.schema
+            self.schema = _infer_arrow_schema(self.columns, rows)
+        arrays = [
+            _arrow_array_for_field(field, values)
+            for field, values in zip(self.schema, zip(*rows))
+        ]
+        table = pa.Table.from_arrays(arrays, schema=self.schema)
         if self.writer is None or self.rows_in_part >= self.rows_per_file:
             self._open_next_part(pq)
         self.writer.write_table(table)
@@ -567,6 +675,7 @@ class PartitionedParquetWriter:
         self.part_no += 1
         self.rows_in_part = 0
         part_path = self.output_dir / f"part-{self.part_no:05d}.parquet"
+        logger.info("Starting Parquet part %s", part_path)
         self.writer = pq.ParquetWriter(
             part_path,
             self.schema,
@@ -574,6 +683,78 @@ class PartitionedParquetWriter:
             compression_level=self.compression_level,
             use_dictionary=True,
         )
+
+
+def _infer_arrow_schema(columns: Sequence[str], rows: Sequence[tuple]) -> Any:
+    import pyarrow as pa
+
+    fields = []
+    for column, values in zip(columns, zip(*rows)):
+        if all(value is None for value in values):
+            fields.append(pa.field(column, pa.string()))
+        else:
+            fields.append(pa.field(column, pa.array(values).type))
+    return pa.schema(fields)
+
+
+def _arrow_array_for_field(field: Any, values: Iterable[Any]) -> Any:
+    import pyarrow as pa
+
+    values = list(values)
+    try:
+        if pa.types.is_string(field.type):
+            return pa.array(
+                (None if value is None else str(value) for value in values),
+                type=field.type,
+            )
+        return pa.array(values, type=field.type)
+    except (pa.ArrowInvalid, pa.ArrowTypeError, OverflowError, TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"Could not convert column {field.name} to Arrow type {field.type}: {exc}"
+        ) from exc
+
+
+def _description_item(item: Any, index: int, attr: str | None = None) -> Any:
+    if attr and hasattr(item, attr):
+        return getattr(item, attr)
+    try:
+        return item[index]
+    except (IndexError, TypeError):
+        return None
+
+
+def _oracle_arrow_schema(description: Sequence[Any]) -> Any:
+    import pyarrow as pa
+
+    fields = []
+    for item in description:
+        name = _description_item(item, 0, "name")
+        type_code = _description_item(item, 1, "type_code")
+        precision = _description_item(item, 4, "precision")
+        scale = _description_item(item, 5, "scale")
+        fields.append(pa.field(name, _arrow_type_from_oracle(type_code, precision, scale)))
+    return pa.schema(fields)
+
+
+def _arrow_type_from_oracle(type_code: Any, precision: Any, scale: Any) -> Any:
+    import pyarrow as pa
+
+    type_name = getattr(type_code, "name", str(type_code)).upper()
+    if "CHAR" in type_name or "CLOB" in type_name or "JSON" in type_name or "ROWID" in type_name:
+        return pa.string()
+    if "BLOB" in type_name or "RAW" in type_name:
+        return pa.string()
+    if "TIMESTAMP" in type_name:
+        return pa.timestamp("us")
+    if type_name.endswith("DATE") or "DB_TYPE_DATE" in type_name:
+        return pa.timestamp("us")
+    if "BINARY_DOUBLE" in type_name or "BINARY_FLOAT" in type_name or "DOUBLE" in type_name or "FLOAT" in type_name:
+        return pa.float64()
+    if "BOOLEAN" in type_name:
+        return pa.bool_()
+    if "NUMBER" in type_name or "DECIMAL" in type_name or "INTEGER" in type_name:
+        return pa.string()
+    return pa.string()
 
 
 @dataclass
@@ -710,6 +891,7 @@ def extract_table(
     start = time.monotonic()
     output_root = Path(config["output"]["root"])
     rows_per_file = int(config["output"].get("rows_per_file", 250000))
+    progress_rows = int(config["output"].get("progress_rows", rows_per_file))
     compression = config["output"].get("compression", "zstd")
     zstd_level = int(config["output"].get("zstd_level", 9))
     compression_level = zstd_level if compression == "zstd" else None
@@ -725,21 +907,36 @@ def extract_table(
             binds = {"start_date": window.start, "end_date": window.end}
 
         logger.info("Extracting %s to %s", spec.table, table_dir)
-        with conn.cursor() as cursor, PartitionedParquetWriter(
-            table_dir,
-            columns,
-            rows_per_file,
-            compression,
-            compression_level,
-            overwrite=True,
-        ) as writer:
+        with conn.cursor() as cursor:
             cursor.arraysize = oracle_settings.fetch_arraysize
             cursor.execute(sql, binds)
-            while True:
-                rows = cursor.fetchmany(oracle_settings.fetch_arraysize)
-                if not rows:
-                    break
-                writer.write_rows(rows)
+            arrow_schema = _oracle_arrow_schema(cursor.description)
+            with PartitionedParquetWriter(
+                table_dir,
+                columns,
+                rows_per_file,
+                compression,
+                compression_level,
+                schema=arrow_schema,
+                overwrite=True,
+            ) as writer:
+                last_logged_rows = 0
+                while True:
+                    rows = cursor.fetchmany(oracle_settings.fetch_arraysize)
+                    if not rows:
+                        break
+                    writer.write_rows(rows)
+                    if writer.row_count - last_logged_rows >= progress_rows:
+                        elapsed = time.monotonic() - start
+                        rows_per_second = writer.row_count / elapsed if elapsed else 0
+                        logger.info(
+                            "%s progress: %s rows, %s parquet part(s), %.0f rows/sec",
+                            spec.table,
+                            f"{writer.row_count:,}",
+                            writer.part_no,
+                            rows_per_second,
+                        )
+                        last_logged_rows = writer.row_count
 
     part_files = list(table_dir.glob("part-*.parquet"))
     size_bytes = sum(path.stat().st_size for path in part_files)
@@ -896,6 +1093,7 @@ def _manifest_path(config: dict, window: Window, run_id: str) -> Path:
 
 
 def _extract_stage(
+    specs: Sequence[TableSpec],
     config: dict,
     settings: OracleSettings,
     scope: ScopeSettings,
@@ -905,9 +1103,12 @@ def _extract_stage(
     workers: int,
     manifest: RunManifest,
 ) -> None:
-    specs = specs_for_stage(stage)
+    specs = specs_for_stage_from(specs, stage)
     if stage == Stage.REFERENCE and config["scoping"].get("reference_tables_mode", "full") == "skip":
         logger.info("Skipping reference tables because reference_tables_mode=skip")
+        return
+    if not specs:
+        logger.info("Skipping stage %s: no selected tables", stage.value)
         return
     logger.info("Extracting stage %s (%s tables)", stage.value, len(specs))
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -923,6 +1124,7 @@ def run(config_path: str, run_id: str, keep_scope: bool = False) -> None:
     config = load_config(config_path)
     window = resolve_window(config)
     safe_run_id = sanitize_run_id(run_id)
+    specs = selected_specs(config)
     oracle_settings = OracleSettings.from_config(config)
     scope = ScopeSettings.from_config(config, safe_run_id)
     workers = int(os.getenv("BRONZE_WORKERS", "4"))
@@ -937,6 +1139,7 @@ def run(config_path: str, run_id: str, keep_scope: bool = False) -> None:
         window.end_label,
         workers,
     )
+    logger.info("Selected tables: %s", ", ".join(spec.table for spec in specs))
 
     with connect(oracle_settings) as conn:
         counts = materialize_scope_tables(
@@ -945,16 +1148,17 @@ def run(config_path: str, run_id: str, keep_scope: bool = False) -> None:
             window,
             config["extraction"]["anchor_table"],
             config["extraction"]["anchor_date_column"],
+            required_scopes_for_specs(specs),
         )
         manifest.set_scope_counts(counts)
         logger.info("Scope counts: %s", counts)
 
     try:
-        _extract_stage(config, oracle_settings, scope, window, safe_run_id, Stage.ANCHOR, 1, manifest)
-        _extract_stage(config, oracle_settings, scope, window, safe_run_id, Stage.CNOTE, workers, manifest)
-        _extract_stage(config, oracle_settings, scope, window, safe_run_id, Stage.BAG_MANIFEST, workers, manifest)
-        _extract_stage(config, oracle_settings, scope, window, safe_run_id, Stage.RUNSHEET_DO, workers, manifest)
-        _extract_stage(config, oracle_settings, scope, window, safe_run_id, Stage.REFERENCE, workers, manifest)
+        _extract_stage(specs, config, oracle_settings, scope, window, safe_run_id, Stage.ANCHOR, 1, manifest)
+        _extract_stage(specs, config, oracle_settings, scope, window, safe_run_id, Stage.CNOTE, workers, manifest)
+        _extract_stage(specs, config, oracle_settings, scope, window, safe_run_id, Stage.BAG_MANIFEST, workers, manifest)
+        _extract_stage(specs, config, oracle_settings, scope, window, safe_run_id, Stage.RUNSHEET_DO, workers, manifest)
+        _extract_stage(specs, config, oracle_settings, scope, window, safe_run_id, Stage.REFERENCE, workers, manifest)
         upload_run_to_minio(config, window, safe_run_id, manifest)
         manifest.complete()
         upload_manifest_to_minio(config, window, safe_run_id, manifest)

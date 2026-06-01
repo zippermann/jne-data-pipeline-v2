@@ -6,23 +6,27 @@ oracle:
   user: "${ORACLE_USER}"
   password: "${ORACLE_PASSWORD}"
   source_schema: "${ORACLE_SCHEMA}"
-  fetch_arraysize: 50000
+  fetch_arraysize: 10000
 
 extraction:
   anchor_table: "CMS_CNOTE"
   anchor_date_column: "CNOTE_DATE"
+  # Empty list means extract every table in the inventory.
+  # For smoke tests, use e.g. ["CMS_CNOTE"] or ["cms_cnote"].
+  tables: []
   window:
     mode: "relative"
-    anchor_month: "2026-03"
+    anchor_month: "2026-04"
     num_months: 1
-    start_date: "2026-03-01"
-    end_date: "2026-04-01"
+    start_date: "2026-04-01"
+    end_date: "2026-05-01"
 
 output:
   root: "data/bronze"
   compression: "zstd"
   zstd_level: 9
   rows_per_file: 250000
+  progress_rows: 250000
   write_run_manifest: true
 
 minio:

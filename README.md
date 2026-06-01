@@ -40,6 +40,7 @@ Edit `config/config.yaml` for:
 
 - Oracle connection and source schema
 - Extraction window
+- Optional table subset for smoke tests
 - Output compression and row group sizing
 - Scope schema/table prefix
 - PII exclusion mode
@@ -47,6 +48,16 @@ Edit `config/config.yaml` for:
 - MinIO bucket and object prefix
 
 Environment placeholders like `${ORACLE_USER}` are expanded at runtime.
+
+For a one-table smoke test, set:
+
+```yaml
+extraction:
+  tables: ["CMS_CNOTE"]
+```
+
+An empty list extracts every table. The extractor logs row progress every
+`output.progress_rows` rows.
 
 ## MinIO
 
