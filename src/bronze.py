@@ -222,15 +222,15 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
     TableSpec("CMS_CNOTE", "cms_cnote", Stage.ANCHOR),
     TableSpec("CMS_APICUST", "cms_apicust", Stage.CNOTE, "APICUST_CNOTE_NO", "CNOTE"),
     TableSpec("CMS_CNOTE_AMO", "cms_cnote_amo", Stage.CNOTE, "CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_MRCNOTE", "cms_mrcnote", Stage.CNOTE, "MRCNOTE_NO", "CNOTE"),
     TableSpec("CMS_DRCNOTE", "cms_drcnote", Stage.CNOTE, "DRCNOTE_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_MHI_HOC", "cms_mhi_hoc", Stage.CNOTE, "MHI_NO", "CNOTE"),
+    TableSpec("CMS_MRCNOTE", "cms_mrcnote", Stage.CNOTE, "MRCNOTE_NO", "DRCNOTE"),
     TableSpec("CMS_DHI_HOC", "cms_dhi_hoc", Stage.CNOTE, "DHI_CNOTE_NO", "CNOTE"),
+    TableSpec("CMS_MHI_HOC", "cms_mhi_hoc", Stage.CNOTE, "MHI_NO", "DHI_HOC"),
     TableSpec("CMS_DSTATUS", "cms_dstatus", Stage.CNOTE, "DSTATUS_CNOTE_NO", "CNOTE"),
     TableSpec("CMS_CNOTE_POD", "cms_cnote_pod", Stage.CNOTE, "CNOTE_POD_NO", "CNOTE"),
     TableSpec("CMS_DHOV_RSHEET", "cms_dhov_rsheet", Stage.CNOTE, "DHOV_RSHEET_CNOTE", "CNOTE"),
-    TableSpec("CMS_MHOUNDEL_POD", "cms_mhoundel_pod", Stage.CNOTE, "MHOUNDEL_NO", "CNOTE"),
     TableSpec("CMS_DHOUNDEL_POD", "cms_dhoundel_pod", Stage.CNOTE, "DHOUNDEL_CNOTE_NO", "CNOTE"),
+    TableSpec("CMS_MHOUNDEL_POD", "cms_mhoundel_pod", Stage.CNOTE, "MHOUNDEL_NO", "DHOUNDEL"),
     TableSpec("CMS_DRSHEET", "cms_drsheet", Stage.CNOTE, "DRSHEET_CNOTE_NO", "CNOTE"),
     TableSpec("CMS_DRSHEET_PRA", "cms_drsheet_pra", Stage.CNOTE, "DRSHEET_CNOTE_NO", "CNOTE"),
     TableSpec("CMS_DBAG_HO", "cms_dbag_ho", Stage.CNOTE, "DBAG_CNOTE_NO", "CNOTE"),
@@ -240,18 +240,18 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
     TableSpec("CMS_MFCNOTE", "cms_mfcnote", Stage.CNOTE, "MFCNOTE_NO", "CNOTE"),
     TableSpec("CMS_DCORRECT_DEST", "cms_dcorrect_dest", Stage.CNOTE, "DCORRECT_CNOTE_NO", "CNOTE"),
     TableSpec("CMS_MANIFEST", "cms_manifest", Stage.BAG_MANIFEST, "MANIFEST_NO", "MANIFEST"),
-    TableSpec("CMS_MFBAG", "cms_mfbag", Stage.BAG_MANIFEST, "MFBAG_NO", "BAG"),
-    TableSpec("CMS_DMBAG", "cms_dmbag", Stage.BAG_MANIFEST, "DMBAG_BAG_NO", "BAG"),
-    TableSpec("CMS_MMBAG", "cms_mmbag", Stage.BAG_MANIFEST, "MMBAG_NO", "MMBAG"),
+    TableSpec("CMS_MFBAG", "cms_mfbag", Stage.BAG_MANIFEST, "MFBAG_MAN_NO", "MANIFEST"),
+    TableSpec("CMS_DMBAG", "cms_dmbag", Stage.BAG_MANIFEST, "DMBAG_BAG_NO", "MFBAG"),
+    TableSpec("CMS_MMBAG", "cms_mmbag", Stage.BAG_MANIFEST, "MMBAG_NO", "DMBAG"),
     TableSpec("CMS_DSMU", "cms_dsmu", Stage.BAG_MANIFEST, "DSMU_BAG_NO", "DMBAG"),
     TableSpec("CMS_MSMU", "cms_msmu", Stage.BAG_MANIFEST, "MSMU_NO", "SMU"),
-    TableSpec("CMS_COST_MTRANSIT_AGEN", "cms_cost_mtransit_agen", Stage.BAG_MANIFEST, "MANIFEST_NO", "MANIFEST"),
-    TableSpec("CMS_MRSHEET", "cms_mrsheet", Stage.RUNSHEET_DO, "MRSHEET_NO", "RUNSHEET"),
+    TableSpec("CMS_COST_MTRANSIT_AGEN", "cms_cost_mtransit_agen", Stage.BAG_MANIFEST, "MANIFEST_NO", "COST_MANIFEST"),
+    TableSpec("CMS_MRSHEET", "cms_mrsheet", Stage.RUNSHEET_DO, "MRSHEET_NO", "DRSHEET"),
     TableSpec("CMS_MSJ", "cms_msj", Stage.RUNSHEET_DO, "MSJ_NO", "MSJ"),
     TableSpec("CMS_RDSJ", "cms_rdsj", Stage.RUNSHEET_DO, "RDSJ_HVI_NO", "HVI"),
     TableSpec("CMS_MHICNOTE", "cms_mhicnote", Stage.RUNSHEET_DO, "MHICNOTE_NO", "HVI"),
     TableSpec("CMS_MHOCNOTE", "cms_mhocnote", Stage.RUNSHEET_DO, "MHOCNOTE_NO", "HVO"),
-    TableSpec("CMS_DSJ", "cms_dsj", Stage.RUNSHEET_DO, "DSJ_HVO_NO", "HVO"),
+    TableSpec("CMS_DSJ", "cms_dsj", Stage.RUNSHEET_DO, "DSJ_HVO_NO", "RDSJ_HVO"),
     TableSpec("CMS_DROURATE", "cms_drourate", Stage.REFERENCE),
     TableSpec("ORA_ZONE", "ora_zone", Stage.REFERENCE),
     TableSpec("ORA_USER", "ora_user", Stage.REFERENCE),
@@ -387,167 +387,227 @@ def materialize_scope_tables(
         )
         logger.info("Oracle scope CNOTE: %s rows", f"{counts['CNOTE']:,}")
 
-    if "BAG" in required_scopes:
-        logger.info("Creating Oracle scope BAG")
-        counts["BAG"] = _create_scope(
-        conn,
-        settings.table("BAG"),
-        "BAG_NO",
-        f"""
-        SELECT DBAG_NO AS BAG_NO
-        FROM {src}.CMS_DBAG_HO
-        WHERE DBAG_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-        UNION
-        SELECT MFCNOTE_BAG_NO AS BAG_NO
-        FROM {src}.CMS_MFCNOTE
-        WHERE MFCNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-        """,
-        {},
-    )
-        logger.info("Oracle scope BAG: %s rows", f"{counts['BAG']:,}")
+    if "DRCNOTE" in required_scopes:
+        logger.info("Creating Oracle scope DRCNOTE")
+        counts["DRCNOTE"] = _create_scope(
+            conn,
+            settings.table("DRCNOTE"),
+            "DRCNOTE_NO",
+            f"""
+            SELECT DRCNOTE_NO
+            FROM {src}.CMS_DRCNOTE
+            WHERE DRCNOTE_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
+            """,
+            {},
+        )
+        logger.info("Oracle scope DRCNOTE: %s rows", f"{counts['DRCNOTE']:,}")
 
-    if "DMBAG" in required_scopes:
-        logger.info("Creating Oracle scope DMBAG")
-        counts["DMBAG"] = _create_scope(
-        conn,
-        settings.table("DMBAG"),
-        "DMBAG_NO",
-        f"""
-        SELECT DMBAG_NO
-        FROM {src}.CMS_DMBAG
-        WHERE DMBAG_BAG_NO IN (SELECT BAG_NO FROM {settings.table("BAG")})
-        """,
-        {},
-    )
-        logger.info("Oracle scope DMBAG: %s rows", f"{counts['DMBAG']:,}")
+    if "DHI_HOC" in required_scopes:
+        logger.info("Creating Oracle scope DHI_HOC")
+        counts["DHI_HOC"] = _create_scope(
+            conn,
+            settings.table("DHI_HOC"),
+            "DHI_NO",
+            f"""
+            SELECT DHI_NO
+            FROM {src}.CMS_DHI_HOC
+            WHERE DHI_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
+            """,
+            {},
+        )
+        logger.info("Oracle scope DHI_HOC: %s rows", f"{counts['DHI_HOC']:,}")
+
+    if "DHOUNDEL" in required_scopes:
+        logger.info("Creating Oracle scope DHOUNDEL")
+        counts["DHOUNDEL"] = _create_scope(
+            conn,
+            settings.table("DHOUNDEL"),
+            "DHOUNDEL_NO",
+            f"""
+            SELECT DHOUNDEL_NO
+            FROM {src}.CMS_DHOUNDEL_POD
+            WHERE DHOUNDEL_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
+            """,
+            {},
+        )
+        logger.info("Oracle scope DHOUNDEL: %s rows", f"{counts['DHOUNDEL']:,}")
+
+    if "DRSHEET" in required_scopes:
+        logger.info("Creating Oracle scope DRSHEET")
+        counts["DRSHEET"] = _create_scope(
+            conn,
+            settings.table("DRSHEET"),
+            "DRSHEET_NO",
+            f"""
+            SELECT DRSHEET_NO
+            FROM {src}.CMS_DRSHEET
+            WHERE DRSHEET_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
+            """,
+            {},
+        )
+        logger.info("Oracle scope DRSHEET: %s rows", f"{counts['DRSHEET']:,}")
 
     if "MANIFEST" in required_scopes:
         logger.info("Creating Oracle scope MANIFEST")
         counts["MANIFEST"] = _create_scope(
-        conn,
-        settings.table("MANIFEST"),
-        "MANIFEST_NO",
-        f"""
-        SELECT MFCNOTE_MAN_NO AS MANIFEST_NO
-        FROM {src}.CMS_MFCNOTE
-        WHERE MFCNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-        UNION
-        SELECT MANIFEST_NO
-        FROM {src}.CMS_COST_MTRANSIT_AGEN
-        WHERE MANIFEST_NO IS NOT NULL
-          AND MANIFEST_NO IN (
-              SELECT MFCNOTE_MAN_NO FROM {src}.CMS_MFCNOTE
-              WHERE MFCNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-          )
-        """,
-        {},
-    )
+            conn,
+            settings.table("MANIFEST"),
+            "MANIFEST_NO",
+            f"""
+            SELECT MFCNOTE_MAN_NO AS MANIFEST_NO
+            FROM {src}.CMS_MFCNOTE
+            WHERE MFCNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
+            """,
+            {},
+        )
         logger.info("Oracle scope MANIFEST: %s rows", f"{counts['MANIFEST']:,}")
+
+    if "MFBAG" in required_scopes:
+        logger.info("Creating Oracle scope MFBAG")
+        counts["MFBAG"] = _create_scope(
+            conn,
+            settings.table("MFBAG"),
+            "MFBAG_NO",
+            f"""
+            SELECT MFCNOTE_BAG_NO AS MFBAG_NO
+            FROM {src}.CMS_MFCNOTE
+            WHERE MFCNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
+            UNION
+            SELECT MFBAG_NO
+            FROM {src}.CMS_MFBAG
+            WHERE MFBAG_MAN_NO IN (SELECT MANIFEST_NO FROM {settings.table("MANIFEST")})
+            """,
+            {},
+        )
+        logger.info("Oracle scope MFBAG: %s rows", f"{counts['MFBAG']:,}")
+
+    if "DMBAG" in required_scopes:
+        logger.info("Creating Oracle scope DMBAG")
+        counts["DMBAG"] = _create_scope(
+            conn,
+            settings.table("DMBAG"),
+            "DMBAG_NO",
+            f"""
+            SELECT DMBAG_NO
+            FROM {src}.CMS_DMBAG
+            WHERE DMBAG_BAG_NO IN (SELECT MFBAG_NO FROM {settings.table("MFBAG")})
+            """,
+            {},
+        )
+        logger.info("Oracle scope DMBAG: %s rows", f"{counts['DMBAG']:,}")
 
     if "SMU" in required_scopes:
         logger.info("Creating Oracle scope SMU")
         counts["SMU"] = _create_scope(
-        conn,
-        settings.table("SMU"),
-        "SMU_NO",
-        f"""
-        SELECT DSMU_NO AS SMU_NO
-        FROM {src}.CMS_DSMU
-        WHERE DSMU_BAG_NO IN (SELECT DMBAG_NO FROM {settings.table("DMBAG")})
-        """,
-        {},
-    )
+            conn,
+            settings.table("SMU"),
+            "SMU_NO",
+            f"""
+            SELECT DSMU_NO AS SMU_NO
+            FROM {src}.CMS_DSMU
+            WHERE DSMU_BAG_NO IN (SELECT DMBAG_NO FROM {settings.table("DMBAG")})
+            """,
+            {},
+        )
         logger.info("Oracle scope SMU: %s rows", f"{counts['SMU']:,}")
 
     if "MMBAG" in required_scopes:
         logger.info("Creating Oracle scope MMBAG")
         counts["MMBAG"] = _create_scope(
-        conn,
-        settings.table("MMBAG"),
-        "MMBAG_NO",
-        f"""
-        SELECT BAG_NO AS MMBAG_NO
-        FROM {settings.table("BAG")}
-        UNION
-        SELECT DMBAG_NO AS MMBAG_NO
-        FROM {settings.table("DMBAG")}
-        """,
-        {},
-    )
+            conn,
+            settings.table("MMBAG"),
+            "MMBAG_NO",
+            f"""
+            SELECT DMBAG_NO AS MMBAG_NO
+            FROM {settings.table("DMBAG")}
+            """,
+            {},
+        )
         logger.info("Oracle scope MMBAG: %s rows", f"{counts['MMBAG']:,}")
 
-    if "RUNSHEET" in required_scopes:
-        logger.info("Creating Oracle scope RUNSHEET")
-        counts["RUNSHEET"] = _create_scope(
-        conn,
-        settings.table("RUNSHEET"),
-        "RUNSHEET_NO",
-        f"""
-        SELECT DRSHEET_NO AS RUNSHEET_NO
-        FROM {src}.CMS_DRSHEET
-        WHERE DRSHEET_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-        UNION
-        SELECT DHOV_RSHEET_NO AS RUNSHEET_NO
-        FROM {src}.CMS_DHOV_RSHEET
-        WHERE DHOV_RSHEET_CNOTE IN (SELECT CNOTE_NO FROM {cnote_scope})
-        """,
-        {},
-    )
-        logger.info("Oracle scope RUNSHEET: %s rows", f"{counts['RUNSHEET']:,}")
+    if "COST_MANIFEST" in required_scopes:
+        logger.info("Creating Oracle scope COST_MANIFEST")
+        counts["COST_MANIFEST"] = _create_scope(
+            conn,
+            settings.table("COST_MANIFEST"),
+            "MANIFEST_NO",
+            f"""
+            SELECT DMANIFEST_NO AS MANIFEST_NO
+            FROM {src}.CMS_COST_DTRANSIT_AGEN
+            WHERE CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
+            """,
+            {},
+        )
+        logger.info("Oracle scope COST_MANIFEST: %s rows", f"{counts['COST_MANIFEST']:,}")
 
     if "HVI" in required_scopes:
         logger.info("Creating Oracle scope HVI")
         counts["HVI"] = _create_scope(
-        conn,
-        settings.table("HVI"),
-        "HVI_NO",
-        f"""
-        SELECT DHICNOTE_NO AS HVI_NO
-        FROM {src}.CMS_DHICNOTE
-        WHERE DHICNOTE_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-        """,
-        {},
-    )
+            conn,
+            settings.table("HVI"),
+            "HVI_NO",
+            f"""
+            SELECT DHICNOTE_NO AS HVI_NO
+            FROM {src}.CMS_DHICNOTE
+            WHERE DHICNOTE_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
+            """,
+            {},
+        )
         logger.info("Oracle scope HVI: %s rows", f"{counts['HVI']:,}")
 
     if "HVO" in required_scopes:
         logger.info("Creating Oracle scope HVO")
         counts["HVO"] = _create_scope(
-        conn,
-        settings.table("HVO"),
-        "HVO_NO",
-        f"""
-        SELECT DHOCNOTE_NO AS HVO_NO
-        FROM {src}.CMS_DHOCNOTE
-        WHERE DHOCNOTE_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-        """,
-        {},
-    )
+            conn,
+            settings.table("HVO"),
+            "HVO_NO",
+            f"""
+            SELECT DHOCNOTE_NO AS HVO_NO
+            FROM {src}.CMS_DHOCNOTE
+            WHERE DHOCNOTE_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
+            """,
+            {},
+        )
         logger.info("Oracle scope HVO: %s rows", f"{counts['HVO']:,}")
+
+    if "RDSJ_HVO" in required_scopes:
+        logger.info("Creating Oracle scope RDSJ_HVO")
+        counts["RDSJ_HVO"] = _create_scope(
+            conn,
+            settings.table("RDSJ_HVO"),
+            "HVO_NO",
+            f"""
+            SELECT RDSJ_HVO_NO AS HVO_NO
+            FROM {src}.CMS_RDSJ
+            WHERE RDSJ_HVI_NO IN (SELECT HVI_NO FROM {settings.table("HVI")})
+            """,
+            {},
+        )
+        logger.info("Oracle scope RDSJ_HVO: %s rows", f"{counts['RDSJ_HVO']:,}")
 
     if "MSJ" in required_scopes:
         logger.info("Creating Oracle scope MSJ")
         counts["MSJ"] = _create_scope(
-        conn,
-        settings.table("MSJ"),
-        "MSJ_NO",
-        f"""
-        SELECT DSJ_NO AS MSJ_NO
-        FROM {src}.CMS_DSJ
-        WHERE DSJ_HVO_NO IN (SELECT HVO_NO FROM {settings.table("HVO")})
-        UNION
-        SELECT RDSJ_NO AS MSJ_NO
-        FROM {src}.CMS_RDSJ
-        WHERE RDSJ_HVI_NO IN (SELECT HVI_NO FROM {settings.table("HVI")})
-        """,
-        {},
-    )
+            conn,
+            settings.table("MSJ"),
+            "MSJ_NO",
+            f"""
+            SELECT DSJ_NO AS MSJ_NO
+            FROM {src}.CMS_DSJ
+            WHERE DSJ_HVO_NO IN (SELECT HVO_NO FROM {settings.table("RDSJ_HVO")})
+            """,
+            {},
+        )
         logger.info("Oracle scope MSJ: %s rows", f"{counts['MSJ']:,}")
     return counts
 
 
 def cleanup_scope_tables(conn: Any, settings: ScopeSettings) -> None:
-    for name in ("MSJ", "HVO", "HVI", "RUNSHEET", "MMBAG", "SMU", "MANIFEST", "DMBAG", "BAG", "CNOTE"):
+    for name in (
+        "MSJ", "RDSJ_HVO", "HVO", "HVI", "DRSHEET", "DHOUNDEL", "DHI_HOC",
+        "DRCNOTE", "COST_MANIFEST", "MMBAG", "SMU", "DMBAG", "MFBAG",
+        "MANIFEST", "CNOTE",
+    ):
         _drop_table(conn, settings.table(name))
     conn.commit()
 
@@ -562,20 +622,41 @@ def required_scopes_for_specs(specs: Sequence[TableSpec]) -> set[str]:
 
 
 def _all_scope_names() -> set[str]:
-    return {"CNOTE", "BAG", "DMBAG", "MANIFEST", "SMU", "MMBAG", "RUNSHEET", "HVI", "HVO", "MSJ"}
+    return {
+        "CNOTE",
+        "DRCNOTE",
+        "DHI_HOC",
+        "DHOUNDEL",
+        "DRSHEET",
+        "MANIFEST",
+        "MFBAG",
+        "DMBAG",
+        "SMU",
+        "MMBAG",
+        "COST_MANIFEST",
+        "HVI",
+        "HVO",
+        "RDSJ_HVO",
+        "MSJ",
+    }
 
 
 def _expand_required_scopes(scopes: set[str]) -> set[str]:
     dependencies = {
-        "BAG": {"CNOTE"},
-        "DMBAG": {"BAG"},
+        "DRCNOTE": {"CNOTE"},
+        "DHI_HOC": {"CNOTE"},
+        "DHOUNDEL": {"CNOTE"},
+        "DRSHEET": {"CNOTE"},
         "MANIFEST": {"CNOTE"},
+        "MFBAG": {"MANIFEST"},
+        "DMBAG": {"MFBAG"},
         "SMU": {"DMBAG"},
-        "MMBAG": {"BAG", "DMBAG"},
-        "RUNSHEET": {"CNOTE"},
+        "MMBAG": {"DMBAG"},
+        "COST_MANIFEST": {"CNOTE"},
         "HVI": {"CNOTE"},
         "HVO": {"CNOTE"},
-        "MSJ": {"HVI", "HVO"},
+        "RDSJ_HVO": {"HVI"},
+        "MSJ": {"RDSJ_HVO"},
     }
     expanded = {scope.upper() for scope in scopes}
     changed = True
@@ -592,14 +673,19 @@ def _expand_required_scopes(scopes: set[str]) -> set[str]:
 def scope_predicate(scope: ScopeSettings, table_alias: str, scope_name: str, scope_column: str) -> str:
     key_column = {
         "CNOTE": "CNOTE_NO",
-        "BAG": "BAG_NO",
-        "DMBAG": "DMBAG_NO",
+        "DRCNOTE": "DRCNOTE_NO",
+        "DHI_HOC": "DHI_NO",
+        "DHOUNDEL": "DHOUNDEL_NO",
+        "DRSHEET": "DRSHEET_NO",
         "MANIFEST": "MANIFEST_NO",
+        "MFBAG": "MFBAG_NO",
+        "DMBAG": "DMBAG_NO",
         "SMU": "SMU_NO",
         "MMBAG": "MMBAG_NO",
-        "RUNSHEET": "RUNSHEET_NO",
+        "COST_MANIFEST": "MANIFEST_NO",
         "HVI": "HVI_NO",
         "HVO": "HVO_NO",
+        "RDSJ_HVO": "HVO_NO",
         "MSJ": "MSJ_NO",
     }[scope_name]
     return f"{table_alias}.{scope_column} IN (SELECT {key_column} FROM {scope.table(scope_name)})"
@@ -914,29 +1000,6 @@ def _build_sql(config: dict, spec: TableSpec, columns: list[str], scope: ScopeSe
 
 
 def table_scope_predicate(source_schema: str, scope: ScopeSettings, spec: TableSpec, table_alias: str) -> str:
-    cnote_scope = scope.table("CNOTE")
-    special_predicates = {
-        "CMS_MRCNOTE": (
-            f"{table_alias}.MRCNOTE_NO IN ("
-            f"SELECT DRCNOTE_NO FROM {source_schema}.CMS_DRCNOTE "
-            f"WHERE DRCNOTE_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})"
-            ")"
-        ),
-        "CMS_MHI_HOC": (
-            f"{table_alias}.MHI_NO IN ("
-            f"SELECT DHI_NO FROM {source_schema}.CMS_DHI_HOC "
-            f"WHERE DHI_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})"
-            ")"
-        ),
-        "CMS_MHOUNDEL_POD": (
-            f"{table_alias}.MHOUNDEL_NO IN ("
-            f"SELECT DHOUNDEL_NO FROM {source_schema}.CMS_DHOUNDEL_POD "
-            f"WHERE DHOUNDEL_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})"
-            ")"
-        ),
-    }
-    if spec.table in special_predicates:
-        return special_predicates[spec.table]
     return scope_predicate(scope, table_alias, spec.scope_name, spec.scope_column)
 
 
