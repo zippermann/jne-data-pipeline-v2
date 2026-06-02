@@ -6,7 +6,7 @@ Central config for all pipeline scripts.
 Pipeline flow (new):
   Oracle JNE.* (source)
     → unify_oracle.py    → HOA.UNIFIED_SHIPMENTS + HOA.TRANSFORMED_UNIFIED_SHIPMENTS  (Oracle)
-    → copy_to_postgres.py → transformed.unified_shipments  (PostgreSQL, for DQ)
+    → copy_to_postgres.py → transformed.unified_shipments  (PostgreSQL, downstream)
 
 Last updated: 2026-04-20
 """
@@ -14,7 +14,7 @@ Last updated: 2026-04-20
 import os
 
 # ============================================================
-# POSTGRESQL CONNECTION (DQ / downstream)
+# POSTGRESQL CONNECTION (downstream)
 # ============================================================
 DB_HOST = os.getenv('DB_HOST', 'jne-postgres')
 DB_PORT = os.getenv('DB_PORT', '5432')

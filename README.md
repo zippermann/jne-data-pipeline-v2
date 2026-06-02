@@ -63,7 +63,7 @@ An empty list extracts every table. The extractor logs row progress every
 
 Docker Compose includes `jne-minio` as the bronze data lake. The stage 1
 pipeline writes Parquet locally as scratch, uploads the run to MinIO, and stops
-there. The MinIO objects are the durable bronze artifact for governance or later
+there. The MinIO objects are the durable bronze artifact for later
 warehouse/database loading.
 
 Airflow still uses its own internal Postgres metadata database; that is separate

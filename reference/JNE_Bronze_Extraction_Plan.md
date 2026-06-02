@@ -1,6 +1,6 @@
 # JNE Relational Pipeline — Bronze Layer Extraction Plan
 
-**Scope of this document:** Layer 1 (bronze) extraction only. Governance is deliberately out of scope. The goal is to produce per-table, month-scoped Parquet extracts from Oracle and then measure performance and disk footprint before any governance is built on top. First attempt should pull full table columns, including PII columns, so the relational extract can be tested with minimal moving parts; PII exclusion can be enabled later if extraction fails, storage blows up, or policy requires it.
+**Scope of this document:** Layer 1 (bronze) extraction only. The goal is to produce per-table, month-scoped Parquet extracts from Oracle and then measure performance and disk footprint before any downstream layers are built on top. First attempt should pull full table columns, including PII columns, so the relational extract can be tested with minimal moving parts; PII exclusion can be enabled later if extraction fails, storage blows up, or policy requires it.
 
 **Key departure from the current pipeline:** the existing pipeline unifies at extraction time (`unify_jne_oracle.sql` joins 30+ tables and pivots manifests into one flat table). This pipeline keeps data **relational throughout**. Bronze extracts each source table separately. No join, no manifest pivot at this layer.
 
@@ -15,7 +15,7 @@ Oracle (read replica, IP 220)
 Bronze (Parquet, zstd, one dataset per table, partitioned by window + run)
         │   optional: COPY into Postgres bronze schema (one table per source)
         ▼
-[Silver / Gold / Governance — future layers, not in this document]
+[Silver / Gold — future layers, not in this document]
 ```
 
 Tables stay in their normalized form. Relationships (cnote → bag → manifest → runsheet → POD) are preserved as foreign keys across separate Parquet datasets, not collapsed into columns. Reconstructing relationships (joins, manifest pivot) is deferred to silver/gold where a specific consumer needs it.
@@ -253,13 +253,13 @@ Stage groups run sequentially (each depends on the prior stage's scope); tables 
 
 ## 9. Validation — Measuring the First Layer
 
-Since the point is to evaluate bronze before committing to governance, the run manifest (`run_manifest.py`) should capture, per table and in total:
+Since the point is to evaluate bronze before committing to downstream layers, the run manifest (`run_manifest.py`) should capture, per table and in total:
 
 - **Row count** per table (sanity-check against expected month volume).
 - **On-disk size** (compressed Parquet) per table and total — the headline disk-effectiveness number.
 - **Extraction wall-clock time** per table and total.
 - **Null density** per table (compare against the unified flat CSV's null density to quantify the storage saved by staying relational).
-- **Scope integrity:** every child row's foreign key resolves to a stage-0 cnote (no orphans introduced by the scoping subqueries).
+- **Scope consistency:** every child row's foreign key resolves to a stage-0 cnote (no orphans introduced by the scoping subqueries).
 
 A short comparison of total bronze size and total extraction time against the current unified-CSV approach for the same month is the cleanest way to show the senior whether relational bronze actually wins on disk and speed.
 

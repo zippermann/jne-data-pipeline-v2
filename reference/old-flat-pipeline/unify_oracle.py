@@ -15,7 +15,7 @@ Full run — phased scratch-table approach (same strategy as the old Postgres pi
 Incremental run — inline CTEs, no scratch tables (daily slice is small enough):
   DELETE rows >= cutoff, INSERT from the SQL WITH…SELECT filtered by cutoff.
 
-Transform step runs in Oracle after unification (adds DQ/manifest columns).
+Transform step runs in Oracle after unification (adds manifest helper columns).
 Run state is tracked in HOA.PIPELINE_RUN_LOG.
 """
 
@@ -547,7 +547,7 @@ def run_incremental_unification(cursor, sql_file, cutoff):
 
 
 # ============================================================
-# TRANSFORM (adds DQ/manifest columns to unified table)
+# TRANSFORM (adds manifest helper columns to unified table)
 # ============================================================
 
 TRANSFORM_COLS = """
@@ -569,10 +569,6 @@ TRANSFORM_COLS = """
         TM1_MAN_NO, TM2_MAN_NO, TM3_MAN_NO, TM4_MAN_NO, TM5_MAN_NO,
         TM6_MAN_NO, TM7_MAN_NO, TM8_MAN_NO, TM9_MAN_NO, TM10_MAN_NO
     ) IS NOT NULL THEN 1 ELSE 0 END AS HAS_TRANSIT,
-    CASE WHEN CNOTE_NO IS NULL OR CNOTE_DATE IS NULL
-              OR CNOTE_ORIGIN IS NULL OR CNOTE_DESTINATION IS NULL
-         THEN 1 ELSE 0 END AS DQ_HAS_NULLS,
-    SYSTIMESTAMP AS DQ_CHECK_DATE,
     SYSTIMESTAMP AS TRANSFORMED_AT"""
 
 
