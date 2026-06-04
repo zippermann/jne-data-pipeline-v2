@@ -929,8 +929,8 @@ def _projection(columns: Iterable[str], spec: TableSpec, exclusions: dict[str, s
     return selected
 
 
-def _output_dir(root: Path, window: Window, run_id: str, output_name: str) -> Path:
-    extract_date = _extract_date_label(run_id)
+def _output_dir(root: Path, window: Window, run_id: str, output_name: str, extract_date: str | None = None) -> Path:
+    extract_date = extract_date or _extract_date_label(run_id)
     return (
         root
         / f"window_start={window.start_label}"
@@ -1010,6 +1010,7 @@ def extract_table(
     window: Window,
     run_id: str,
     spec: TableSpec,
+    extract_date: str | None = None,
 ) -> TableResult:
     start = time.monotonic()
     output_root = Path(config["output"]["root"])
@@ -1019,7 +1020,7 @@ def extract_table(
     zstd_level = int(config["output"].get("zstd_level", 9))
     compression_level = zstd_level if compression == "zstd" else None
     exclusions = _load_pii_exclusions(config)
-    table_dir = _output_dir(output_root, window, run_id, spec.output_name)
+    table_dir = _output_dir(output_root, window, run_id, spec.output_name, extract_date)
     existing_result = _existing_table_result(table_dir, spec, start)
     if existing_result is not None:
         return existing_result
@@ -1148,8 +1149,18 @@ def _run_dir(root: Path, window: Window, run_id: str) -> Path:
     )
 
 
-def _lake_prefix(settings: MinioSettings, window: Window, run_id: str) -> str:
-    extract_date = _extract_date_label(run_id)
+def _run_dir_for_extract_date(root: Path, window: Window, run_id: str, extract_date: str) -> Path:
+    return (
+        root
+        / f"window_start={window.start_label}"
+        / f"window_end={window.end_label}"
+        / f"extract_date={extract_date}"
+        / f"run_id={run_id}"
+    )
+
+
+def lake_prefix(settings: MinioSettings, window: Window, run_id: str, extract_date: str | None = None) -> str:
+    extract_date = extract_date or _extract_date_label(run_id)
     prefix = settings.prefix.strip("/")
     return (
         f"{prefix}/window_start={window.start_label}/window_end={window.end_label}/"
@@ -1157,7 +1168,13 @@ def _lake_prefix(settings: MinioSettings, window: Window, run_id: str) -> str:
     )
 
 
-def upload_run_to_minio(config: dict, window: Window, run_id: str, manifest: RunManifest) -> MinioUploadResult | None:
+def upload_run_to_minio(
+    config: dict,
+    window: Window,
+    run_id: str,
+    manifest: RunManifest,
+    extract_date: str | None = None,
+) -> MinioUploadResult | None:
     settings = MinioSettings.from_config(config)
     if not settings.enabled:
         logger.info("Skipping MinIO upload because minio.enabled=false")
@@ -1168,8 +1185,12 @@ def upload_run_to_minio(config: dict, window: Window, run_id: str, manifest: Run
     if not client.bucket_exists(settings.bucket):
         client.make_bucket(settings.bucket)
 
-    run_dir = _run_dir(Path(config["output"]["root"]), window, run_id)
-    prefix = _lake_prefix(settings, window, run_id)
+    run_dir = (
+        _run_dir_for_extract_date(Path(config["output"]["root"]), window, run_id, extract_date)
+        if extract_date
+        else _run_dir(Path(config["output"]["root"]), window, run_id)
+    )
+    prefix = lake_prefix(settings, window, run_id, extract_date)
     uploaded_files = 0
     uploaded_bytes = 0
     for path in sorted(run_dir.rglob("*")):
@@ -1195,14 +1216,20 @@ def upload_run_to_minio(config: dict, window: Window, run_id: str, manifest: Run
     return result
 
 
-def upload_manifest_to_minio(config: dict, window: Window, run_id: str, manifest: RunManifest) -> None:
+def upload_manifest_to_minio(
+    config: dict,
+    window: Window,
+    run_id: str,
+    manifest: RunManifest,
+    extract_date: str | None = None,
+) -> None:
     settings = MinioSettings.from_config(config)
     if not settings.enabled:
         return
     client = _minio_client(settings)
     if not client.bucket_exists(settings.bucket):
         client.make_bucket(settings.bucket)
-    object_name = f"{_lake_prefix(settings, window, run_id)}/run_manifest.json"
+    object_name = f"{lake_prefix(settings, window, run_id, extract_date)}/run_manifest.json"
     client.fput_object(settings.bucket, object_name, str(manifest.path))
 
 
@@ -1210,8 +1237,8 @@ def upload_manifest_to_minio(config: dict, window: Window, run_id: str, manifest
 # RUNNER
 # ============================================================
 
-def _manifest_path(config: dict, window: Window, run_id: str) -> Path:
-    extract_date = _extract_date_label(run_id)
+def _manifest_path(config: dict, window: Window, run_id: str, extract_date: str | None = None) -> Path:
+    extract_date = extract_date or _extract_date_label(run_id)
     return (
         Path(config["output"]["root"])
         / f"window_start={window.start_label}"
@@ -1232,6 +1259,7 @@ def _extract_stage(
     stage: Stage,
     workers: int,
     manifest: RunManifest,
+    extract_date: str | None = None,
 ) -> None:
     specs = specs_for_stage_from(specs, stage)
     if stage == Stage.REFERENCE and config["scoping"].get("reference_tables_mode", "full") == "skip":
@@ -1243,14 +1271,14 @@ def _extract_stage(
     logger.info("Extracting stage %s (%s tables)", stage.value, len(specs))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
-            pool.submit(extract_table, config, settings, scope, window, run_id, spec): spec.table
+            pool.submit(extract_table, config, settings, scope, window, run_id, spec, extract_date): spec.table
             for spec in specs
         }
         for future in as_completed(futures):
             manifest.add_table(future.result())
 
 
-def run(config_path: str, run_id: str, keep_scope: bool = False) -> None:
+def run(config_path: str, run_id: str, keep_scope: bool = False, extract_date: str | None = None) -> None:
     config = load_config(config_path)
     window = resolve_window(config)
     safe_run_id = sanitize_run_id(run_id)
@@ -1258,7 +1286,7 @@ def run(config_path: str, run_id: str, keep_scope: bool = False) -> None:
     oracle_settings = OracleSettings.from_config(config)
     scope = ScopeSettings.from_config(config, safe_run_id)
     workers = int(os.getenv("BRONZE_WORKERS", "4"))
-    manifest = RunManifest(_manifest_path(config, window, safe_run_id), safe_run_id, window)
+    manifest = RunManifest(_manifest_path(config, window, safe_run_id, extract_date), safe_run_id, window)
     started = time.monotonic()
 
     logger.info(
@@ -1284,14 +1312,14 @@ def run(config_path: str, run_id: str, keep_scope: bool = False) -> None:
         logger.info("Scope counts: %s", counts)
 
     try:
-        _extract_stage(specs, config, oracle_settings, scope, window, safe_run_id, Stage.ANCHOR, 1, manifest)
-        _extract_stage(specs, config, oracle_settings, scope, window, safe_run_id, Stage.CNOTE, workers, manifest)
-        _extract_stage(specs, config, oracle_settings, scope, window, safe_run_id, Stage.BAG_MANIFEST, workers, manifest)
-        _extract_stage(specs, config, oracle_settings, scope, window, safe_run_id, Stage.RUNSHEET_DO, workers, manifest)
-        _extract_stage(specs, config, oracle_settings, scope, window, safe_run_id, Stage.REFERENCE, workers, manifest)
-        upload_run_to_minio(config, window, safe_run_id, manifest)
+        _extract_stage(specs, config, oracle_settings, scope, window, safe_run_id, Stage.ANCHOR, 1, manifest, extract_date)
+        _extract_stage(specs, config, oracle_settings, scope, window, safe_run_id, Stage.CNOTE, workers, manifest, extract_date)
+        _extract_stage(specs, config, oracle_settings, scope, window, safe_run_id, Stage.BAG_MANIFEST, workers, manifest, extract_date)
+        _extract_stage(specs, config, oracle_settings, scope, window, safe_run_id, Stage.RUNSHEET_DO, workers, manifest, extract_date)
+        _extract_stage(specs, config, oracle_settings, scope, window, safe_run_id, Stage.REFERENCE, workers, manifest, extract_date)
+        upload_run_to_minio(config, window, safe_run_id, manifest, extract_date)
         manifest.complete()
-        upload_manifest_to_minio(config, window, safe_run_id, manifest)
+        upload_manifest_to_minio(config, window, safe_run_id, manifest, extract_date)
     finally:
         if keep_scope:
             logger.info("Keeping scope tables for inspection")
@@ -1307,10 +1335,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Extract JNE relational bronze Parquet datasets.")
     parser.add_argument("--config", default="config/config.yaml")
     parser.add_argument("--run-id", default=datetime.utcnow().strftime("%Y%m%dT%H%M%S"))
+    parser.add_argument("--extract-date", help="Date partition label for local and MinIO output, YYYY-MM-DD.")
     parser.add_argument("--keep-scope", action="store_true")
     args = parser.parse_args()
     configure_logging()
-    run(args.config, args.run_id, args.keep_scope)
+    run(args.config, args.run_id, args.keep_scope, args.extract_date)
 
 
 if __name__ == "__main__":

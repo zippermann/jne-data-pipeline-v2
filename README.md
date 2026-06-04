@@ -71,7 +71,11 @@ from the JNE data path.
 
 ## Airflow
 
-The new DAG is `jne_bronze_extract`. It runs:
+The DAG is `jne_bronze_extract`. It runs three tasks in order:
+
+- `extract_bronze`: Oracle tables to partitioned Parquet in MinIO
+- `run_governance`: referential governance checks over the MinIO bronze run
+- `load_postgres`: loads bronze tables plus governance results into JNE Postgres
 
 ```bash
 python -m src.bronze --config config/config.yaml --run-id {{ ts_nodash }}
@@ -79,3 +83,20 @@ python -m src.bronze --config config/config.yaml --run-id {{ ts_nodash }}
 
 Pass `{"keep_scope": true}` in `dag_run.conf` to leave Oracle scope tables in
 place for manual inspection.
+
+The DAG derives the exact `BRONZE_RUN_PREFIX`, governance output prefix, and
+window labels from the same config for all tasks, so the governance and Postgres
+load steps point at the bronze objects produced by that run.
+
+## Postgres Inspection
+
+Docker Compose now includes `jne-postgres`, separate from Airflow's metadata
+database. After the DAG finishes, query:
+
+```bash
+docker compose exec jne-postgres psql -U jne -d jne
+```
+
+Bronze source tables are loaded under the `bronze` schema, governance outputs
+under the `governance` schema, and the run manifest is available as
+`bronze.run_manifest`.

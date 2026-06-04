@@ -10,6 +10,7 @@ from src.config import (
     GovernanceConfig,
     GovernanceOutputConfig,
     MinioConfig,
+    PostgresConfig,
 )
 from src.rules.executors import run_intg1
 from src.rules.registry import RuleSpec
@@ -31,6 +32,7 @@ def _config() -> GovernanceConfig:
         bronze=BronzeConfig("unused", "unused"),
         governance=GovernanceOutputConfig("unused", "unused", 10000),
         duckdb=DuckDBConfig(),
+        postgres=PostgresConfig("localhost", 5432, "jne", "jne", "jne"),
         extraction_window={},
     )
 

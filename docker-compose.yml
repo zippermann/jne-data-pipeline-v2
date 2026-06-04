@@ -39,6 +39,15 @@ x-minio-env: &minio-env
   MINIO_BUCKET: ${MINIO_BUCKET:-jne-bronze}
   MINIO_SECURE: "false"
 
+x-jne-postgres-env: &jne-postgres-env
+  POSTGRES_HOST: jne-postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: ${JNE_POSTGRES_DB:-jne}
+  POSTGRES_USER: ${JNE_POSTGRES_USER:-jne}
+  POSTGRES_PASSWORD: ${JNE_POSTGRES_PASSWORD:-jne}
+  POSTGRES_BRONZE_SCHEMA: ${POSTGRES_BRONZE_SCHEMA:-bronze}
+  POSTGRES_GOVERNANCE_SCHEMA: ${POSTGRES_GOVERNANCE_SCHEMA:-governance}
+
 x-airflow-volumes: &airflow-volumes
   - .:/opt/airflow/project
   - ./airflow/dags:/opt/airflow/dags
@@ -93,6 +102,29 @@ services:
       - jne-network
 
   # ============================================================
+  # JNE PostgreSQL (queryable bronze + governance result tables)
+  # ============================================================
+  jne-postgres:
+    container_name: jne-postgres
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${JNE_POSTGRES_USER:-jne}
+      POSTGRES_PASSWORD: ${JNE_POSTGRES_PASSWORD:-jne}
+      POSTGRES_DB: ${JNE_POSTGRES_DB:-jne}
+    ports:
+      - "${JNE_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - jne_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${JNE_POSTGRES_USER:-jne} -d ${JNE_POSTGRES_DB:-jne}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jne-network
+
+  # ============================================================
   # Airflow Init (one-shot: db migrate + create admin user)
   # ============================================================
   airflow-init:
@@ -104,6 +136,8 @@ services:
       airflow-postgres:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      jne-postgres:
         condition: service_healthy
     environment:
       <<: *airflow-env
@@ -132,8 +166,10 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      jne-postgres:
+        condition: service_healthy
     environment:
-      <<: [*oracle-env, *minio-env]
+      <<: [*oracle-env, *minio-env, *jne-postgres-env]
     volumes: *airflow-volumes
     command: >-
       bash -c "cd /opt/airflow/project && python -m src.bronze --config config/config.yaml --run-id bronze_init_$$(date -u +%Y%m%dT%H%M%S)"
@@ -155,8 +191,10 @@ services:
         condition: service_completed_successfully
       minio:
         condition: service_healthy
+      jne-postgres:
+        condition: service_healthy
     environment:
-      <<: [*airflow-env, *oracle-env, *minio-env]
+      <<: [*airflow-env, *oracle-env, *minio-env, *jne-postgres-env]
       AIRFLOW__WEBSERVER__RBAC: "True"
     volumes: *airflow-volumes
     ports:
@@ -179,6 +217,8 @@ services:
         condition: service_completed_successfully
       minio:
         condition: service_healthy
+      jne-postgres:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -188,7 +228,7 @@ services:
           cpus: '2'
           memory: 4G
     environment:
-      <<: [*airflow-env, *oracle-env, *minio-env]
+      <<: [*airflow-env, *oracle-env, *minio-env, *jne-postgres-env]
     volumes: *airflow-volumes
     command: scheduler
     networks:
@@ -199,6 +239,7 @@ volumes:
   minio_data:
     name: jne-minio-data
   airflow_postgres_data:
+  jne_postgres_data:
 
 # Docker network for service communication
 networks:

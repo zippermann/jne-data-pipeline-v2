@@ -20,6 +20,15 @@ duckdb:
   memory_limit: "4GB"
   threads: 4
 
+postgres:
+  host: "${POSTGRES_HOST:-localhost}"
+  port: "${POSTGRES_PORT:-5432}"
+  database: "${POSTGRES_DB:-jne}"
+  user: "${POSTGRES_USER:-jne}"
+  password: "${POSTGRES_PASSWORD:-jne}"
+  bronze_schema: "${POSTGRES_BRONZE_SCHEMA:-bronze}"
+  governance_schema: "${POSTGRES_GOVERNANCE_SCHEMA:-governance}"
+
 extraction_window:
   start: "${EXTRACTION_WINDOW_START:-}"
   end: "${EXTRACTION_WINDOW_END:-}"
