@@ -11,7 +11,7 @@ import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from src.config import GovernanceConfig, load_governance_config
 
@@ -110,45 +110,27 @@ def _replace_table(cursor: Any, schema_name: str, table_name: str, arrow_schema:
     cursor.execute(f"CREATE TABLE {schema_sql}.{table_sql} ({', '.join(columns)})")
 
 
-def _copy_table(cursor: Any, schema_name: str, table_name: str, arrow_table: Any) -> None:
-    columns = [_quote_identifier(name.lower()) for name in arrow_table.schema.names]
+def _copy_batch(cursor: Any, schema_name: str, table_name: str, batch: Any) -> None:
+    columns = [_quote_identifier(name.lower()) for name in batch.schema.names]
     destination = (
         f"{_quote_identifier(schema_name)}.{_quote_identifier(table_name)} "
         f"({', '.join(columns)})"
     )
     copy_sql = f"COPY {destination} FROM STDIN WITH (FORMAT CSV, NULL '\\N')"
 
-    for batch in arrow_table.to_batches(max_chunksize=10000):
-        stream = io.StringIO()
-        writer = csv.writer(stream)
-        rows = zip(*(column.to_pylist() for column in batch.columns))
-        for row in rows:
-            writer.writerow(["\\N" if value is None else value for value in row])
-        stream.seek(0)
-        cursor.copy_expert(copy_sql, stream)
+    stream = io.StringIO()
+    writer = csv.writer(stream)
+    rows = zip(*(column.to_pylist() for column in batch.columns))
+    for row in rows:
+        writer.writerow(["\\N" if value is None else value for value in row])
+    stream.seek(0)
+    cursor.copy_expert(copy_sql, stream)
 
 
 def _download_parquet(client: Any, bucket: str, object_name: str, tmpdir: Path) -> Path:
     local_path = tmpdir / object_name.replace("/", "__")
     client.fget_object(bucket, object_name, str(local_path))
     return local_path
-
-
-def _read_parquet_objects(client: Any, bucket: str, object_names: Iterable[str], tmpdir: Path) -> Any:
-    import pyarrow.parquet as pq
-
-    tables = []
-    for object_name in object_names:
-        local_path = _download_parquet(client, bucket, object_name, tmpdir)
-        tables.append(pq.read_table(local_path))
-    if not tables:
-        raise RuntimeError("No Parquet objects found to load")
-    if len(tables) == 1:
-        return tables[0]
-
-    import pyarrow as pa
-
-    return pa.concat_tables(tables, promote_options="default")
 
 
 def _load_parquet_group(
@@ -159,20 +141,34 @@ def _load_parquet_group(
     group: ObjectGroup,
     tmpdir: Path,
 ) -> int:
-    arrow_table = _read_parquet_objects(client, bucket, group.object_names, tmpdir)
+    if not group.object_names:
+        raise RuntimeError(f"No Parquet objects found to load for {schema_name}.{group.table_name}")
+
+    import pyarrow.parquet as pq
+
+    row_count = 0
     with conn.cursor() as cursor:
         _create_schema(cursor, schema_name)
-        _replace_table(cursor, schema_name, group.table_name, arrow_table.schema)
-        _copy_table(cursor, schema_name, group.table_name, arrow_table)
+        for index, object_name in enumerate(group.object_names):
+            local_path = _download_parquet(client, bucket, object_name, tmpdir)
+            try:
+                parquet_file = pq.ParquetFile(local_path)
+                if index == 0:
+                    _replace_table(cursor, schema_name, group.table_name, parquet_file.schema_arrow)
+                for batch in parquet_file.iter_batches(batch_size=10000):
+                    _copy_batch(cursor, schema_name, group.table_name, batch)
+                    row_count += batch.num_rows
+            finally:
+                local_path.unlink(missing_ok=True)
     conn.commit()
     logger.info(
         "Loaded %s.%s: %s rows from %s object(s)",
         schema_name,
         group.table_name,
-        arrow_table.num_rows,
+        row_count,
         len(group.object_names),
     )
-    return arrow_table.num_rows
+    return row_count
 
 
 def _load_run_manifest(conn: Any, client: Any, config: GovernanceConfig) -> None:
