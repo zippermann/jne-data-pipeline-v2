@@ -74,7 +74,7 @@ from the JNE data path.
 The DAG is `jne_bronze_extract`. It runs three tasks in order:
 
 - `extract_bronze`: Oracle tables to partitioned Parquet in MinIO
-- `run_governance`: referential governance checks over the MinIO bronze run
+- `run_governance`: workbook-indexed governance checks over the MinIO bronze run
 - `load_postgres`: loads bronze tables plus governance results into JNE Postgres
 
 ```bash

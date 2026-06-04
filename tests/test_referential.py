@@ -52,6 +52,8 @@ def test_run_intg1_finds_known_orphan(tmp_path):
         code="INTG1TEST",
         element="INTG",
         rule_family="INTG1",
+        table="CHILD",
+        columns=("CHILD_FK",),
         child_table="CHILD",
         child_fk="CHILD_FK",
         parent_table="PARENT",
@@ -62,12 +64,11 @@ def test_run_intg1_finds_known_orphan(tmp_path):
     con.execute("""
         CREATE TEMP TABLE failures (
             index_code VARCHAR,
-            child_table VARCHAR,
-            child_fk VARCHAR,
-            child_fk_value VARCHAR,
-            parent_table VARCHAR,
-            parent_pk VARCHAR,
-            affected_child_rows BIGINT,
+            table_name VARCHAR,
+            column_names VARCHAR,
+            failed_value VARCHAR,
+            failure_reason VARCHAR,
+            affected_rows BIGINT,
             boundary_suspect BOOLEAN,
             run_at VARCHAR
         )
@@ -81,7 +82,7 @@ def test_run_intg1_finds_known_orphan(tmp_path):
         "failures",
     )
 
-    failures = con.execute("SELECT child_fk_value, affected_child_rows FROM failures").fetchall()
+    failures = con.execute("SELECT failed_value, affected_rows FROM failures").fetchall()
     assert result.total_checked == 3
     assert result.orphan_key_count == 1
     assert result.orphan_row_count == 2

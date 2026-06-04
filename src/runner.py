@@ -18,14 +18,14 @@ SCORECARD_COLUMNS = [
     "index_code",
     "element",
     "rule_family",
-    "child_table",
-    "child_fk",
-    "parent_table",
-    "parent_pk",
+    "table_name",
+    "column_names",
+    "compared_table",
+    "compared_columns",
     "total_checked",
-    "orphan_key_count",
-    "orphan_row_count",
-    "orphan_rate",
+    "failed_key_count",
+    "failed_row_count",
+    "failure_rate",
     "status",
     "needs_confirmation",
     "skipped_reason",
@@ -40,12 +40,11 @@ def _create_failures_table(con) -> None:
     con.execute(f"""
         CREATE OR REPLACE TEMP TABLE {FAILURES_TABLE} (
             index_code VARCHAR,
-            child_table VARCHAR,
-            child_fk VARCHAR,
-            child_fk_value VARCHAR,
-            parent_table VARCHAR,
-            parent_pk VARCHAR,
-            affected_child_rows BIGINT,
+            table_name VARCHAR,
+            column_names VARCHAR,
+            failed_value VARCHAR,
+            failure_reason VARCHAR,
+            affected_rows BIGINT,
             boundary_suspect BOOLEAN,
             run_at VARCHAR
         )
@@ -53,7 +52,9 @@ def _create_failures_table(con) -> None:
 
 
 def _table_paths(config, rules) -> dict[str, str]:
-    tables = {rule.child_table for rule in rules} | {rule.parent_table for rule in rules}
+    tables = {rule.table for rule in rules if rule.table}
+    tables |= {rule.child_table for rule in rules if rule.child_table}
+    tables |= {rule.parent_table for rule in rules if rule.parent_table}
     return {table: table_path(config, table) for table in tables}
 
 
@@ -132,7 +133,9 @@ def run(config_path: str) -> list:
             _create_failures_table(con)
             results = []
             for rule in rules:
-                executor = EXECUTORS[rule.rule_family]
+                executor = EXECUTORS.get(rule.rule_family)
+                if executor is None:
+                    executor = EXECUTORS[rule.element]
                 results.append(executor(rule, con, config, table_paths, FAILURES_TABLE))
             _print_scorecard(results)
             outputs = write_outputs(config, con, results, FAILURES_TABLE)
