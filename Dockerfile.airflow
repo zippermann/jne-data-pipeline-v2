@@ -3,9 +3,6 @@ FROM apache/airflow:2.8.0-python3.11
 # Install packages as airflow user
 USER airflow
 
-# Bronze extraction dependencies
-RUN pip install --no-cache-dir \
-    pyarrow \
-    pyyaml \
-    oracledb \
-    minio
+# Project dependencies
+COPY --chown=airflow:root requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
