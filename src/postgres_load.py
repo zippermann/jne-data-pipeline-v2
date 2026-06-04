@@ -271,21 +271,21 @@ def run(config_path: str) -> None:
 
     with tempfile.TemporaryDirectory() as tmp, _connect_postgres(config) as conn:
         tmpdir = Path(tmp)
-        for group in bronze_groups:
-            _load_parquet_group(
-                conn,
-                client,
-                config.bronze.bucket,
-                config.postgres.bronze_schema,
-                group,
-                tmpdir,
-            )
         for group in governance_groups:
             _load_parquet_group(
                 conn,
                 client,
                 config.governance.output_bucket,
                 config.postgres.governance_schema,
+                group,
+                tmpdir,
+            )
+        for group in bronze_groups:
+            _load_parquet_group(
+                conn,
+                client,
+                config.bronze.bucket,
+                config.postgres.bronze_schema,
                 group,
                 tmpdir,
             )
