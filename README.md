@@ -75,7 +75,7 @@ The DAG is `jne_bronze_extract`. It runs three tasks in order:
 
 - `extract_bronze`: Oracle tables to partitioned Parquet in MinIO
 - `run_governance`: workbook-indexed governance checks over the MinIO bronze run
-- `load_postgres`: loads bronze tables plus governance results into JNE Postgres
+- `load_postgres`: loads governance results into JNE Postgres
 
 ```bash
 python -m src.bronze --config config/config.yaml --run-id {{ ts_nodash }}
@@ -97,6 +97,6 @@ database. After the DAG finishes, query:
 docker compose exec jne-postgres psql -U jne -d jne
 ```
 
-Bronze source tables are loaded under the `bronze` schema, governance outputs
-under the `governance` schema, and the run manifest is available as
-`bronze.run_manifest`.
+Governance outputs are loaded under the `governance` schema. Bronze source data
+stays in MinIO as Parquet so the pipeline does not duplicate the full dataset in
+Postgres.

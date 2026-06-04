@@ -1,11 +1,10 @@
-"""Load bronze and governance Parquet outputs from MinIO into Postgres."""
+"""Load governance Parquet outputs from MinIO into Postgres."""
 
 from __future__ import annotations
 
 import argparse
 import csv
 import io
-import json
 import logging
 import re
 import tempfile
@@ -171,72 +170,6 @@ def _load_parquet_group(
     return row_count
 
 
-def _load_run_manifest(conn: Any, client: Any, config: GovernanceConfig) -> None:
-    bucket = config.bronze.bucket
-    object_name = f"{config.bronze.run_prefix}/run_manifest.json"
-    response = None
-    try:
-        response = client.get_object(bucket, object_name)
-        manifest = json.loads(response.read().decode("utf-8"))
-    finally:
-        if response is not None:
-            response.close()
-            response.release_conn()
-
-    schema = config.postgres.bronze_schema
-    with conn.cursor() as cursor:
-        _create_schema(cursor, schema)
-        cursor.execute(f"DROP TABLE IF EXISTS {_quote_identifier(schema)}.run_manifest")
-        cursor.execute(
-            f"""
-            CREATE TABLE {_quote_identifier(schema)}.run_manifest (
-                run_id TEXT PRIMARY KEY,
-                window_start DATE,
-                window_end DATE,
-                minio_bucket TEXT,
-                minio_prefix TEXT,
-                manifest JSONB
-            )
-            """
-        )
-        cursor.execute(
-            f"""
-            INSERT INTO {_quote_identifier(schema)}.run_manifest
-            (run_id, window_start, window_end, minio_bucket, minio_prefix, manifest)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            """,
-            (
-                manifest.get("run_id"),
-                manifest.get("window_start"),
-                manifest.get("window_end"),
-                manifest.get("minio", {}).get("bucket"),
-                manifest.get("minio", {}).get("prefix"),
-                json.dumps(manifest),
-            ),
-        )
-    conn.commit()
-
-
-def _bronze_groups(client: Any, config: GovernanceConfig) -> list[ObjectGroup]:
-    prefix = config.bronze.run_prefix.strip("/")
-    grouped: dict[str, list[str]] = {}
-    for item in client.list_objects(config.bronze.bucket, prefix=f"{prefix}/", recursive=True):
-        object_name = item.object_name
-        if not object_name.endswith(".parquet"):
-            continue
-        relative = object_name.removeprefix(f"{prefix}/")
-        parts = relative.split("/", 1)
-        if len(parts) != 2:
-            continue
-        table_name, filename = parts
-        if filename.startswith("part-"):
-            grouped.setdefault(table_name, []).append(object_name)
-    return [
-        ObjectGroup(table_name=table_name, object_names=sorted(object_names))
-        for table_name, object_names in sorted(grouped.items())
-    ]
-
-
 def _governance_groups(client: Any, config: GovernanceConfig) -> list[ObjectGroup]:
     bucket = config.governance.output_bucket
     prefix = config.governance.output_prefix.strip("/")
@@ -258,11 +191,8 @@ def _governance_groups(client: Any, config: GovernanceConfig) -> list[ObjectGrou
 def run(config_path: str) -> None:
     config = load_governance_config(config_path)
     client = _client(config)
-    bronze_groups = _bronze_groups(client, config)
     governance_groups = _governance_groups(client, config)
 
-    if not bronze_groups:
-        raise RuntimeError(f"No bronze Parquet objects found under s3://{config.bronze.bucket}/{config.bronze.run_prefix}")
     if not governance_groups:
         raise RuntimeError(
             "No governance Parquet objects found under "
@@ -280,26 +210,15 @@ def run(config_path: str) -> None:
                 group,
                 tmpdir,
             )
-        for group in bronze_groups:
-            _load_parquet_group(
-                conn,
-                client,
-                config.bronze.bucket,
-                config.postgres.bronze_schema,
-                group,
-                tmpdir,
-            )
-        _load_run_manifest(conn, client, config)
 
     logger.info(
-        "Postgres load complete: %s bronze table(s), %s governance table(s)",
-        len(bronze_groups),
+        "Postgres governance load complete: %s table(s)",
         len(governance_groups),
     )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Load JNE bronze and governance outputs into Postgres.")
+    parser = argparse.ArgumentParser(description="Load JNE governance outputs into Postgres.")
     parser.add_argument("--config", default="config/governance.yaml")
     args = parser.parse_args()
     configure_logging()
