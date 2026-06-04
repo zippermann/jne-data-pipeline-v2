@@ -2,7 +2,7 @@
 JNE Bronze Extraction DAG
 =========================
 Relational Oracle → Parquet bronze extraction, governance checks, and
-Postgres inspection loading.
+MinIO governance outputs.
 
 Pass {"keep_scope": true} in dag_run.conf to leave Oracle scope tables in place
 for inspection after the run.
@@ -29,11 +29,11 @@ default_args = {
 with DAG(
     "jne_bronze_extract",
     default_args=default_args,
-    description="JNE relational bronze extraction with governance and Postgres loading",
+    description="JNE relational bronze extraction with governance outputs",
     schedule_interval=None,
     catchup=False,
     max_active_runs=1,
-    tags=["jne", "bronze", "oracle", "parquet", "governance", "postgres"],
+    tags=["jne", "bronze", "oracle", "parquet", "governance"],
 ) as dag:
     run_context = (
         'RUN_ID="{{ ts_nodash }}" && '
@@ -69,13 +69,4 @@ with DAG(
         ),
     )
 
-    load_postgres = BashOperator(
-        task_id="load_postgres",
-        bash_command=(
-            "cd /opt/airflow/project && "
-            f"{run_context}"
-            "python -m src.postgres_load --config config/governance.yaml"
-        ),
-    )
-
-    extract_bronze >> run_governance >> load_postgres
+    extract_bronze >> run_governance

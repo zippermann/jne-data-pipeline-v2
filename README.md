@@ -71,11 +71,10 @@ from the JNE data path.
 
 ## Airflow
 
-The DAG is `jne_bronze_extract`. It runs three tasks in order:
+The DAG is `jne_bronze_extract`. It runs two tasks in order:
 
 - `extract_bronze`: Oracle tables to partitioned Parquet in MinIO
 - `run_governance`: workbook-indexed governance checks over the MinIO bronze run
-- `load_postgres`: loads governance results into JNE Postgres
 
 ```bash
 python -m src.bronze --config config/config.yaml --run-id {{ ts_nodash }}
@@ -85,18 +84,17 @@ Pass `{"keep_scope": true}` in `dag_run.conf` to leave Oracle scope tables in
 place for manual inspection.
 
 The DAG derives the exact `BRONZE_RUN_PREFIX`, governance output prefix, and
-window labels from the same config for all tasks, so the governance and Postgres
-load steps point at the bronze objects produced by that run.
+window labels from the same config for all tasks, so governance points at the
+bronze objects produced by that run.
 
-## Postgres Inspection
+## Governance Outputs
 
-Docker Compose now includes `jne-postgres`, separate from Airflow's metadata
-database. After the DAG finishes, query:
+Governance outputs are written to MinIO under:
 
-```bash
-docker compose exec jne-postgres psql -U jne -d jne
+```text
+s3://jne-bronze/governance/jne/run_id=<run_id>/
 ```
 
-Governance outputs are loaded under the `governance` schema. Bronze source data
-stays in MinIO as Parquet so the pipeline does not duplicate the full dataset in
-Postgres.
+Each governance run writes `scorecard.csv`, `scorecard.parquet`, and
+`failures.parquet`. Bronze source data also stays in MinIO as Parquet, so the
+pipeline does not duplicate data into a database.

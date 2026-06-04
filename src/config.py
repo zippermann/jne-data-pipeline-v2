@@ -63,23 +63,11 @@ class DuckDBConfig:
 
 
 @dataclass(frozen=True)
-class PostgresConfig:
-    host: str
-    port: int
-    database: str
-    user: str
-    password: str
-    bronze_schema: str = "bronze"
-    governance_schema: str = "governance"
-
-
-@dataclass(frozen=True)
 class GovernanceConfig:
     minio: MinioConfig
     bronze: BronzeConfig
     governance: GovernanceOutputConfig
     duckdb: DuckDBConfig
-    postgres: PostgresConfig
     extraction_window: dict[str, str]
 
 
@@ -100,7 +88,6 @@ def load_governance_config(path: str | Path = "config/governance.yaml") -> Gover
     bronze = raw.get("bronze", {})
     governance = raw.get("governance", {})
     duckdb = raw.get("duckdb", {})
-    postgres = raw.get("postgres", {})
 
     return GovernanceConfig(
         minio=MinioConfig(
@@ -122,15 +109,6 @@ def load_governance_config(path: str | Path = "config/governance.yaml") -> Gover
         duckdb=DuckDBConfig(
             memory_limit=duckdb.get("memory_limit", "4GB"),
             threads=int(duckdb.get("threads", 4)),
-        ),
-        postgres=PostgresConfig(
-            host=postgres.get("host", "localhost"),
-            port=int(postgres.get("port", 5432)),
-            database=postgres.get("database", "jne"),
-            user=postgres.get("user", "jne"),
-            password=postgres.get("password", "jne"),
-            bronze_schema=postgres.get("bronze_schema", "bronze"),
-            governance_schema=postgres.get("governance_schema", "governance"),
         ),
         extraction_window=raw.get("extraction_window", {}),
     )
