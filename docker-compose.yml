@@ -8,6 +8,7 @@ x-airflow-env: &airflow-env
   AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
   AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
   AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+  AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY:-jne-airflow-local-dev-secret-key}
   # Automatically clean up task-log files older than 7 days so the
   # ./airflow/logs host directory does not accumulate across failed runs.
   AIRFLOW__LOG__LOG_RETENTION_DAYS: '7'

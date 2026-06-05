@@ -9,7 +9,7 @@ from pathlib import Path
 
 from src.config import load_governance_config, table_path
 from src.duck import connect_duckdb
-from src.rules.executors import EXECUTORS
+from src.rules.executors import EXECUTORS, run_completeness_batch
 from src.rules.explain import print_explanation
 from src.rules.registry import active_rules
 
@@ -140,7 +140,25 @@ def run(config_path: str) -> list:
         try:
             _create_failures_table(con)
             results = []
+            completeness_results = {}
+            completeness_rules = [rule for rule in rules if rule.rule_family == "COMP"]
+            if completeness_rules:
+                tables = sorted({rule.table for rule in completeness_rules})
+                print(f"Running COMP batch: {len(completeness_rules)} rule(s) across {len(tables)} table(s)")
+                try:
+                    completeness_results = run_completeness_batch(
+                        completeness_rules,
+                        con,
+                        config,
+                        table_paths,
+                        FAILURES_TABLE,
+                    )
+                except Exception as exc:
+                    raise RuntimeError(f"Governance completeness batch failed: {exc}") from exc
             for rule in rules:
+                if rule.rule_family == "COMP":
+                    results.append(completeness_results[rule.code])
+                    continue
                 executor = EXECUTORS.get(rule.rule_family)
                 if executor is None:
                     executor = EXECUTORS[rule.element]

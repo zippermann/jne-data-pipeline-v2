@@ -165,6 +165,10 @@ def _column_list(columns: tuple[str, ...]) -> str:
     return ", ".join(columns)
 
 
+def _sql_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
 def _skip_result(spec: RuleSpec, reason: str, run_at: str) -> RuleResult:
     return RuleResult(
         index_code=spec.code,
@@ -495,6 +499,89 @@ def run_completeness(
     failed_row_count = con.execute(f"SELECT COALESCE(SUM(affected_rows), 0) FROM {temp_table}").fetchone()[0]
     failed_key_count = 1 if failed_row_count else 0
     return _failure_result(spec, total_checked, failed_key_count, failed_row_count, run_at)
+
+
+def run_completeness_batch(
+    specs: list[RuleSpec],
+    con: Any,
+    config: GovernanceConfig,
+    table_paths: dict[str, str],
+    failures_table: str,
+) -> dict[str, RuleResult]:
+    """Check all completeness rules for each table with one scan per table."""
+    results: dict[str, RuleResult] = {}
+    specs_by_table: dict[str, list[RuleSpec]] = {}
+    for spec in specs:
+        specs_by_table.setdefault(spec.table, []).append(spec)
+
+    for table, table_specs in specs_by_table.items():
+        print(f"Running COMP table batch: {table} ({len(table_specs)} rule(s))", flush=True)
+        run_at = datetime.now(timezone.utc).isoformat()
+        first_spec = table_specs[0]
+        path = _table_path(first_spec, table_paths)
+        if not _path_exists(path, config):
+            for spec in table_specs:
+                results[spec.code] = _skip_result(spec, f"missing parquet path: {path}", run_at)
+            continue
+
+        table_columns = _columns(con, path)
+        valid_specs = []
+        for spec in table_specs:
+            missing = [column for column in spec.columns if column.upper() not in table_columns]
+            if missing:
+                results[spec.code] = _skip_result(spec, f"missing column(s): {', '.join(missing)}", run_at)
+            else:
+                valid_specs.append(spec)
+
+        if not valid_specs:
+            continue
+
+        relation = _relation_sql(path)
+        aggregates = ["COUNT(*) AS total_checked"]
+        for spec in valid_specs:
+            column = _quote_identifier(spec.columns[0])
+            aggregates.append(
+                f"COALESCE(SUM(CASE WHEN c.{column} IS NULL THEN 1 ELSE 0 END), 0) AS {_quote_identifier(spec.code)}"
+            )
+        row = con.execute(f"""
+            SELECT
+                {", ".join(aggregates)}
+            FROM {relation} c
+        """).fetchone()
+        total_checked = int(row[0])
+        failed_by_code = {spec.code: int(row[index + 1]) for index, spec in enumerate(valid_specs)}
+
+        failure_rows = []
+        for spec in valid_specs:
+            failed_row_count = failed_by_code[spec.code]
+            failed_key_count = 1 if failed_row_count else 0
+            results[spec.code] = _failure_result(
+                spec,
+                total_checked,
+                failed_key_count,
+                failed_row_count,
+                run_at,
+            )
+            if failed_row_count:
+                failure_rows.append(f"""
+                    SELECT
+                        {_sql_literal(spec.code)} AS index_code,
+                        {_sql_literal(spec.table)} AS table_name,
+                        {_sql_literal(_column_list(spec.columns))} AS column_names,
+                        NULL::VARCHAR AS failed_value,
+                        'NULL value' AS failure_reason,
+                        {failed_row_count}::BIGINT AS affected_rows,
+                        NULL::BOOLEAN AS boundary_suspect,
+                        {_sql_literal(run_at)} AS run_at
+                """)
+
+        if failure_rows:
+            con.execute(f"""
+                INSERT INTO {failures_table}
+                {" UNION ALL ".join(failure_rows)}
+            """)
+
+    return results
 
 
 def run_uniqueness(
