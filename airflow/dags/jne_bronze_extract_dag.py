@@ -2,7 +2,7 @@
 JNE Bronze Extraction DAG
 =========================
 Relational Oracle → Parquet bronze extraction, governance checks, and
-Postgres mart loading.
+ClickHouse mart loading.
 
 Pass {"keep_scope": true} in dag_run.conf to leave Oracle scope tables in place
 for inspection after the run.

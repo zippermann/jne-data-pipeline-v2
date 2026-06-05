@@ -1,4 +1,4 @@
-"""Load governed bronze Parquet runs from MinIO into a Postgres serving layer."""
+"""Load governed bronze Parquet runs from MinIO into a ClickHouse serving layer."""
 
 from __future__ import annotations
 
@@ -9,11 +9,8 @@ import re
 import tempfile
 import time
 from dataclasses import dataclass
-from datetime import date, datetime
-from decimal import Decimal
-from io import StringIO
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Iterable
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -65,12 +62,13 @@ class GovernanceConfig:
 
 
 @dataclass(frozen=True)
-class PostgresConfig:
+class ClickHouseConfig:
     host: str
     port: int
     database: str
     user: str
     password: str
+    secure: bool
 
 
 @dataclass(frozen=True)
@@ -86,7 +84,7 @@ class MartConfig:
     minio: MinioConfig
     bronze: BronzeConfig
     governance: GovernanceConfig
-    postgres: PostgresConfig
+    clickhouse: ClickHouseConfig
     schemas: SchemaConfig
     parquet_batch_rows: int = 10000
     load_mode: str = "latest_snapshot"
@@ -107,7 +105,7 @@ def load_config(path: str | Path = "config/mart.yaml") -> MartConfig:
     minio = raw.get("minio", {})
     bronze = raw.get("bronze", {})
     governance = raw.get("governance", {})
-    postgres = raw.get("postgres", {})
+    clickhouse = raw.get("clickhouse", {})
     schemas = raw.get("schemas", {})
     mart = raw.get("mart", {})
 
@@ -126,12 +124,13 @@ def load_config(path: str | Path = "config/mart.yaml") -> MartConfig:
             output_bucket=governance.get("output_bucket", bronze["bucket"]),
             output_prefix=governance["output_prefix"].strip("/"),
         ),
-        postgres=PostgresConfig(
-            host=postgres.get("host", "mart-postgres"),
-            port=int(postgres.get("port", 5432)),
-            database=postgres.get("database", "jne_mart"),
-            user=postgres.get("user", "jne_mart"),
-            password=postgres.get("password", "jne_mart"),
+        clickhouse=ClickHouseConfig(
+            host=clickhouse.get("host", "clickhouse"),
+            port=int(clickhouse.get("port", 8123)),
+            database=clickhouse.get("database", "jne_mart"),
+            user=clickhouse.get("user", "default"),
+            password=clickhouse.get("password", ""),
+            secure=_as_bool(clickhouse.get("secure", False)),
         ),
         schemas=SchemaConfig(
             bronze=schemas.get("bronze", "bronze"),
@@ -168,22 +167,22 @@ def _minio_client(config: MartConfig):
     )
 
 
-def _connect_postgres(config: MartConfig):
+def _connect_clickhouse(config: MartConfig):
     try:
-        import psycopg2
+        import clickhouse_connect
     except ModuleNotFoundError as exc:
         raise RuntimeError(
-            "psycopg2-binary is required for mart loading. Install dependencies "
+            "clickhouse-connect is required for mart loading. Install dependencies "
             "with `pip install -r requirements.txt` or rebuild the image."
         ) from exc
 
-    return psycopg2.connect(
-        host=config.postgres.host,
-        port=config.postgres.port,
-        dbname=config.postgres.database,
-        user=config.postgres.user,
-        password=config.postgres.password,
-        application_name="jne_mart_load",
+    return clickhouse_connect.get_client(
+        host=config.clickhouse.host,
+        port=config.clickhouse.port,
+        username=config.clickhouse.user,
+        password=config.clickhouse.password,
+        database=config.clickhouse.database,
+        secure=config.clickhouse.secure,
     )
 
 
@@ -220,76 +219,95 @@ def _progress(row_count: int, expected_rows: int | None, started_at: float) -> s
 
 
 def _quote_ident(value: str) -> str:
-    return '"' + value.replace('"', '""') + '"'
+    return "`" + value.replace("`", "``") + "`"
 
 
-def _qualified(schema: str, table: str) -> str:
-    return f"{_quote_ident(schema)}.{_quote_ident(table)}"
+def _quote_literal(value: str) -> str:
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
-def postgres_type(arrow_type: pa.DataType) -> str:
+def _qualified(database: str, table: str) -> str:
+    return f"{_quote_ident(database)}.{_quote_ident(table)}"
+
+
+def clickhouse_type(arrow_type: pa.DataType, nullable: bool = True) -> str:
     if pa.types.is_boolean(arrow_type):
-        return "BOOLEAN"
-    if pa.types.is_int8(arrow_type) or pa.types.is_int16(arrow_type) or pa.types.is_int32(arrow_type):
-        return "INTEGER"
-    if pa.types.is_int64(arrow_type) or pa.types.is_uint32(arrow_type):
-        return "BIGINT"
-    if pa.types.is_uint8(arrow_type) or pa.types.is_uint16(arrow_type):
-        return "INTEGER"
-    if pa.types.is_uint64(arrow_type):
-        return "NUMERIC(20,0)"
-    if pa.types.is_float32(arrow_type):
-        return "REAL"
-    if pa.types.is_float64(arrow_type):
-        return "DOUBLE PRECISION"
-    if pa.types.is_decimal(arrow_type):
-        return f"NUMERIC({arrow_type.precision},{arrow_type.scale})"
-    if pa.types.is_date32(arrow_type) or pa.types.is_date64(arrow_type):
-        return "DATE"
-    if pa.types.is_timestamp(arrow_type):
-        return "TIMESTAMP"
-    if pa.types.is_time32(arrow_type) or pa.types.is_time64(arrow_type):
-        return "TIME"
-    if pa.types.is_binary(arrow_type) or pa.types.is_large_binary(arrow_type):
-        return "BYTEA"
-    return "TEXT"
+        type_name = "Bool"
+    elif pa.types.is_int8(arrow_type):
+        type_name = "Int8"
+    elif pa.types.is_int16(arrow_type):
+        type_name = "Int16"
+    elif pa.types.is_int32(arrow_type):
+        type_name = "Int32"
+    elif pa.types.is_int64(arrow_type):
+        type_name = "Int64"
+    elif pa.types.is_uint8(arrow_type):
+        type_name = "UInt8"
+    elif pa.types.is_uint16(arrow_type):
+        type_name = "UInt16"
+    elif pa.types.is_uint32(arrow_type):
+        type_name = "UInt32"
+    elif pa.types.is_uint64(arrow_type):
+        type_name = "UInt64"
+    elif pa.types.is_float32(arrow_type):
+        type_name = "Float32"
+    elif pa.types.is_float64(arrow_type):
+        type_name = "Float64"
+    elif pa.types.is_decimal(arrow_type):
+        type_name = f"Decimal({arrow_type.precision}, {arrow_type.scale})"
+    elif pa.types.is_date32(arrow_type) or pa.types.is_date64(arrow_type):
+        type_name = "Date"
+    elif pa.types.is_timestamp(arrow_type):
+        scale = {"s": 0, "ms": 3, "us": 6, "ns": 9}.get(arrow_type.unit, 6)
+        type_name = f"DateTime64({scale})"
+    else:
+        type_name = "String"
+
+    if nullable:
+        return f"Nullable({type_name})"
+    return type_name
 
 
-def _create_schema(cursor: Any, schema: str) -> None:
-    cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {_quote_ident(schema)}")
+def _create_database(ch: Any, database: str) -> None:
+    ch.command(f"CREATE DATABASE IF NOT EXISTS {_quote_ident(database)}")
 
 
-def _drop_schema(cursor: Any, schema: str) -> None:
-    cursor.execute(f"DROP SCHEMA IF EXISTS {_quote_ident(schema)} CASCADE")
+def _drop_database(ch: Any, database: str) -> None:
+    ch.command(f"DROP DATABASE IF EXISTS {_quote_ident(database)} SYNC")
 
 
-def _create_table(cursor: Any, schema: str, table: str, arrow_schema: pa.Schema) -> None:
+def _create_table(ch: Any, database: str, table: str, arrow_schema: pa.Schema) -> None:
     columns = [
-        f"{_quote_ident(field.name)} {postgres_type(field.type)}"
+        f"{_quote_ident(field.name)} {clickhouse_type(field.type, field.nullable)}"
         for field in arrow_schema
     ]
     if not columns:
-        raise ValueError(f"Cannot create {schema}.{table} with no columns")
-    cursor.execute(f"CREATE TABLE {_qualified(schema, table)} ({', '.join(columns)})")
+        raise ValueError(f"Cannot create {database}.{table} with no columns")
+    ch.command(
+        f"CREATE TABLE {_qualified(database, table)} "
+        f"({', '.join(columns)}) ENGINE = MergeTree ORDER BY tuple()"
+    )
 
 
-def _ensure_metadata_table(cursor: Any) -> None:
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS mart_load_runs (
-            id BIGSERIAL PRIMARY KEY,
-            run_id TEXT,
-            window_start DATE,
-            window_end DATE,
-            bronze_bucket TEXT NOT NULL,
-            bronze_prefix TEXT NOT NULL,
-            governance_bucket TEXT NOT NULL,
-            governance_prefix TEXT NOT NULL,
-            table_count INTEGER NOT NULL,
-            row_count BIGINT NOT NULL,
-            status TEXT NOT NULL,
-            loaded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            error_message TEXT
+def _ensure_metadata_table(ch: Any, config: MartConfig) -> None:
+    _create_database(ch, config.clickhouse.database)
+    ch.command(f"""
+        CREATE TABLE IF NOT EXISTS {_qualified(config.clickhouse.database, "mart_load_runs")} (
+            run_id Nullable(String),
+            window_start Nullable(Date),
+            window_end Nullable(Date),
+            bronze_bucket String,
+            bronze_prefix String,
+            governance_bucket String,
+            governance_prefix String,
+            table_count Int32,
+            row_count Int64,
+            status String,
+            loaded_at DateTime DEFAULT now(),
+            error_message Nullable(String)
         )
+        ENGINE = MergeTree
+        ORDER BY (loaded_at, status)
     """)
 
 
@@ -320,59 +338,23 @@ def _download_object(client: Any, bucket: str, object_name: str, target_dir: Pat
     return local_path
 
 
-def _copy_value(value: Any) -> str:
-    if value is None:
-        return r"\N"
-    if isinstance(value, bool):
-        text = "true" if value else "false"
-    elif isinstance(value, bytes):
-        text = r"\x" + value.hex()
-    elif isinstance(value, (datetime, date, Decimal)):
-        text = value.isoformat()
-    else:
-        text = str(value)
-    return (
-        text
-        .replace("\\", "\\\\")
-        .replace("\t", "\\t")
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-    )
-
-
-def _batch_to_copy_buffer(batch: pa.RecordBatch) -> StringIO:
-    columns = [column.to_pylist() for column in batch.columns]
-    buffer = StringIO()
-    for row in zip(*columns):
-        buffer.write("\t".join(_copy_value(value) for value in row))
-        buffer.write("\n")
-    buffer.seek(0)
-    return buffer
-
-
-def _copy_batch(cursor: Any, schema: str, table: str, batch: pa.RecordBatch) -> int:
+def _insert_batch(ch: Any, database: str, table: str, batch: pa.RecordBatch) -> int:
     if batch.num_rows == 0:
         return 0
-    column_sql = ", ".join(_quote_ident(name) for name in batch.schema.names)
-    sql = (
-        f"COPY {_qualified(schema, table)} ({column_sql}) "
-        "FROM STDIN WITH (FORMAT text, NULL '\\N')"
-    )
-    cursor.copy_expert(sql, _batch_to_copy_buffer(batch))
+    ch.insert_arrow(table, pa.Table.from_batches([batch]), database=database)
     return batch.num_rows
 
 
 def _load_parquet_table(
-    cursor: Any,
+    ch: Any,
     client: Any,
     bucket: str,
     objects: Iterable[str],
-    schema: str,
+    database: str,
     table: str,
     batch_rows: int,
     tmpdir: Path,
     expected_rows: int | None = None,
-    commit_callback: Callable[[], None] | None = None,
 ) -> int:
     started_at = time.monotonic()
     object_list = list(objects)
@@ -380,52 +362,49 @@ def _load_parquet_table(
     created = False
     for object_index, object_name in enumerate(object_list, start=1):
         _log(
-            f"{schema}.{table}: downloading part {object_index}/{len(object_list)} "
+            f"{database}.{table}: downloading part {object_index}/{len(object_list)} "
             f"from s3://{bucket}/{object_name}"
         )
         download_start = time.monotonic()
         local_path = _download_object(client, bucket, object_name, tmpdir)
         _log(
-            f"{schema}.{table}: downloaded part {object_index}/{len(object_list)} "
+            f"{database}.{table}: downloaded part {object_index}/{len(object_list)} "
             f"({_format_bytes(local_path.stat().st_size)}) in {time.monotonic() - download_start:.1f}s"
         )
         parquet_file = pq.ParquetFile(local_path)
         if not created:
-            _create_table(cursor, schema, table, parquet_file.schema_arrow)
+            _create_table(ch, database, table, parquet_file.schema_arrow)
             created = True
             _log(
-                f"{schema}.{table}: created staging table with "
+                f"{database}.{table}: created staging table with "
                 f"{len(parquet_file.schema_arrow)} column(s)"
             )
         for batch_index, batch in enumerate(parquet_file.iter_batches(batch_size=batch_rows), start=1):
             next_total = row_count + batch.num_rows
             _log(
-                f"{schema}.{table}: copying part {object_index}/{len(object_list)} "
+                f"{database}.{table}: inserting part {object_index}/{len(object_list)} "
                 f"batch {batch_index} ({batch.num_rows:,} rows; "
                 f"next total {_format_count(next_total)}/{_format_count(expected_rows)})"
             )
-            row_count += _copy_batch(cursor, schema, table, batch)
-            _log(f"{schema}.{table}: copied {_progress(row_count, expected_rows, started_at)}")
-        if commit_callback is not None:
-            commit_callback()
-            _log(
-                f"{schema}.{table}: committed part {object_index}/{len(object_list)} "
-                f"({row_count:,} rows staged so far)"
-            )
+            row_count += _insert_batch(ch, database, table, batch)
+            _log(f"{database}.{table}: inserted {_progress(row_count, expected_rows, started_at)}")
+        _log(
+            f"{database}.{table}: flushed part {object_index}/{len(object_list)} "
+            f"({row_count:,} rows staged so far)"
+        )
         local_path.unlink(missing_ok=True)
     if not created:
-        raise RuntimeError(f"No parquet objects found for {schema}.{table}")
-    _log(f"{schema}.{table}: finished {_progress(row_count, expected_rows, started_at)}")
+        raise RuntimeError(f"No parquet objects found for {database}.{table}")
+    _log(f"{database}.{table}: finished {_progress(row_count, expected_rows, started_at)}")
     return row_count
 
 
 def _load_manifest_tables(
-    cursor: Any,
+    ch: Any,
     client: Any,
     config: MartConfig,
     manifest: dict[str, Any],
     tmpdir: Path,
-    commit_callback: Callable[[], None] | None = None,
 ) -> dict[str, int]:
     loaded = {}
     for table_info in manifest.get("tables", []):
@@ -438,7 +417,7 @@ def _load_manifest_tables(
             f"expected {_format_count(expected_rows)} rows"
         )
         loaded[table_name] = _load_parquet_table(
-            cursor,
+            ch,
             client,
             config.bronze.bucket,
             objects,
@@ -447,27 +426,26 @@ def _load_manifest_tables(
             config.parquet_batch_rows,
             tmpdir,
             expected_rows=expected_rows,
-            commit_callback=commit_callback,
         )
     return loaded
 
 
 def _load_governance_outputs(
-    cursor: Any,
+    ch: Any,
     client: Any,
     config: MartConfig,
     tmpdir: Path,
-    commit_callback: Callable[[], None] | None = None,
 ) -> dict[str, int]:
     outputs = {
         "scorecard": f"{config.governance.output_prefix}/scorecard.parquet",
         "failures": f"{config.governance.output_prefix}/failures.parquet",
+        "cnote_index_status": f"{config.governance.output_prefix}/cnote_index_status.parquet",
     }
     loaded = {}
     for table_name, object_name in outputs.items():
         _log(f"Loading governance.{table_name}: {object_name}")
         loaded[table_name] = _load_parquet_table(
-            cursor,
+            ch,
             client,
             config.governance.output_bucket,
             [object_name],
@@ -475,36 +453,31 @@ def _load_governance_outputs(
             table_name,
             config.parquet_batch_rows,
             tmpdir,
-            commit_callback=commit_callback,
         )
     return loaded
 
 
-def _staging_tables(cursor: Any, schema: str) -> list[str]:
-    cursor.execute(
-        """
-        SELECT table_name
-        FROM information_schema.tables
-        WHERE table_schema = %s AND table_type = 'BASE TABLE'
-        ORDER BY table_name
-        """,
-        (schema,),
+def _staging_tables(ch: Any, database: str) -> list[str]:
+    result = ch.query(
+        "SELECT name FROM system.tables "
+        f"WHERE database = {_quote_literal(database)} AND is_temporary = 0 "
+        "ORDER BY name"
     )
-    return [row[0] for row in cursor.fetchall()]
+    return [row[0] for row in result.result_rows]
 
 
-def _publish_schema(cursor: Any, staging_schema: str, target_schema: str) -> None:
-    _create_schema(cursor, target_schema)
-    for table_name in _staging_tables(cursor, staging_schema):
-        cursor.execute(f"DROP TABLE IF EXISTS {_qualified(target_schema, table_name)} CASCADE")
-        cursor.execute(
-            f"ALTER TABLE {_qualified(staging_schema, table_name)} "
-            f"SET SCHEMA {_quote_ident(target_schema)}"
+def _publish_database(ch: Any, staging_database: str, target_database: str) -> None:
+    _create_database(ch, target_database)
+    for table_name in _staging_tables(ch, staging_database):
+        ch.command(f"DROP TABLE IF EXISTS {_qualified(target_database, table_name)} SYNC")
+        ch.command(
+            f"RENAME TABLE {_qualified(staging_database, table_name)} "
+            f"TO {_qualified(target_database, table_name)}"
         )
 
 
 def _insert_load_run(
-    cursor: Any,
+    ch: Any,
     config: MartConfig,
     manifest: dict[str, Any],
     table_count: int,
@@ -512,25 +485,10 @@ def _insert_load_run(
     status: str,
     error_message: str | None = None,
 ) -> None:
-    _ensure_metadata_table(cursor)
-    cursor.execute(
-        """
-        INSERT INTO mart_load_runs (
-            run_id,
-            window_start,
-            window_end,
-            bronze_bucket,
-            bronze_prefix,
-            governance_bucket,
-            governance_prefix,
-            table_count,
-            row_count,
-            status,
-            error_message
-        )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """,
-        (
+    _ensure_metadata_table(ch, config)
+    ch.insert(
+        "mart_load_runs",
+        [[
             manifest.get("run_id"),
             manifest.get("window_start"),
             manifest.get("window_end"),
@@ -542,14 +500,28 @@ def _insert_load_run(
             row_count,
             status,
             error_message,
-        ),
+        ]],
+        column_names=[
+            "run_id",
+            "window_start",
+            "window_end",
+            "bronze_bucket",
+            "bronze_prefix",
+            "governance_bucket",
+            "governance_prefix",
+            "table_count",
+            "row_count",
+            "status",
+            "error_message",
+        ],
+        database=config.clickhouse.database,
     )
 
 
 def run(config_path: str = "config/mart.yaml") -> None:
     config = load_config(config_path)
     _log(
-        "Starting Postgres mart load: "
+        "Starting ClickHouse mart load: "
         f"bronze=s3://{config.bronze.bucket}/{config.bronze.run_prefix}, "
         f"governance=s3://{config.governance.output_bucket}/{config.governance.output_prefix}, "
         f"batch_rows={config.parquet_batch_rows:,}"
@@ -560,83 +532,76 @@ def run(config_path: str = "config/mart.yaml") -> None:
         f"Read run manifest for run_id={manifest.get('run_id')} "
         f"with {len(manifest.get('tables', []))} table(s)"
     )
-    con = _connect_postgres(config)
-    con.autocommit = False
+    ch = _connect_clickhouse(config)
     loaded_tables: dict[str, int] = {}
     loaded_governance: dict[str, int] = {}
     try:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
-            with con.cursor() as cursor:
-                _drop_schema(cursor, config.schemas.bronze_staging)
-                _drop_schema(cursor, config.schemas.governance_staging)
-                _create_schema(cursor, config.schemas.bronze_staging)
-                _create_schema(cursor, config.schemas.governance_staging)
-                con.commit()
-                _log("Prepared staging schemas")
+            _ensure_metadata_table(ch, config)
+            _drop_database(ch, config.schemas.bronze_staging)
+            _drop_database(ch, config.schemas.governance_staging)
+            _create_database(ch, config.schemas.bronze_staging)
+            _create_database(ch, config.schemas.governance_staging)
+            _log("Prepared staging databases")
 
-                loaded_tables = _load_manifest_tables(
-                    cursor,
-                    client,
-                    config,
-                    manifest,
-                    tmpdir,
-                    commit_callback=con.commit,
-                )
-                loaded_governance = _load_governance_outputs(
-                    cursor,
-                    client,
-                    config,
-                    tmpdir,
-                    commit_callback=con.commit,
-                )
-                con.commit()
+            loaded_governance = _load_governance_outputs(
+                ch,
+                client,
+                config,
+                tmpdir,
+            )
+            loaded_tables = _load_manifest_tables(
+                ch,
+                client,
+                config,
+                manifest,
+                tmpdir,
+            )
 
-                _log("Publishing staging tables to visible schemas")
-                _publish_schema(cursor, config.schemas.bronze_staging, config.schemas.bronze)
-                _publish_schema(cursor, config.schemas.governance_staging, config.schemas.governance)
-                _drop_schema(cursor, config.schemas.bronze_staging)
-                _drop_schema(cursor, config.schemas.governance_staging)
-                total_rows = sum(loaded_tables.values()) + sum(loaded_governance.values())
-                _insert_load_run(
-                    cursor,
-                    config,
-                    manifest,
-                    table_count=len(loaded_tables) + len(loaded_governance),
-                    row_count=total_rows,
-                    status="SUCCESS",
-                )
-                con.commit()
-                _log("Committed Postgres mart snapshot")
+            _log("Publishing staging tables to visible databases")
+            _publish_database(ch, config.schemas.governance_staging, config.schemas.governance)
+            _publish_database(ch, config.schemas.bronze_staging, config.schemas.bronze)
+            _drop_database(ch, config.schemas.governance_staging)
+            _drop_database(ch, config.schemas.bronze_staging)
+            total_rows = sum(loaded_tables.values()) + sum(loaded_governance.values())
+            _insert_load_run(
+                ch,
+                config,
+                manifest,
+                table_count=len(loaded_tables) + len(loaded_governance),
+                row_count=total_rows,
+                status="SUCCESS",
+            )
+            _log("Committed ClickHouse mart snapshot")
     except Exception as exc:
-        con.rollback()
         try:
-            with con.cursor() as cursor:
-                _insert_load_run(
-                    cursor,
-                    config,
-                    manifest,
-                    table_count=len(loaded_tables) + len(loaded_governance),
-                    row_count=sum(loaded_tables.values()) + sum(loaded_governance.values()),
-                    status="FAILED",
-                    error_message=str(exc),
-                )
-                con.commit()
+            _insert_load_run(
+                ch,
+                config,
+                manifest,
+                table_count=len(loaded_tables) + len(loaded_governance),
+                row_count=sum(loaded_tables.values()) + sum(loaded_governance.values()),
+                status="FAILED",
+                error_message=str(exc),
+            )
         except Exception:
-            con.rollback()
+            pass
         raise
     finally:
-        con.close()
+        close = getattr(ch, "close", None)
+        if close is not None:
+            close()
 
-    _log("Loaded Postgres mart snapshot:")
-    for table, rows in sorted(loaded_tables.items()):
-        _log(f"  bronze.{table}: {rows} rows")
+    _log("Loaded ClickHouse mart snapshot:")
     for table, rows in sorted(loaded_governance.items()):
         _log(f"  governance.{table}: {rows} rows")
+    for table, rows in sorted(loaded_tables.items()):
+        _log(f"  bronze.{table}: {rows} rows")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Load governed bronze Parquet into Postgres.")
+    parser = argparse.ArgumentParser(description="Load governed bronze Parquet into ClickHouse.")
     parser.add_argument("--config", default="config/mart.yaml")
     args = parser.parse_args()
     run(args.config)

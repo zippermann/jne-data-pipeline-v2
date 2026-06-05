@@ -12,12 +12,13 @@ governance:
   output_bucket: "${GOVERNANCE_OUTPUT_BUCKET:-jne-bronze}"
   output_prefix: "${GOVERNANCE_OUTPUT_PREFIX:-governance/jne/run_id=local}"
 
-postgres:
-  host: "${MART_POSTGRES_HOST:-mart-postgres}"
-  port: "${MART_POSTGRES_PORT:-5432}"
-  database: "${MART_POSTGRES_DB:-jne_mart}"
-  user: "${MART_POSTGRES_USER:-jne_mart}"
-  password: "${MART_POSTGRES_PASSWORD:-jne_mart}"
+clickhouse:
+  host: "${MART_CLICKHOUSE_HOST:-clickhouse}"
+  port: "${MART_CLICKHOUSE_PORT:-8123}"
+  database: "${MART_CLICKHOUSE_DB:-jne_mart}"
+  user: "${MART_CLICKHOUSE_USER:-default}"
+  password: "${MART_CLICKHOUSE_PASSWORD:-}"
+  secure: "${MART_CLICKHOUSE_SECURE:-false}"
 
 schemas:
   bronze: "bronze"

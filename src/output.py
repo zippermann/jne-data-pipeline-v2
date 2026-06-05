@@ -13,6 +13,7 @@ import pyarrow.parquet as pq
 from minio import Minio
 
 from src.config import GovernanceConfig
+from src.cnote_status import write_cnote_index_status
 from src.rules.executors import RuleResult
 
 
@@ -63,8 +64,9 @@ def write_outputs(
     con: Any,
     results: list[RuleResult],
     failures_table: str,
-) -> tuple[str, str, str]:
-    """Write scorecard CSV, scorecard Parquet, and failure Parquet to MinIO."""
+    table_paths: dict[str, str] | None = None,
+) -> tuple[str, str, str, str]:
+    """Write scorecard, failure, and CNOTE-index status outputs to MinIO."""
     client = _client(config)
     bucket = config.governance.output_bucket
     prefix = config.governance.output_prefix.strip("/")
@@ -75,6 +77,7 @@ def write_outputs(
         scorecard_csv = tmp / "scorecard.csv"
         scorecard_parquet = tmp / "scorecard.parquet"
         failures_parquet = tmp / "failures.parquet"
+        cnote_status_parquet = tmp / "cnote_index_status.parquet"
 
         rows = [asdict(result) for result in results]
         with scorecard_csv.open("w", encoding="utf-8", newline="") as handle:
@@ -103,16 +106,20 @@ def write_outputs(
 
         failures_path = str(failures_parquet).replace("'", "''")
         con.execute(f"COPY (SELECT * FROM {failures_table}) TO '{failures_path}' (FORMAT PARQUET)")
+        write_cnote_index_status(con, config, table_paths or {}, results, cnote_status_parquet)
 
         csv_object = f"{prefix}/scorecard.csv"
         scorecard_object = f"{prefix}/scorecard.parquet"
         failures_object = f"{prefix}/failures.parquet"
+        cnote_status_object = f"{prefix}/cnote_index_status.parquet"
         _upload(client, bucket, csv_object, scorecard_csv)
         _upload(client, bucket, scorecard_object, scorecard_parquet)
         _upload(client, bucket, failures_object, failures_parquet)
+        _upload(client, bucket, cnote_status_object, cnote_status_parquet)
 
     return (
         f"s3://{bucket}/{csv_object}",
         f"s3://{bucket}/{scorecard_object}",
         f"s3://{bucket}/{failures_object}",
+        f"s3://{bucket}/{cnote_status_object}",
     )

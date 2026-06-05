@@ -40,12 +40,13 @@ x-minio-env: &minio-env
   MINIO_BUCKET: ${MINIO_BUCKET:-jne-bronze}
   MINIO_SECURE: "false"
 
-x-mart-postgres-env: &mart-postgres-env
-  MART_POSTGRES_HOST: mart-postgres
-  MART_POSTGRES_PORT: "5432"
-  MART_POSTGRES_DB: ${MART_POSTGRES_DB:-jne_mart}
-  MART_POSTGRES_USER: ${MART_POSTGRES_USER:-jne_mart}
-  MART_POSTGRES_PASSWORD: ${MART_POSTGRES_PASSWORD:-jne_mart}
+x-mart-clickhouse-env: &mart-clickhouse-env
+  MART_CLICKHOUSE_HOST: clickhouse
+  MART_CLICKHOUSE_PORT: "8123"
+  MART_CLICKHOUSE_DB: ${MART_CLICKHOUSE_DB:-jne_mart}
+  MART_CLICKHOUSE_USER: ${MART_CLICKHOUSE_USER:-default}
+  MART_CLICKHOUSE_PASSWORD: ${MART_CLICKHOUSE_PASSWORD:-}
+  MART_CLICKHOUSE_SECURE: "false"
 
 x-airflow-volumes: &airflow-volumes
   - .:/opt/airflow/project
@@ -101,22 +102,23 @@ services:
       - jne-network
 
   # ============================================================
-  # Mart PostgreSQL (JNE serving copy for BI/Tableau)
+  # Mart ClickHouse (JNE serving copy for BI/Tableau)
   # ============================================================
-  mart-postgres:
-    container_name: jne-mart-postgres
-    image: postgres:15-alpine
+  clickhouse:
+    container_name: jne-clickhouse
+    image: clickhouse/clickhouse-server:24.12-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${MART_POSTGRES_USER:-jne_mart}
-      POSTGRES_PASSWORD: ${MART_POSTGRES_PASSWORD:-jne_mart}
-      POSTGRES_DB: ${MART_POSTGRES_DB:-jne_mart}
+      CLICKHOUSE_DB: ${MART_CLICKHOUSE_DB:-jne_mart}
+      CLICKHOUSE_USER: ${MART_CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${MART_CLICKHOUSE_PASSWORD:-}
     ports:
-      - "${MART_POSTGRES_PORT:-5433}:5432"
+      - "${MART_CLICKHOUSE_HTTP_PORT:-8123}:8123"
+      - "${MART_CLICKHOUSE_NATIVE_PORT:-9002}:9000"
     volumes:
-      - mart_postgres_data:/var/lib/postgresql/data
+      - mart_clickhouse_data:/var/lib/clickhouse
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${MART_POSTGRES_USER:-jne_mart} -d ${MART_POSTGRES_DB:-jne_mart}"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -134,7 +136,7 @@ services:
     depends_on:
       airflow-postgres:
         condition: service_healthy
-      mart-postgres:
+      clickhouse:
         condition: service_healthy
       minio:
         condition: service_healthy
@@ -163,12 +165,12 @@ services:
     depends_on:
       airflow-postgres:
         condition: service_healthy
-      mart-postgres:
+      clickhouse:
         condition: service_healthy
       minio:
         condition: service_healthy
     environment:
-      <<: [*oracle-env, *minio-env, *mart-postgres-env]
+      <<: [*oracle-env, *minio-env, *mart-clickhouse-env]
     volumes: *airflow-volumes
     command: >-
       bash -c "cd /opt/airflow/project && python -m src.bronze --config config/config.yaml --run-id bronze_init_$$(date -u +%Y%m%dT%H%M%S)"
@@ -190,10 +192,10 @@ services:
         condition: service_completed_successfully
       minio:
         condition: service_healthy
-      mart-postgres:
+      clickhouse:
         condition: service_healthy
     environment:
-      <<: [*airflow-env, *oracle-env, *minio-env, *mart-postgres-env]
+      <<: [*airflow-env, *oracle-env, *minio-env, *mart-clickhouse-env]
       AIRFLOW__WEBSERVER__RBAC: "True"
     volumes: *airflow-volumes
     ports:
@@ -216,7 +218,7 @@ services:
         condition: service_completed_successfully
       minio:
         condition: service_healthy
-      mart-postgres:
+      clickhouse:
         condition: service_healthy
     deploy:
       resources:
@@ -227,7 +229,7 @@ services:
           cpus: '2'
           memory: 4G
     environment:
-      <<: [*airflow-env, *oracle-env, *minio-env, *mart-postgres-env]
+      <<: [*airflow-env, *oracle-env, *minio-env, *mart-clickhouse-env]
     volumes: *airflow-volumes
     command: scheduler
     networks:
@@ -238,7 +240,7 @@ volumes:
   minio_data:
     name: jne-minio-data
   airflow_postgres_data:
-  mart_postgres_data:
+  mart_clickhouse_data:
 
 # Docker network for service communication
 networks:

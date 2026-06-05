@@ -172,7 +172,7 @@ def run(config_path: str) -> list:
                         f"columns={', '.join(rule.columns)}): {exc}"
                     ) from exc
             _print_scorecard(results)
-            outputs = write_outputs(config, con, results, FAILURES_TABLE)
+            outputs = write_outputs(config, con, results, FAILURES_TABLE, table_paths)
             print("\nWrote outputs:")
             for path in outputs:
                 print(path)
