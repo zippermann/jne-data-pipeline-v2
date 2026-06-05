@@ -302,7 +302,7 @@ def _bridge_table(alias: str, check: PairCheck) -> str | None:
 
 def _join_plan(check: PairCheck, table_paths: dict[str, str]) -> tuple[str, str]:
     parts = [part.strip() for part in check.join_sql.split(" AND ")]
-    available = {"l"}
+    available = {"l."}
     joins = []
 
     for alias in ("j1", "j2"):
@@ -314,16 +314,12 @@ def _join_plan(check: PairCheck, table_paths: dict[str, str]) -> tuple[str, str]
             for part in parts
             if f"{alias}." in part
             and "r." not in part
-            and all(other not in part or other in available or other == alias for other in ("j1.", "j2."))
+            and all(other not in part or other in available or other == f"{alias}." for other in ("j1.", "j2."))
         ]
         if not alias_conditions:
-            alias_conditions = [
-                part
-                for part in parts
-                if f"{alias}." in part and "r." not in part
-            ]
+            raise RuntimeError(f"Could not build join condition for bridge alias {alias}: {check.join_sql}")
         joins.append(f"JOIN {_alias_relation(alias, table, table_paths)} ON {' AND '.join(alias_conditions)}")
-        available.add(alias)
+        available.add(f"{alias}.")
 
     right_conditions = [part for part in parts if "r." in part]
     if not right_conditions:
@@ -548,17 +544,28 @@ def run_uniqueness(
 def _validity_predicate(spec: RuleSpec) -> tuple[str, str] | None:
     column = f"c.{_quote_identifier(spec.columns[0])}"
     value = f"CAST({column} AS VARCHAR)"
+    clean_value = f"TRIM({value})"
     description = spec.description.lower()
     if "five-digit numeric" in description:
-        return f"NOT REGEXP_MATCHES({value}, '^[0-9]{{5}}$')", "not five-digit numeric"
+        return f"NOT REGEXP_MATCHES({clean_value}, '^[0-9]{{5}}$')", "not five-digit numeric"
+    if "value 1 or 0" in description:
+        return f"{clean_value} NOT IN ('1', '0')", "not 1 or 0"
     if "one digit" in description and "1 or 2" in description:
-        return f"{value} NOT IN ('1', '2')", "not 1 or 2"
+        return f"{clean_value} NOT IN ('1', '2')", "not 1 or 2"
+    if "one digit integer from 1-3" in description:
+        return f"{clean_value} NOT IN ('1', '2', '3')", "not 1, 2, or 3"
+    if "'d' or 'u' and has a number at the end" in description:
+        return f"NOT REGEXP_MATCHES(UPPER({clean_value}), '^[DU][0-9]+$')", "not D/U with numeric suffix"
+    if "'d' or 'u'" in description:
+        return f"UPPER({clean_value}) NOT IN ('D', 'U')", "not D or U"
+    if "y or null" in description:
+        return f"UPPER({clean_value}) <> 'Y'", "not Y or NULL"
     if "timestamp format" in description:
         return f"TRY_CAST({column} AS TIMESTAMP) IS NULL", "not timestamp"
     if "integer and does not contain a decimal" in description or "is the data an integer" in description:
-        return f"NOT REGEXP_MATCHES({value}, '^-?[0-9]+$')", "not integer"
+        return f"NOT REGEXP_MATCHES({clean_value}, '^-?[0-9]+$')", "not integer"
     if "alphanumeric" in description:
-        return f"NOT REGEXP_MATCHES({value}, '^[A-Za-z0-9]+$')", "not alphanumeric"
+        return f"NOT REGEXP_MATCHES({clean_value}, '^[A-Za-z0-9]+$')", "not alphanumeric"
     return None
 
 
@@ -654,6 +661,118 @@ def run_accuracy(
     return _failure_result(spec, total_checked, failed_key_count, failed_row_count, run_at)
 
 
+def run_dcorrect_accuracy(
+    spec: RuleSpec,
+    con: Any,
+    config: GovernanceConfig,
+    table_paths: dict[str, str],
+    failures_table: str,
+) -> RuleResult:
+    """Compare CNOTE origin/destination with the latest DCORRECT record."""
+    run_at = datetime.now(timezone.utc).isoformat()
+    if spec.code == "ACCU2B12":
+        cnote_column = "CNOTE_ORIGIN"
+        dcorrect_column = "DCORRECT_ORIGIN"
+    else:
+        cnote_column = "CNOTE_DESTINATION"
+        dcorrect_column = "DCORRECT_DEST"
+
+    required = {
+        "CMS_CNOTE": ("CNOTE_NO", cnote_column),
+        "CMS_DCORRECT_DEST": ("DCORRECT_CNOTE_NO", dcorrect_column),
+    }
+    missing_reason = _check_required_columns(con, config, table_paths, required)
+    if missing_reason:
+        return _skip_result(spec, missing_reason, run_at)
+
+    dcorrect_columns = _columns(con, table_paths["CMS_DCORRECT_DEST"])
+    if "DCORRECT_CNOTE_DATE" in dcorrect_columns:
+        order_column = "DCORRECT_CNOTE_DATE"
+    elif "DCORRECT_CDATE" in dcorrect_columns:
+        order_column = "DCORRECT_CDATE"
+    else:
+        order_column = None
+
+    dcorrect_relation = _relation_sql(table_paths["CMS_DCORRECT_DEST"])
+    if order_column:
+        dcorrect_sql = f"""
+            SELECT *
+            FROM (
+                SELECT
+                    d.*,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY d."DCORRECT_CNOTE_NO"
+                        ORDER BY TRY_CAST(d.{_quote_identifier(order_column)} AS TIMESTAMP) DESC NULLS LAST
+                    ) AS rn
+                FROM {dcorrect_relation} d
+                WHERE d."DCORRECT_CNOTE_NO" IS NOT NULL
+            )
+            WHERE rn = 1
+        """
+    else:
+        dcorrect_sql = f"""
+            SELECT *
+            FROM {dcorrect_relation} d
+            WHERE d."DCORRECT_CNOTE_NO" IS NOT NULL
+        """
+
+    cnote_expr = f'c.{_quote_identifier(cnote_column)}'
+    dcorrect_expr = f'd.{_quote_identifier(dcorrect_column)}'
+    cnote_clean = _clean_sql(cnote_expr)
+    dcorrect_clean = _clean_sql(dcorrect_expr)
+    temp_table = f"failures_{spec.code}"
+
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE {temp_table} AS
+        SELECT
+            '{spec.code}' AS index_code,
+            'CMS_CNOTE' AS table_name,
+            '{cnote_column}' AS column_names,
+            {cnote_clean} || ' <> ' || {dcorrect_clean} AS failed_value,
+            '{cnote_column} does not match {dcorrect_column}' AS failure_reason,
+            COUNT(*)::BIGINT AS affected_rows,
+            NULL::BOOLEAN AS boundary_suspect,
+            '{run_at}' AS run_at
+        FROM {_relation_sql(table_paths["CMS_CNOTE"])} c
+        JOIN ({dcorrect_sql}) d
+          ON c."CNOTE_NO" = d."DCORRECT_CNOTE_NO"
+        WHERE {cnote_clean} <> ''
+          AND {dcorrect_clean} <> ''
+          AND {cnote_clean} <> {dcorrect_clean}
+        GROUP BY {cnote_clean}, {dcorrect_clean}
+    """)
+    _insert_failures(con, failures_table, temp_table, config.governance.orphan_key_limit)
+
+    from_sql = f"""
+        FROM {_relation_sql(table_paths["CMS_CNOTE"])} c
+        JOIN ({dcorrect_sql}) d
+          ON c."CNOTE_NO" = d."DCORRECT_CNOTE_NO"
+    """
+    applicable = f"{cnote_clean} <> '' AND {dcorrect_clean} <> ''"
+    total_checked = con.execute(f"SELECT COUNT(*) {from_sql} WHERE {applicable}").fetchone()[0]
+    failed_key_count, failed_row_count = con.execute(
+        f"SELECT COUNT(*), COALESCE(SUM(affected_rows), 0) FROM {temp_table}"
+    ).fetchone()
+
+    return RuleResult(
+        index_code=spec.code,
+        element=spec.element,
+        rule_family=spec.rule_family,
+        table_name="CMS_CNOTE",
+        column_names=cnote_column,
+        compared_table="CMS_DCORRECT_DEST",
+        compared_columns=dcorrect_column,
+        total_checked=int(total_checked),
+        failed_key_count=int(failed_key_count),
+        failed_row_count=int(failed_row_count),
+        failure_rate=float(failed_row_count / total_checked) if total_checked else 0.0,
+        status="FAIL" if failed_row_count else "PASS",
+        needs_confirmation=spec.needs_confirmation,
+        skipped_reason=None,
+        run_at=run_at,
+    )
+
+
 def run_service_reference_accuracy(
     spec: RuleSpec,
     con: Any,
@@ -740,12 +859,86 @@ def run_consistency(
     table_paths: dict[str, str],
     failures_table: str,
 ) -> RuleResult:
+    if spec.code == "CONS3H4":
+        return run_manifest_route_consistency(spec, con, config, table_paths, failures_table)
     if spec.code in {"CONS3J3", "CONS3J4", "CONS3N10", "CONS4N9", "CONS4L6"}:
         return run_aggregate_consistency(spec, con, config, table_paths, failures_table)
     check = PAIR_CHECKS.get(spec.code)
     if check is None:
         return run_unsupported(spec, con, config, table_paths, failures_table)
     return _run_pair_check(spec, check, con, config, table_paths, failures_table, "consistency")
+
+
+def run_manifest_route_consistency(
+    spec: RuleSpec,
+    con: Any,
+    config: GovernanceConfig,
+    table_paths: dict[str, str],
+    failures_table: str,
+) -> RuleResult:
+    """Compare MANIFEST_ROUTE letters 9-11 with CNOTE destination."""
+    run_at = datetime.now(timezone.utc).isoformat()
+    required = {
+        "CMS_MANIFEST": ("MANIFEST_NO", "MANIFEST_ROUTE"),
+        "CMS_MFCNOTE": ("MFCNOTE_MAN_NO", "MFCNOTE_NO"),
+        "CMS_CNOTE": ("CNOTE_NO", "CNOTE_DESTINATION"),
+    }
+    missing_reason = _check_required_columns(con, config, table_paths, required)
+    if missing_reason:
+        return _skip_result(spec, missing_reason, run_at)
+
+    route_segment = 'SUBSTRING(TRIM(CAST(m."MANIFEST_ROUTE" AS VARCHAR)), 9, 3)'
+    destination = _clean_sql('c."CNOTE_DESTINATION"')
+    temp_table = f"failures_{spec.code}"
+    from_sql = f"""
+        FROM {_alias_relation("m", "CMS_MANIFEST", table_paths)}
+        JOIN {_alias_relation("mf", "CMS_MFCNOTE", table_paths)}
+          ON m."MANIFEST_NO" = mf."MFCNOTE_MAN_NO"
+        JOIN {_alias_relation("c", "CMS_CNOTE", table_paths)}
+          ON mf."MFCNOTE_NO" = c."CNOTE_NO"
+    """
+    applicable = f'{route_segment} <> \'\' AND LENGTH(TRIM(CAST(m."MANIFEST_ROUTE" AS VARCHAR))) >= 11 AND {destination} <> \'\''
+    failed = f"{route_segment} <> {destination}"
+
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE {temp_table} AS
+        SELECT
+            '{spec.code}' AS index_code,
+            'CMS_MANIFEST' AS table_name,
+            'MANIFEST_ROUTE' AS column_names,
+            {route_segment} || ' <> ' || {destination} AS failed_value,
+            'MANIFEST_ROUTE letters 9-11 do not match CNOTE_DESTINATION' AS failure_reason,
+            COUNT(*)::BIGINT AS affected_rows,
+            NULL::BOOLEAN AS boundary_suspect,
+            '{run_at}' AS run_at
+        {from_sql}
+        WHERE {applicable}
+          AND {failed}
+        GROUP BY {route_segment}, {destination}
+    """)
+    _insert_failures(con, failures_table, temp_table, config.governance.orphan_key_limit)
+
+    total_checked = con.execute(f"SELECT COUNT(*) {from_sql} WHERE {applicable}").fetchone()[0]
+    failed_key_count, failed_row_count = con.execute(
+        f"SELECT COUNT(*), COALESCE(SUM(affected_rows), 0) FROM {temp_table}"
+    ).fetchone()
+    return RuleResult(
+        index_code=spec.code,
+        element=spec.element,
+        rule_family=spec.rule_family,
+        table_name="CMS_MANIFEST",
+        column_names="MANIFEST_ROUTE",
+        compared_table="CMS_CNOTE",
+        compared_columns="CNOTE_DESTINATION",
+        total_checked=int(total_checked),
+        failed_key_count=int(failed_key_count),
+        failed_row_count=int(failed_row_count),
+        failure_rate=float(failed_row_count / total_checked) if total_checked else 0.0,
+        status="FAIL" if failed_row_count else "PASS",
+        needs_confirmation=spec.needs_confirmation,
+        skipped_reason=None,
+        run_at=run_at,
+    )
 
 
 def run_aggregate_consistency(
@@ -891,10 +1084,404 @@ def run_timeliness(
     table_paths: dict[str, str],
     failures_table: str,
 ) -> RuleResult:
+    if spec.code.startswith("TIME1H15"):
+        return run_manifest_sequence_timeliness(spec, con, config, table_paths, failures_table)
+    if spec.code == "TIME1V9":
+        return run_mhocnote_to_msj_timeliness(spec, con, config, table_paths, failures_table)
+    if spec.code == "TIME1X2":
+        return run_im_manifest_to_msj_timeliness(spec, con, config, table_paths, failures_table)
     check = TIMELINESS_CHECKS.get(spec.code)
     if check is None:
         return run_unsupported(spec, con, config, table_paths, failures_table)
     return _run_pair_check(spec, check, con, config, table_paths, failures_table, "timeliness")
+
+
+def _msj_by_cnote_sql(table_paths: dict[str, str]) -> str:
+    return f"""
+        SELECT
+            dhic."DHICNOTE_CNOTE_NO" AS cnote_no,
+            msj."MSJ_NO" AS msj_no,
+            TRY_CAST(msj."MSJ_SIGNDATE" AS TIMESTAMP) AS msj_signdate
+        FROM {_alias_relation("dhic", "CMS_DHICNOTE", table_paths)}
+        JOIN {_alias_relation("rdsj", "CMS_RDSJ", table_paths)}
+          ON dhic."DHICNOTE_NO" = rdsj."RDSJ_HVI_NO"
+        JOIN {_alias_relation("dsj", "CMS_DSJ", table_paths)}
+          ON rdsj."RDSJ_HVO_NO" = dsj."DSJ_HVO_NO"
+        JOIN {_alias_relation("msj", "CMS_MSJ", table_paths)}
+          ON dsj."DSJ_NO" = msj."MSJ_NO"
+    """
+
+
+def _run_timeline_pairs(
+    spec: RuleSpec,
+    con: Any,
+    config: GovernanceConfig,
+    failures_table: str,
+    pairs_sql: str,
+    table_name: str,
+    column_names: str,
+    compared_table: str,
+    compared_columns: str,
+    reason: str,
+) -> RuleResult:
+    run_at = datetime.now(timezone.utc).isoformat()
+    temp_table = f"failures_{spec.code.replace(' ', '_').replace('(', '').replace(')', '')}"
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE {temp_table} AS
+        SELECT
+            '{spec.code}' AS index_code,
+            '{table_name}' AS table_name,
+            '{column_names}' AS column_names,
+            left_id || '@' || CAST(left_ts AS VARCHAR)
+                || ' > ' ||
+                right_id || '@' || CAST(right_ts AS VARCHAR) AS failed_value,
+            '{reason}' AS failure_reason,
+            COUNT(*)::BIGINT AS affected_rows,
+            NULL::BOOLEAN AS boundary_suspect,
+            '{run_at}' AS run_at
+        FROM ({pairs_sql}) pairs
+        WHERE left_ts IS NOT NULL
+          AND right_ts IS NOT NULL
+          AND right_ts < left_ts
+        GROUP BY left_id, left_ts, right_id, right_ts
+    """)
+    _insert_failures(con, failures_table, temp_table, config.governance.orphan_key_limit)
+
+    total_checked = con.execute(f"""
+        SELECT COUNT(*)
+        FROM ({pairs_sql}) pairs
+        WHERE left_ts IS NOT NULL
+          AND right_ts IS NOT NULL
+    """).fetchone()[0]
+    failed_key_count, failed_row_count = con.execute(
+        f"SELECT COUNT(*), COALESCE(SUM(affected_rows), 0) FROM {temp_table}"
+    ).fetchone()
+    return RuleResult(
+        index_code=spec.code,
+        element=spec.element,
+        rule_family=spec.rule_family,
+        table_name=table_name,
+        column_names=column_names,
+        compared_table=compared_table,
+        compared_columns=compared_columns,
+        total_checked=int(total_checked),
+        failed_key_count=int(failed_key_count),
+        failed_row_count=int(failed_row_count),
+        failure_rate=float(failed_row_count / total_checked) if total_checked else 0.0,
+        status="FAIL" if failed_row_count else "PASS",
+        needs_confirmation=spec.needs_confirmation,
+        skipped_reason=None,
+        run_at=run_at,
+    )
+
+
+def run_mhocnote_to_msj_timeliness(
+    spec: RuleSpec,
+    con: Any,
+    config: GovernanceConfig,
+    table_paths: dict[str, str],
+    failures_table: str,
+) -> RuleResult:
+    required = {
+        "CMS_DHOCNOTE": ("DHOCNOTE_CNOTE_NO", "DHOCNOTE_NO"),
+        "CMS_MHOCNOTE": ("MHOCNOTE_NO", "MHOCNOTE_SIGNDATE"),
+        "CMS_DHICNOTE": ("DHICNOTE_CNOTE_NO", "DHICNOTE_NO"),
+        "CMS_RDSJ": ("RDSJ_HVI_NO", "RDSJ_HVO_NO"),
+        "CMS_DSJ": ("DSJ_HVO_NO", "DSJ_NO"),
+        "CMS_MSJ": ("MSJ_NO", "MSJ_SIGNDATE"),
+    }
+    run_at = datetime.now(timezone.utc).isoformat()
+    missing_reason = _check_required_columns(con, config, table_paths, required)
+    if missing_reason:
+        return _skip_result(spec, missing_reason, run_at)
+
+    pairs_sql = f"""
+        WITH msj_by_cnote AS ({_msj_by_cnote_sql(table_paths)})
+        SELECT
+            mhoc."MHOCNOTE_NO" AS left_id,
+            TRY_CAST(mhoc."MHOCNOTE_SIGNDATE" AS TIMESTAMP) AS left_ts,
+            msj.msj_no AS right_id,
+            msj.msj_signdate AS right_ts
+        FROM {_alias_relation("dhoc", "CMS_DHOCNOTE", table_paths)}
+        JOIN {_alias_relation("mhoc", "CMS_MHOCNOTE", table_paths)}
+          ON dhoc."DHOCNOTE_NO" = mhoc."MHOCNOTE_NO"
+        JOIN msj_by_cnote msj
+          ON dhoc."DHOCNOTE_CNOTE_NO" = msj.cnote_no
+    """
+    return _run_timeline_pairs(
+        spec,
+        con,
+        config,
+        failures_table,
+        pairs_sql,
+        "CMS_MHOCNOTE",
+        "MHOCNOTE_SIGNDATE",
+        "CMS_MSJ",
+        "MSJ_SIGNDATE",
+        "MHOCNOTE_SIGNDATE occurs after MSJ_SIGNDATE",
+    )
+
+
+def run_im_manifest_to_msj_timeliness(
+    spec: RuleSpec,
+    con: Any,
+    config: GovernanceConfig,
+    table_paths: dict[str, str],
+    failures_table: str,
+) -> RuleResult:
+    required = {
+        "CMS_MFCNOTE": ("MFCNOTE_NO", "MFCNOTE_MAN_NO", "MFCNOTE_CRDATE"),
+        "CMS_MANIFEST": ("MANIFEST_NO", "MANIFEST_CRDATE", "MANIFEST_DATE"),
+        "CMS_DHICNOTE": ("DHICNOTE_CNOTE_NO", "DHICNOTE_NO"),
+        "CMS_RDSJ": ("RDSJ_HVI_NO", "RDSJ_HVO_NO"),
+        "CMS_DSJ": ("DSJ_HVO_NO", "DSJ_NO"),
+        "CMS_MSJ": ("MSJ_NO", "MSJ_SIGNDATE"),
+    }
+    run_at = datetime.now(timezone.utc).isoformat()
+    missing_reason = _check_required_columns(con, config, table_paths, required)
+    if missing_reason:
+        return _skip_result(spec, missing_reason, run_at)
+
+    pairs_sql = f"""
+        WITH {_manifest_events_ctes(table_paths)},
+        msj_by_cnote AS ({_msj_by_cnote_sql(table_paths)})
+        SELECT
+            im.man_no AS left_id,
+            im.manifest_crdate AS left_ts,
+            msj.msj_no AS right_id,
+            msj.msj_signdate AS right_ts
+        FROM events im
+        JOIN msj_by_cnote msj
+          ON im.cnote_no = msj.cnote_no
+        WHERE im.man_type = 'IM'
+          AND im.type_seq = 1
+    """
+    return _run_timeline_pairs(
+        spec,
+        con,
+        config,
+        failures_table,
+        pairs_sql,
+        "CMS_MANIFEST",
+        "MANIFEST_CRDATE (IM)",
+        "CMS_MSJ",
+        "MSJ_SIGNDATE",
+        "IM manifest creation occurs after MSJ_SIGNDATE",
+    )
+
+
+def _manifest_events_ctes(table_paths: dict[str, str]) -> str:
+    return f"""
+        mfc_typed AS (
+            SELECT
+                CAST(m."MFCNOTE_NO" AS VARCHAR) AS cnote_no,
+                CAST(m."MFCNOTE_MAN_NO" AS VARCHAR) AS man_no,
+                UPPER(SPLIT_PART(CAST(m."MFCNOTE_MAN_NO" AS VARCHAR), '/', 2)) AS man_type,
+                ROW_NUMBER() OVER (
+                    PARTITION BY
+                        CAST(m."MFCNOTE_NO" AS VARCHAR),
+                        UPPER(SPLIT_PART(CAST(m."MFCNOTE_MAN_NO" AS VARCHAR), '/', 2))
+                    ORDER BY TRY_CAST(m."MFCNOTE_CRDATE" AS TIMESTAMP) ASC NULLS LAST
+                ) AS type_seq
+            FROM {_relation_sql(table_paths["CMS_MFCNOTE"])} m
+            WHERE m."MFCNOTE_MAN_NO" IS NOT NULL
+              AND UPPER(SPLIT_PART(CAST(m."MFCNOTE_MAN_NO" AS VARCHAR), '/', 2)) IN ('OM', 'TM', 'IM')
+        ),
+        manifest_deduped AS (
+            SELECT *
+            FROM (
+                SELECT
+                    man.*,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY man."MANIFEST_NO"
+                        ORDER BY TRY_CAST(man."MANIFEST_DATE" AS TIMESTAMP) DESC NULLS LAST
+                    ) AS rn
+                FROM {_relation_sql(table_paths["CMS_MANIFEST"])} man
+            )
+            WHERE rn = 1
+        ),
+        events AS (
+            SELECT
+                mfc.cnote_no,
+                mfc.man_no,
+                mfc.man_type,
+                mfc.type_seq,
+                TRY_CAST(man."MANIFEST_CRDATE" AS TIMESTAMP) AS manifest_crdate
+            FROM mfc_typed mfc
+            JOIN manifest_deduped man
+              ON mfc.man_no = CAST(man."MANIFEST_NO" AS VARCHAR)
+        )
+    """
+
+
+def run_manifest_sequence_timeliness(
+    spec: RuleSpec,
+    con: Any,
+    config: GovernanceConfig,
+    table_paths: dict[str, str],
+    failures_table: str,
+) -> RuleResult:
+    """Check OM/TM/IM manifest creation order per CNOTE."""
+    run_at = datetime.now(timezone.utc).isoformat()
+    required = {
+        "CMS_MFCNOTE": ("MFCNOTE_NO", "MFCNOTE_MAN_NO", "MFCNOTE_CRDATE"),
+        "CMS_MANIFEST": ("MANIFEST_NO", "MANIFEST_CRDATE", "MANIFEST_DATE"),
+    }
+    missing_reason = _check_required_columns(con, config, table_paths, required)
+    if missing_reason:
+        return _skip_result(spec, missing_reason, run_at)
+
+    events_ctes = _manifest_events_ctes(table_paths)
+    temp_table = f"failures_{spec.code.replace(' ', '_').replace('(', '').replace(')', '')}"
+
+    if spec.code == "TIME1H15 (OM)":
+        pairs_sql = f"""
+            WITH {events_ctes}
+            SELECT
+                om.cnote_no,
+                om.man_no AS left_manifest_no,
+                'OM' AS left_manifest_type,
+                om.manifest_crdate AS left_crdate,
+                tm.man_no AS right_manifest_no,
+                'TM1' AS right_manifest_type,
+                tm.manifest_crdate AS right_crdate
+            FROM events om
+            JOIN events tm
+              ON om.cnote_no = tm.cnote_no
+             AND tm.man_type = 'TM'
+             AND tm.type_seq = 1
+            WHERE om.man_type = 'OM'
+              AND om.type_seq = 1
+        """
+        compared_columns = "MANIFEST_CRDATE (TM1)"
+        reason = "OM manifest is after first TM manifest"
+    elif spec.code == "TIME1H15 (TM)":
+        pairs_sql = f"""
+            WITH {events_ctes}
+            SELECT
+                tm.cnote_no,
+                tm.man_no AS left_manifest_no,
+                'TM' || CAST(tm.type_seq AS VARCHAR) AS left_manifest_type,
+                tm.manifest_crdate AS left_crdate,
+                next_tm.man_no AS right_manifest_no,
+                'TM' || CAST(next_tm.type_seq AS VARCHAR) AS right_manifest_type,
+                next_tm.manifest_crdate AS right_crdate
+            FROM events tm
+            JOIN events next_tm
+              ON tm.cnote_no = next_tm.cnote_no
+             AND next_tm.man_type = 'TM'
+             AND next_tm.type_seq = tm.type_seq + 1
+            WHERE tm.man_type = 'TM'
+        """
+        compared_columns = "MANIFEST_CRDATE (next TM)"
+        reason = "TM manifest is after next TM manifest"
+    else:
+        pairs_sql = f"""
+            WITH {events_ctes},
+            last_tm AS (
+                SELECT *
+                FROM (
+                    SELECT
+                        e.*,
+                        ROW_NUMBER() OVER (PARTITION BY e.cnote_no ORDER BY e.type_seq DESC) AS rn
+                    FROM events e
+                    WHERE e.man_type = 'TM'
+                )
+                WHERE rn = 1
+            ),
+            prior_manifest AS (
+                SELECT
+                    last_tm.cnote_no,
+                    last_tm.man_no,
+                    'TM' || CAST(last_tm.type_seq AS VARCHAR) AS man_type,
+                    last_tm.manifest_crdate
+                FROM last_tm
+                UNION ALL
+                SELECT
+                    om.cnote_no,
+                    om.man_no,
+                    'OM' AS man_type,
+                    om.manifest_crdate
+                FROM events om
+                WHERE om.man_type = 'OM'
+                  AND om.type_seq = 1
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM last_tm
+                      WHERE last_tm.cnote_no = om.cnote_no
+                  )
+            )
+            SELECT
+                prior.cnote_no,
+                prior.man_no AS left_manifest_no,
+                prior.man_type AS left_manifest_type,
+                prior.manifest_crdate AS left_crdate,
+                im.man_no AS right_manifest_no,
+                'IM' AS right_manifest_type,
+                im.manifest_crdate AS right_crdate
+            FROM prior_manifest prior
+            JOIN events im
+              ON prior.cnote_no = im.cnote_no
+             AND im.man_type = 'IM'
+             AND im.type_seq = 1
+        """
+        compared_columns = "MANIFEST_CRDATE (IM)"
+        reason = "final OM/TM manifest is after IM manifest"
+
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE {temp_table} AS
+        SELECT
+            '{spec.code}' AS index_code,
+            'CMS_MANIFEST' AS table_name,
+            'MANIFEST_CRDATE' AS column_names,
+            left_manifest_type || ':' || left_manifest_no || '@' || CAST(left_crdate AS VARCHAR)
+                || ' > ' ||
+                right_manifest_type || ':' || right_manifest_no || '@' || CAST(right_crdate AS VARCHAR)
+                AS failed_value,
+            '{reason}' AS failure_reason,
+            COUNT(*)::BIGINT AS affected_rows,
+            NULL::BOOLEAN AS boundary_suspect,
+            '{run_at}' AS run_at
+        FROM ({pairs_sql}) pairs
+        WHERE left_crdate IS NOT NULL
+          AND right_crdate IS NOT NULL
+          AND right_crdate < left_crdate
+        GROUP BY
+            left_manifest_type,
+            left_manifest_no,
+            left_crdate,
+            right_manifest_type,
+            right_manifest_no,
+            right_crdate
+    """)
+    _insert_failures(con, failures_table, temp_table, config.governance.orphan_key_limit)
+
+    total_checked = con.execute(f"""
+        SELECT COUNT(*)
+        FROM ({pairs_sql}) pairs
+        WHERE left_crdate IS NOT NULL
+          AND right_crdate IS NOT NULL
+    """).fetchone()[0]
+    failed_key_count, failed_row_count = con.execute(
+        f"SELECT COUNT(*), COALESCE(SUM(affected_rows), 0) FROM {temp_table}"
+    ).fetchone()
+    return RuleResult(
+        index_code=spec.code,
+        element=spec.element,
+        rule_family=spec.rule_family,
+        table_name="CMS_MANIFEST",
+        column_names="MANIFEST_CRDATE",
+        compared_table="CMS_MANIFEST",
+        compared_columns=compared_columns,
+        total_checked=int(total_checked),
+        failed_key_count=int(failed_key_count),
+        failed_row_count=int(failed_row_count),
+        failure_rate=float(failed_row_count / total_checked) if total_checked else 0.0,
+        status="FAIL" if failed_row_count else "PASS",
+        needs_confirmation=spec.needs_confirmation,
+        skipped_reason=None,
+        run_at=run_at,
+    )
 
 
 def run_unsupported(
@@ -1014,8 +1601,8 @@ EXECUTORS = {
     "VALD13": run_validity,
     "ACCU": run_accuracy,
     "ACCU1": run_accuracy,
-    "ACCU2": run_accuracy,
-    "ACCU3": run_accuracy,
+    "ACCU2": run_dcorrect_accuracy,
+    "ACCU3": run_dcorrect_accuracy,
     "ACCU4": run_accuracy,
     "ACCU5": run_service_reference_accuracy,
     "ACCU6": run_service_reference_accuracy,

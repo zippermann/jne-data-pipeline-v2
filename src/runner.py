@@ -55,6 +55,14 @@ def _table_paths(config, rules) -> dict[str, str]:
     tables = {rule.table for rule in rules if rule.table}
     tables |= {rule.child_table for rule in rules if rule.child_table}
     tables |= {rule.parent_table for rule in rules if rule.parent_table}
+    if any(rule.code in {"ACCU2B12", "ACCU3B13"} for rule in rules):
+        tables.add("CMS_DCORRECT_DEST")
+    if any(rule.code.startswith("TIME1H15") for rule in rules):
+        tables.add("CMS_MFCNOTE")
+    if any(rule.code == "TIME1V9" for rule in rules):
+        tables |= {"CMS_DHOCNOTE", "CMS_DHICNOTE", "CMS_RDSJ", "CMS_DSJ", "CMS_MSJ"}
+    if any(rule.code == "TIME1X2" for rule in rules):
+        tables |= {"CMS_MFCNOTE", "CMS_MANIFEST", "CMS_DHICNOTE", "CMS_RDSJ", "CMS_DSJ", "CMS_MSJ"}
     return {table: table_path(config, table) for table in tables}
 
 
@@ -136,7 +144,15 @@ def run(config_path: str) -> list:
                 executor = EXECUTORS.get(rule.rule_family)
                 if executor is None:
                     executor = EXECUTORS[rule.element]
-                results.append(executor(rule, con, config, table_paths, FAILURES_TABLE))
+                print(f"Running {rule.code}: {rule.element}/{rule.rule_family} {rule.table or rule.child_table}")
+                try:
+                    results.append(executor(rule, con, config, table_paths, FAILURES_TABLE))
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Governance rule {rule.code} failed "
+                        f"({rule.element}/{rule.rule_family}, table={rule.table or rule.child_table}, "
+                        f"columns={', '.join(rule.columns)}): {exc}"
+                    ) from exc
             _print_scorecard(results)
             outputs = write_outputs(config, con, results, FAILURES_TABLE)
             print("\nWrote outputs:")
