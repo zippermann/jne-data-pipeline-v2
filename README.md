@@ -98,3 +98,24 @@ s3://jne-bronze/governance/jne/run_id=<run_id>/
 Each governance run writes `scorecard.csv`, `scorecard.parquet`, and
 `failures.parquet`. Bronze source data also stays in MinIO as Parquet, so the
 pipeline does not duplicate data into a database.
+
+## Postgres Mart Loading
+
+The first Tableau-serving layer is a separate Postgres database, not Airflow's
+metadata database. Docker Compose includes `mart-postgres` for this purpose.
+
+The mart loader copies the latest governed bronze run from MinIO into Postgres:
+
+```bash
+python -m src.mart_load --config config/mart.yaml
+```
+
+Airflow runs this as the third task:
+
+```text
+extract_bronze -> run_governance -> load_data_mart
+```
+
+This v1 is a latest-snapshot serving copy. It loads the same bronze tables
+produced by extraction into the `bronze` schema and governance outputs into the
+`governance` schema. MinIO remains the durable bronze archive.

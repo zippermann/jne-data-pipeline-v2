@@ -40,6 +40,13 @@ x-minio-env: &minio-env
   MINIO_BUCKET: ${MINIO_BUCKET:-jne-bronze}
   MINIO_SECURE: "false"
 
+x-mart-postgres-env: &mart-postgres-env
+  MART_POSTGRES_HOST: mart-postgres
+  MART_POSTGRES_PORT: "5432"
+  MART_POSTGRES_DB: ${MART_POSTGRES_DB:-jne_mart}
+  MART_POSTGRES_USER: ${MART_POSTGRES_USER:-jne_mart}
+  MART_POSTGRES_PASSWORD: ${MART_POSTGRES_PASSWORD:-jne_mart}
+
 x-airflow-volumes: &airflow-volumes
   - .:/opt/airflow/project
   - ./airflow/dags:/opt/airflow/dags
@@ -94,6 +101,29 @@ services:
       - jne-network
 
   # ============================================================
+  # Mart PostgreSQL (JNE serving copy for BI/Tableau)
+  # ============================================================
+  mart-postgres:
+    container_name: jne-mart-postgres
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${MART_POSTGRES_USER:-jne_mart}
+      POSTGRES_PASSWORD: ${MART_POSTGRES_PASSWORD:-jne_mart}
+      POSTGRES_DB: ${MART_POSTGRES_DB:-jne_mart}
+    ports:
+      - "${MART_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - mart_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MART_POSTGRES_USER:-jne_mart} -d ${MART_POSTGRES_DB:-jne_mart}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jne-network
+
+  # ============================================================
   # Airflow Init (one-shot: db migrate + create admin user)
   # ============================================================
   airflow-init:
@@ -103,6 +133,8 @@ services:
       dockerfile: Dockerfile.airflow
     depends_on:
       airflow-postgres:
+        condition: service_healthy
+      mart-postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
@@ -131,10 +163,12 @@ services:
     depends_on:
       airflow-postgres:
         condition: service_healthy
+      mart-postgres:
+        condition: service_healthy
       minio:
         condition: service_healthy
     environment:
-      <<: [*oracle-env, *minio-env]
+      <<: [*oracle-env, *minio-env, *mart-postgres-env]
     volumes: *airflow-volumes
     command: >-
       bash -c "cd /opt/airflow/project && python -m src.bronze --config config/config.yaml --run-id bronze_init_$$(date -u +%Y%m%dT%H%M%S)"
@@ -156,8 +190,10 @@ services:
         condition: service_completed_successfully
       minio:
         condition: service_healthy
+      mart-postgres:
+        condition: service_healthy
     environment:
-      <<: [*airflow-env, *oracle-env, *minio-env]
+      <<: [*airflow-env, *oracle-env, *minio-env, *mart-postgres-env]
       AIRFLOW__WEBSERVER__RBAC: "True"
     volumes: *airflow-volumes
     ports:
@@ -180,6 +216,8 @@ services:
         condition: service_completed_successfully
       minio:
         condition: service_healthy
+      mart-postgres:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -189,7 +227,7 @@ services:
           cpus: '2'
           memory: 4G
     environment:
-      <<: [*airflow-env, *oracle-env, *minio-env]
+      <<: [*airflow-env, *oracle-env, *minio-env, *mart-postgres-env]
     volumes: *airflow-volumes
     command: scheduler
     networks:
@@ -200,6 +238,7 @@ volumes:
   minio_data:
     name: jne-minio-data
   airflow_postgres_data:
+  mart_postgres_data:
 
 # Docker network for service communication
 networks:

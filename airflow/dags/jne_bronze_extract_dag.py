@@ -2,7 +2,7 @@
 JNE Bronze Extraction DAG
 =========================
 Relational Oracle → Parquet bronze extraction, governance checks, and
-MinIO governance outputs.
+Postgres mart loading.
 
 Pass {"keep_scope": true} in dag_run.conf to leave Oracle scope tables in place
 for inspection after the run.
@@ -69,4 +69,13 @@ with DAG(
         ),
     )
 
-    extract_bronze >> run_governance
+    load_data_mart = BashOperator(
+        task_id="load_data_mart",
+        bash_command=(
+            "cd /opt/airflow/project && "
+            f"{run_context}"
+            "python -m src.mart_load --config config/mart.yaml"
+        ),
+    )
+
+    extract_bronze >> run_governance >> load_data_mart
