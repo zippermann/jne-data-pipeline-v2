@@ -7,12 +7,13 @@ import json
 import os
 import re
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from io import StringIO
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -87,7 +88,7 @@ class MartConfig:
     governance: GovernanceConfig
     postgres: PostgresConfig
     schemas: SchemaConfig
-    parquet_batch_rows: int = 50000
+    parquet_batch_rows: int = 10000
     load_mode: str = "latest_snapshot"
 
 
@@ -138,7 +139,7 @@ def load_config(path: str | Path = "config/mart.yaml") -> MartConfig:
             governance=schemas.get("governance", "governance"),
             governance_staging=schemas.get("governance_staging", "governance_staging"),
         ),
-        parquet_batch_rows=int(mart.get("parquet_batch_rows", 50000)),
+        parquet_batch_rows=int(mart.get("parquet_batch_rows", 10000)),
         load_mode=mart.get("load_mode", "latest_snapshot"),
     )
     if config.load_mode != "latest_snapshot":
@@ -182,7 +183,40 @@ def _connect_postgres(config: MartConfig):
         dbname=config.postgres.database,
         user=config.postgres.user,
         password=config.postgres.password,
+        application_name="jne_mart_load",
     )
+
+
+def _log(message: str) -> None:
+    print(message, flush=True)
+
+
+def _format_count(value: int | None) -> str:
+    if value is None:
+        return "unknown"
+    return f"{value:,}"
+
+
+def _format_bytes(value: int) -> str:
+    units = ["B", "KB", "MB", "GB", "TB"]
+    size = float(value)
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
+def _progress(row_count: int, expected_rows: int | None, started_at: float) -> str:
+    elapsed = max(time.monotonic() - started_at, 0.001)
+    rows_per_second = row_count / elapsed
+    if expected_rows:
+        percent = min((row_count / expected_rows) * 100, 100)
+        return (
+            f"{row_count:,}/{expected_rows:,} rows ({percent:.1f}%), "
+            f"{rows_per_second:,.0f} rows/sec"
+        )
+    return f"{row_count:,} rows, {rows_per_second:,.0f} rows/sec"
 
 
 def _quote_ident(value: str) -> str:
@@ -337,20 +371,51 @@ def _load_parquet_table(
     table: str,
     batch_rows: int,
     tmpdir: Path,
+    expected_rows: int | None = None,
+    commit_callback: Callable[[], None] | None = None,
 ) -> int:
+    started_at = time.monotonic()
+    object_list = list(objects)
     row_count = 0
     created = False
-    for object_name in objects:
+    for object_index, object_name in enumerate(object_list, start=1):
+        _log(
+            f"{schema}.{table}: downloading part {object_index}/{len(object_list)} "
+            f"from s3://{bucket}/{object_name}"
+        )
+        download_start = time.monotonic()
         local_path = _download_object(client, bucket, object_name, tmpdir)
+        _log(
+            f"{schema}.{table}: downloaded part {object_index}/{len(object_list)} "
+            f"({_format_bytes(local_path.stat().st_size)}) in {time.monotonic() - download_start:.1f}s"
+        )
         parquet_file = pq.ParquetFile(local_path)
         if not created:
             _create_table(cursor, schema, table, parquet_file.schema_arrow)
             created = True
-        for batch in parquet_file.iter_batches(batch_size=batch_rows):
+            _log(
+                f"{schema}.{table}: created staging table with "
+                f"{len(parquet_file.schema_arrow)} column(s)"
+            )
+        for batch_index, batch in enumerate(parquet_file.iter_batches(batch_size=batch_rows), start=1):
+            next_total = row_count + batch.num_rows
+            _log(
+                f"{schema}.{table}: copying part {object_index}/{len(object_list)} "
+                f"batch {batch_index} ({batch.num_rows:,} rows; "
+                f"next total {_format_count(next_total)}/{_format_count(expected_rows)})"
+            )
             row_count += _copy_batch(cursor, schema, table, batch)
+            _log(f"{schema}.{table}: copied {_progress(row_count, expected_rows, started_at)}")
+        if commit_callback is not None:
+            commit_callback()
+            _log(
+                f"{schema}.{table}: committed part {object_index}/{len(object_list)} "
+                f"({row_count:,} rows staged so far)"
+            )
         local_path.unlink(missing_ok=True)
     if not created:
         raise RuntimeError(f"No parquet objects found for {schema}.{table}")
+    _log(f"{schema}.{table}: finished {_progress(row_count, expected_rows, started_at)}")
     return row_count
 
 
@@ -360,13 +425,18 @@ def _load_manifest_tables(
     config: MartConfig,
     manifest: dict[str, Any],
     tmpdir: Path,
+    commit_callback: Callable[[], None] | None = None,
 ) -> dict[str, int]:
     loaded = {}
     for table_info in manifest.get("tables", []):
         table_name = table_info["output_name"]
         prefix = f"{config.bronze.run_prefix}/{table_name}/"
         objects = _list_parquet_objects(client, config.bronze.bucket, prefix)
-        print(f"Loading bronze.{table_name}: {len(objects)} parquet object(s)")
+        expected_rows = table_info.get("row_count")
+        _log(
+            f"Loading bronze.{table_name}: {len(objects)} parquet object(s), "
+            f"expected {_format_count(expected_rows)} rows"
+        )
         loaded[table_name] = _load_parquet_table(
             cursor,
             client,
@@ -376,6 +446,8 @@ def _load_manifest_tables(
             table_name,
             config.parquet_batch_rows,
             tmpdir,
+            expected_rows=expected_rows,
+            commit_callback=commit_callback,
         )
     return loaded
 
@@ -385,6 +457,7 @@ def _load_governance_outputs(
     client: Any,
     config: MartConfig,
     tmpdir: Path,
+    commit_callback: Callable[[], None] | None = None,
 ) -> dict[str, int]:
     outputs = {
         "scorecard": f"{config.governance.output_prefix}/scorecard.parquet",
@@ -392,7 +465,7 @@ def _load_governance_outputs(
     }
     loaded = {}
     for table_name, object_name in outputs.items():
-        print(f"Loading governance.{table_name}: {object_name}")
+        _log(f"Loading governance.{table_name}: {object_name}")
         loaded[table_name] = _load_parquet_table(
             cursor,
             client,
@@ -402,6 +475,7 @@ def _load_governance_outputs(
             table_name,
             config.parquet_batch_rows,
             tmpdir,
+            commit_callback=commit_callback,
         )
     return loaded
 
@@ -474,8 +548,18 @@ def _insert_load_run(
 
 def run(config_path: str = "config/mart.yaml") -> None:
     config = load_config(config_path)
+    _log(
+        "Starting Postgres mart load: "
+        f"bronze=s3://{config.bronze.bucket}/{config.bronze.run_prefix}, "
+        f"governance=s3://{config.governance.output_bucket}/{config.governance.output_prefix}, "
+        f"batch_rows={config.parquet_batch_rows:,}"
+    )
     client = _minio_client(config)
     manifest = _read_manifest(client, config)
+    _log(
+        f"Read run manifest for run_id={manifest.get('run_id')} "
+        f"with {len(manifest.get('tables', []))} table(s)"
+    )
     con = _connect_postgres(config)
     con.autocommit = False
     loaded_tables: dict[str, int] = {}
@@ -489,11 +573,26 @@ def run(config_path: str = "config/mart.yaml") -> None:
                 _create_schema(cursor, config.schemas.bronze_staging)
                 _create_schema(cursor, config.schemas.governance_staging)
                 con.commit()
+                _log("Prepared staging schemas")
 
-                loaded_tables = _load_manifest_tables(cursor, client, config, manifest, tmpdir)
-                loaded_governance = _load_governance_outputs(cursor, client, config, tmpdir)
+                loaded_tables = _load_manifest_tables(
+                    cursor,
+                    client,
+                    config,
+                    manifest,
+                    tmpdir,
+                    commit_callback=con.commit,
+                )
+                loaded_governance = _load_governance_outputs(
+                    cursor,
+                    client,
+                    config,
+                    tmpdir,
+                    commit_callback=con.commit,
+                )
                 con.commit()
 
+                _log("Publishing staging tables to visible schemas")
                 _publish_schema(cursor, config.schemas.bronze_staging, config.schemas.bronze)
                 _publish_schema(cursor, config.schemas.governance_staging, config.schemas.governance)
                 _drop_schema(cursor, config.schemas.bronze_staging)
@@ -508,6 +607,7 @@ def run(config_path: str = "config/mart.yaml") -> None:
                     status="SUCCESS",
                 )
                 con.commit()
+                _log("Committed Postgres mart snapshot")
     except Exception as exc:
         con.rollback()
         try:
@@ -528,11 +628,11 @@ def run(config_path: str = "config/mart.yaml") -> None:
     finally:
         con.close()
 
-    print("Loaded Postgres mart snapshot:")
+    _log("Loaded Postgres mart snapshot:")
     for table, rows in sorted(loaded_tables.items()):
-        print(f"  bronze.{table}: {rows} rows")
+        _log(f"  bronze.{table}: {rows} rows")
     for table, rows in sorted(loaded_governance.items()):
-        print(f"  governance.{table}: {rows} rows")
+        _log(f"  governance.{table}: {rows} rows")
 
 
 def main() -> None:

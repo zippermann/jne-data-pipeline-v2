@@ -27,4 +27,4 @@ schemas:
 
 mart:
   load_mode: "latest_snapshot"
-  parquet_batch_rows: 50000
+  parquet_batch_rows: 10000
