@@ -45,7 +45,7 @@ x-mart-clickhouse-env: &mart-clickhouse-env
   MART_CLICKHOUSE_PORT: "8123"
   MART_CLICKHOUSE_DB: ${MART_CLICKHOUSE_DB:-jne_mart}
   MART_CLICKHOUSE_USER: ${MART_CLICKHOUSE_USER:-default}
-  MART_CLICKHOUSE_PASSWORD: ${MART_CLICKHOUSE_PASSWORD:-}
+  MART_CLICKHOUSE_PASSWORD: ${MART_CLICKHOUSE_PASSWORD:-jne_mart}
   MART_CLICKHOUSE_SECURE: "false"
 
 x-airflow-volumes: &airflow-volumes
@@ -111,14 +111,19 @@ services:
     environment:
       CLICKHOUSE_DB: ${MART_CLICKHOUSE_DB:-jne_mart}
       CLICKHOUSE_USER: ${MART_CLICKHOUSE_USER:-default}
-      CLICKHOUSE_PASSWORD: ${MART_CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_PASSWORD: ${MART_CLICKHOUSE_PASSWORD:-jne_mart}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
     ports:
       - "${MART_CLICKHOUSE_HTTP_PORT:-8123}:8123"
       - "${MART_CLICKHOUSE_NATIVE_PORT:-9002}:9000"
     volumes:
       - mart_clickhouse_data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      test: ["CMD-SHELL", "clickhouse-client --host localhost --user \"$${CLICKHOUSE_USER}\" --password \"$${CLICKHOUSE_PASSWORD}\" --query 'SELECT 1'"]
       interval: 10s
       timeout: 5s
       retries: 5

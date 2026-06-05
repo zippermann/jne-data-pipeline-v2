@@ -17,7 +17,7 @@ clickhouse:
   port: "${MART_CLICKHOUSE_PORT:-8123}"
   database: "${MART_CLICKHOUSE_DB:-jne_mart}"
   user: "${MART_CLICKHOUSE_USER:-default}"
-  password: "${MART_CLICKHOUSE_PASSWORD:-}"
+  password: "${MART_CLICKHOUSE_PASSWORD:-jne_mart}"
   secure: "${MART_CLICKHOUSE_SECURE:-false}"
 
 schemas:
