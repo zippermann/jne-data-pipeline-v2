@@ -3,7 +3,7 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from src.cnote_status import write_cnote_index_status
+from src.cnote_status import write_top_index_cnote_examples
 from src.config import (
     BronzeConfig,
     DuckDBConfig,
@@ -34,52 +34,77 @@ def _config() -> GovernanceConfig:
     )
 
 
-def _result(code: str, status: str = "PASS", skipped_reason: str | None = None) -> RuleResult:
+def _result(
+    code: str,
+    element: str = "CONS",
+    rule_family: str = "CONS1",
+    table_name: str = "CMS_CNOTE",
+    column_names: str = "CNOTE_BRANCH_ID",
+    failed_row_count: int = 0,
+    failure_rate: float = 0.0,
+    total_checked: int = 10,
+) -> RuleResult:
     return RuleResult(
         index_code=code,
-        element="COMP",
-        rule_family="COMP",
-        table_name="CMS_CNOTE",
-        column_names="CNOTE_DATE",
+        element=element,
+        rule_family=rule_family,
+        table_name=table_name,
+        column_names=column_names,
         compared_table=None,
         compared_columns=None,
-        total_checked=2,
+        total_checked=total_checked,
         failed_key_count=0,
-        failed_row_count=0,
-        failure_rate=0.0,
-        status=status,
+        failed_row_count=failed_row_count,
+        failure_rate=failure_rate,
+        status="FAIL" if failed_row_count else "PASS",
         needs_confirmation=False,
-        skipped_reason=skipped_reason,
+        skipped_reason=None,
         run_at="2026-06-05T00:00:00+00:00",
     )
 
 
-def test_write_cnote_index_status_assigns_full_matrix_statuses(tmp_path):
+def test_write_top_index_cnote_examples_pivots_worst_indexes(tmp_path):
     cnote_path = _write_table(
         tmp_path,
         "cms_cnote",
         {
-            "CNOTE_NO": ["A", "B"],
-            "CNOTE_DATE": ["2026-06-01", None],
+            "CNOTE_NO": ["A", "B", "C"],
+            "CNOTE_BRANCH_ID": ["BR1", "BR2", "BR3"],
+        },
+    )
+    apicust_path = _write_table(
+        tmp_path,
+        "cms_apicust",
+        {
+            "APICUST_CNOTE_NO": ["A", "A", "A", "A", "B", "C"],
+            "APICUST_BRANCH": ["X1", "X2", "X3", "X4", "Y1", "BR3"],
         },
     )
 
     con = duckdb.connect()
-    output = tmp_path / "cnote_index_status.parquet"
-    write_cnote_index_status(
+    output = tmp_path / "top_index_cnote_examples.parquet"
+    write_top_index_cnote_examples(
         con,
         _config(),
-        {"CMS_CNOTE": cnote_path},
-        [_result("COMP1B2")],
+        {"CMS_CNOTE": cnote_path, "CMS_APICUST": apicust_path},
+        [
+            _result("CONS1B3", failed_row_count=5, failure_rate=0.5),
+            _result("CONS1B10", failed_row_count=1, failure_rate=0.1),
+            _result("ACCU4B15", element="ACCU", rule_family="ACCU4", failed_row_count=10, failure_rate=1.0),
+        ],
         output,
+        top_n=1,
+        example_limit=3,
     )
 
     rows = pq.read_table(output).to_pylist()
-    statuses = {
-        (row["cnote_no"], row["index_code"]): row["status"]
-        for row in rows
-        if row["index_code"] == "COMP1B2"
-    }
+    assert [row["cnote_no"] for row in rows] == ["A", "B"]
+    assert rows[0]["selected_failed_index_count"] == 1
+    assert rows[0]["selected_total_failed_rows"] == 4
+    assert "CONS1B3" in rows[0]
+    assert "CONS1B10" not in rows[0]
+    assert "ACCU4B15" not in rows[0]
 
-    assert statuses[("A", "COMP1B2")] == "PASS"
-    assert statuses[("B", "COMP1B2")] == "FAIL"
+    examples = rows[0]["CONS1B3"].split("; ")
+    assert len(examples) == 3
+    assert "CNOTE_BRANCH_ID does not match APICUST_BRANCH: BR1 <> X1" in examples

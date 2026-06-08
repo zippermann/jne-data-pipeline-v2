@@ -439,7 +439,7 @@ def _load_governance_outputs(
     outputs = {
         "scorecard": f"{config.governance.output_prefix}/scorecard.parquet",
         "failures": f"{config.governance.output_prefix}/failures.parquet",
-        "cnote_index_status": f"{config.governance.output_prefix}/cnote_index_status.parquet",
+        "top_index_cnote_examples": f"{config.governance.output_prefix}/top_index_cnote_examples.parquet",
     }
     loaded = {}
     for table_name, object_name in outputs.items():

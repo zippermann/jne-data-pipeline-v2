@@ -133,6 +133,33 @@ def test_progress_formatting_for_known_and_unknown_totals():
     assert _format_bytes(1536) == "1.5 KB"
 
 
+def test_load_governance_outputs_uses_top_index_examples(monkeypatch, tmp_path):
+    loaded = {}
+    config = MartConfig(
+        minio=MinioConfig("minio:9000", "minioadmin", "minioadmin123", False),
+        bronze=BronzeConfig("jne-bronze", "bronze/jne/run_id=R_TEST"),
+        governance=GovernanceConfig("jne-bronze", "governance/jne/run_id=R_TEST"),
+        clickhouse=ClickHouseConfig("clickhouse", 8123, "jne_mart", "default", "", False),
+        schemas=SchemaConfig("bronze", "bronze_staging", "governance", "governance_staging"),
+        parquet_batch_rows=100,
+        load_mode="latest_snapshot",
+    )
+
+    def fake_load(ch, client, bucket, objects, database, table, batch_rows, tmpdir, expected_rows=None):
+        loaded[table] = objects
+        return 1
+
+    monkeypatch.setattr(mart_load, "_load_parquet_table", fake_load)
+
+    result = mart_load._load_governance_outputs(object(), object(), config, tmp_path)
+
+    assert result == {"scorecard": 1, "failures": 1, "top_index_cnote_examples": 1}
+    assert loaded["top_index_cnote_examples"] == [
+        "governance/jne/run_id=R_TEST/top_index_cnote_examples.parquet"
+    ]
+    assert "cnote_index_status" not in loaded
+
+
 def test_run_loads_governance_before_bronze(monkeypatch):
     events = []
     config = MartConfig(

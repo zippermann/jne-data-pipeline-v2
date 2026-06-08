@@ -44,6 +44,8 @@ STATUS_COLUMNS = [
     "run_at",
 ]
 
+TOP_INDEX_ELEMENTS = {"CONS", "UNIQ", "TIME"}
+
 
 DIRECT_CNOTE_COLUMNS = {
     "CMS_CNOTE": "CNOTE_NO",
@@ -598,6 +600,165 @@ def _create_cnote_failures(con: Any, rules: list[RuleSpec], table_paths: dict[st
     _create_mapped_failure_rules(con, mapped_codes)
     print(f"Built cnote-level failure details for {len(mapped_codes)} rule(s)", flush=True)
     return mapped_codes
+
+
+def _safe_index_column(code: str) -> str:
+    column = "".join(char if char.isalnum() else "_" for char in code.upper())
+    while "__" in column:
+        column = column.replace("__", "_")
+    return column.strip("_") or "INDEX"
+
+
+def _selected_top_index_rules(
+    results: list[RuleResult],
+    rules: list[RuleSpec],
+    top_n: int,
+) -> list[RuleSpec]:
+    rules_by_code = {rule.code: rule for rule in rules}
+    candidates = [
+        result
+        for result in results
+        if result.element in TOP_INDEX_ELEMENTS
+        and result.failed_row_count > 0
+        and result.index_code in rules_by_code
+    ]
+    candidates.sort(key=lambda result: (-result.failure_rate, -result.failed_row_count, result.index_code))
+    return [rules_by_code[result.index_code] for result in candidates[:top_n]]
+
+
+def _empty_top_index_query(run_id: str, run_at: str) -> str:
+    return f"""
+        SELECT
+            {_sql_literal(run_id)} AS run_id,
+            NULL::VARCHAR AS cnote_no,
+            0::BIGINT AS selected_failed_index_count,
+            0::BIGINT AS selected_total_failed_rows,
+            {_sql_literal(run_at)} AS run_at
+        WHERE FALSE
+    """
+
+
+def write_top_index_cnote_examples(
+    con: Any,
+    config: GovernanceConfig,
+    table_paths: dict[str, str],
+    results: list[RuleResult],
+    output_path: Path,
+    top_n: int = 20,
+    example_limit: int = 3,
+) -> None:
+    """Write a bounded pivot of CNOTE examples for the worst CONS/UNIQ/TIME indexes."""
+    rules = active_rules()
+    selected_rules = _selected_top_index_rules(results, rules, top_n)
+    run_id = config.bronze.run_prefix.rsplit("run_id=", 1)[-1] if "run_id=" in config.bronze.run_prefix else ""
+    run_at = max((result.run_at for result in results if result.run_at), default="")
+    escaped = str(output_path).replace("'", "''")
+
+    if not selected_rules:
+        con.execute(f"COPY ({_empty_top_index_query(run_id, run_at)}) TO '{escaped}' (FORMAT PARQUET)")
+        return
+
+    selected_codes = [rule.code for rule in selected_rules]
+    safe_columns = {}
+    used_columns = set()
+    for code in selected_codes:
+        base = _safe_index_column(code)
+        column = base
+        suffix = 2
+        while column in used_columns:
+            column = f"{base}_{suffix}"
+            suffix += 1
+        safe_columns[code] = column
+        used_columns.add(column)
+
+    _create_cnote_failures(con, selected_rules, table_paths)
+    selected_values = ", ".join(f"({_sql_literal(code)})" for code in selected_codes)
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE selected_top_indexes AS
+        SELECT *
+        FROM (VALUES {selected_values}) AS v(index_code)
+    """)
+
+    dynamic_columns = []
+    for code in selected_codes:
+        dynamic_columns.append(
+            "MAX(CASE WHEN index_code = "
+            f"{_sql_literal(code)} THEN examples END) AS {_quote_identifier(safe_columns[code])}"
+        )
+
+    query = f"""
+        WITH selected_failures AS (
+            SELECT
+                f.cnote_no,
+                f.index_code,
+                COALESCE(f.failure_reason, '') AS failure_reason,
+                COALESCE(f.failed_value, '<NULL>') AS failed_value
+            FROM cnote_index_failures f
+            JOIN selected_top_indexes s
+              ON f.index_code = s.index_code
+            WHERE f.cnote_no IS NOT NULL
+        ),
+        distinct_examples AS (
+            SELECT DISTINCT
+                cnote_no,
+                index_code,
+                failure_reason,
+                failed_value,
+                failure_reason || ': ' || failed_value AS example_text
+            FROM selected_failures
+        ),
+        limited_examples AS (
+            SELECT
+                cnote_no,
+                index_code,
+                example_text
+            FROM (
+                SELECT
+                    *,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY cnote_no, index_code
+                        ORDER BY example_text
+                    ) AS example_rank
+                FROM distinct_examples
+            ) ranked
+            WHERE example_rank <= {int(example_limit)}
+        ),
+        examples AS (
+            SELECT
+                cnote_no,
+                index_code,
+                STRING_AGG(example_text, '; ' ORDER BY example_text) AS examples
+            FROM limited_examples
+            GROUP BY cnote_no, index_code
+        ),
+        summary AS (
+            SELECT
+                cnote_no,
+                COUNT(DISTINCT index_code)::BIGINT AS selected_failed_index_count,
+                COUNT(*)::BIGINT AS selected_total_failed_rows
+            FROM selected_failures
+            GROUP BY cnote_no
+        )
+        SELECT
+            {_sql_literal(run_id)} AS run_id,
+            s.cnote_no,
+            s.selected_failed_index_count,
+            s.selected_total_failed_rows,
+            {_sql_literal(run_at)} AS run_at,
+            {", ".join(dynamic_columns)}
+        FROM summary s
+        JOIN examples e
+          ON s.cnote_no = e.cnote_no
+        GROUP BY
+            s.cnote_no,
+            s.selected_failed_index_count,
+            s.selected_total_failed_rows
+        ORDER BY
+            s.selected_failed_index_count DESC,
+            s.selected_total_failed_rows DESC,
+            s.cnote_no ASC
+    """
+    con.execute(f"COPY ({query}) TO '{escaped}' (FORMAT PARQUET)")
 
 
 def write_cnote_index_status(
