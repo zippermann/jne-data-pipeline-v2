@@ -17,10 +17,11 @@ x-airflow-env: &airflow-env
   # running under LocalExecutor without being marked unhealthy.
   AIRFLOW__SCHEDULER__SCHEDULER_HEARTBEAT_SEC: '30'
   AIRFLOW__SCHEDULER__SCHEDULER_HEALTH_CHECK_THRESHOLD: '120'
-  # Give long-running local tasks more room during CPU-heavy governance work.
+  # Give long-running local tasks room during CPU-heavy governance work. This is
+  # intentionally high so transient metadata DB/DNS blips do not kill a run.
   AIRFLOW__SCHEDULER__JOB_HEARTBEAT_SEC: '15'
   AIRFLOW__SCHEDULER__LOCAL_TASK_JOB_HEARTBEAT_SEC: '15'
-  AIRFLOW__SCHEDULER__TASK_INSTANCE_HEARTBEAT_TIMEOUT: '600'
+  AIRFLOW__SCHEDULER__TASK_INSTANCE_HEARTBEAT_TIMEOUT: '86400'
   AIRFLOW__SCHEDULER__TASK_INSTANCE_HEARTBEAT_TIMEOUT_DETECTION_INTERVAL: '60'
 
 # Oracle env vars shared across Airflow services
