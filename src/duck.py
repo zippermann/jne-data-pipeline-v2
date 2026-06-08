@@ -30,6 +30,7 @@ def connect_duckdb(config: GovernanceConfig) -> Any:
 
     con.execute(f"SET memory_limit = '{memory_limit}'")
     con.execute(f"SET threads = {int(config.duckdb.threads)}")
+    con.execute("SET preserve_insertion_order = false")
     if httpfs_loaded:
         endpoint = config.minio.endpoint.replace("'", "''")
         access_key = config.minio.access_key.replace("'", "''")

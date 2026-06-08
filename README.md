@@ -99,9 +99,9 @@ Each governance run writes `scorecard.csv`, `scorecard.parquet`,
 `failures.parquet`, and `top_index_cnote_examples.parquet`. The top-index CNOTE
 examples file is a bounded investigation report: it selects the highest
 failure-rate consistency, uniqueness, and timeliness indexes, then pivots those
-indexes into columns with concrete failed-value examples by `CNOTE_NO`. Bronze
-source data also stays in MinIO as Parquet, so the pipeline does not duplicate
-data into a database.
+indexes into columns with concrete failed-value examples for the top affected
+`CNOTE_NO` values. Bronze source data also stays in MinIO as Parquet, so the
+pipeline does not duplicate data into a database.
 
 ## ClickHouse Mart Loading
 

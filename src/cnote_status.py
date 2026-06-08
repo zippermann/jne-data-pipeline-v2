@@ -646,6 +646,7 @@ def write_top_index_cnote_examples(
     output_path: Path,
     top_n: int = 20,
     example_limit: int = 3,
+    cnote_limit: int = 1000,
 ) -> None:
     """Write a bounded pivot of CNOTE examples for the worst CONS/UNIQ/TIME indexes."""
     rules = active_rules()
@@ -698,6 +699,29 @@ def write_top_index_cnote_examples(
               ON f.index_code = s.index_code
             WHERE f.cnote_no IS NOT NULL
         ),
+        summary AS (
+            SELECT
+                cnote_no,
+                COUNT(DISTINCT index_code)::BIGINT AS selected_failed_index_count,
+                COUNT(*)::BIGINT AS selected_total_failed_rows
+            FROM selected_failures
+            GROUP BY cnote_no
+        ),
+        top_cnotes AS (
+            SELECT *
+            FROM summary
+            ORDER BY
+                selected_failed_index_count DESC,
+                selected_total_failed_rows DESC,
+                cnote_no ASC
+            LIMIT {int(cnote_limit)}
+        ),
+        top_failures AS (
+            SELECT sf.*
+            FROM selected_failures sf
+            JOIN top_cnotes tc
+              ON sf.cnote_no = tc.cnote_no
+        ),
         distinct_examples AS (
             SELECT DISTINCT
                 cnote_no,
@@ -705,7 +729,7 @@ def write_top_index_cnote_examples(
                 failure_reason,
                 failed_value,
                 failure_reason || ': ' || failed_value AS example_text
-            FROM selected_failures
+            FROM top_failures
         ),
         limited_examples AS (
             SELECT
@@ -730,33 +754,25 @@ def write_top_index_cnote_examples(
                 STRING_AGG(example_text, '; ' ORDER BY example_text) AS examples
             FROM limited_examples
             GROUP BY cnote_no, index_code
-        ),
-        summary AS (
-            SELECT
-                cnote_no,
-                COUNT(DISTINCT index_code)::BIGINT AS selected_failed_index_count,
-                COUNT(*)::BIGINT AS selected_total_failed_rows
-            FROM selected_failures
-            GROUP BY cnote_no
         )
         SELECT
             {_sql_literal(run_id)} AS run_id,
-            s.cnote_no,
-            s.selected_failed_index_count,
-            s.selected_total_failed_rows,
+            tc.cnote_no,
+            tc.selected_failed_index_count,
+            tc.selected_total_failed_rows,
             {_sql_literal(run_at)} AS run_at,
             {", ".join(dynamic_columns)}
-        FROM summary s
-        JOIN examples e
-          ON s.cnote_no = e.cnote_no
+        FROM top_cnotes tc
+        LEFT JOIN examples e
+          ON tc.cnote_no = e.cnote_no
         GROUP BY
-            s.cnote_no,
-            s.selected_failed_index_count,
-            s.selected_total_failed_rows
+            tc.cnote_no,
+            tc.selected_failed_index_count,
+            tc.selected_total_failed_rows
         ORDER BY
-            s.selected_failed_index_count DESC,
-            s.selected_total_failed_rows DESC,
-            s.cnote_no ASC
+            tc.selected_failed_index_count DESC,
+            tc.selected_total_failed_rows DESC,
+            tc.cnote_no ASC
     """
     con.execute(f"COPY ({query}) TO '{escaped}' (FORMAT PARQUET)")
 
