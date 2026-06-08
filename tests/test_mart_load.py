@@ -51,6 +51,7 @@ schemas:
 mart:
   load_mode: "latest_snapshot"
   parquet_batch_rows: 123
+  load_governance: "${MART_LOAD_GOVERNANCE:-true}"
 """,
         encoding="utf-8",
     )
@@ -62,6 +63,7 @@ mart:
     assert config.clickhouse.host == "clickhouse"
     assert config.clickhouse.port == 8123
     assert config.parquet_batch_rows == 123
+    assert config.load_governance is True
 
 
 def test_clickhouse_type_maps_arrow_types():
@@ -143,6 +145,7 @@ def test_load_governance_outputs_uses_top_index_examples(monkeypatch, tmp_path):
         schemas=SchemaConfig("bronze", "bronze_staging", "governance", "governance_staging"),
         parquet_batch_rows=100,
         load_mode="latest_snapshot",
+        load_governance=True,
     )
 
     def fake_load(ch, client, bucket, objects, database, table, batch_rows, tmpdir, expected_rows=None):
@@ -170,6 +173,7 @@ def test_run_loads_governance_before_bronze(monkeypatch):
         schemas=SchemaConfig("bronze", "bronze_staging", "governance", "governance_staging"),
         parquet_batch_rows=100,
         load_mode="latest_snapshot",
+        load_governance=True,
     )
 
     class ClickHouse:
@@ -215,3 +219,65 @@ def test_run_loads_governance_before_bronze(monkeypatch):
     assert events.index("load_governance") < events.index("load_bronze")
     assert events.index("publish:governance_staging->governance") < events.index("publish:bronze_staging->bronze")
     assert "status:SUCCESS:2:3" in events
+
+
+def test_run_can_skip_governance_outputs(monkeypatch):
+    events = []
+    config = MartConfig(
+        minio=MinioConfig("minio:9000", "minioadmin", "minioadmin123", False),
+        bronze=BronzeConfig("jne-bronze", "bronze/jne/run_id=R_TEST"),
+        governance=GovernanceConfig("jne-bronze", "governance/jne/run_id=R_TEST"),
+        clickhouse=ClickHouseConfig("clickhouse", 8123, "jne_mart", "default", "", False),
+        schemas=SchemaConfig("bronze", "bronze_staging", "governance", "governance_staging"),
+        parquet_batch_rows=100,
+        load_mode="latest_snapshot",
+        load_governance=False,
+    )
+
+    class ClickHouse:
+        def close(self):
+            events.append("close")
+
+    monkeypatch.setattr(mart_load, "load_config", lambda path: config)
+    monkeypatch.setattr(mart_load, "_minio_client", lambda cfg: object())
+    monkeypatch.setattr(
+        mart_load,
+        "_read_manifest",
+        lambda client, cfg: {"run_id": "R_TEST", "tables": [{"output_name": "shipments", "row_count": 2}]},
+    )
+    monkeypatch.setattr(mart_load, "_connect_clickhouse", lambda cfg: ClickHouse())
+    monkeypatch.setattr(mart_load, "_ensure_metadata_table", lambda ch, cfg: events.append("metadata"))
+    monkeypatch.setattr(mart_load, "_drop_database", lambda ch, db: events.append(f"drop:{db}"))
+    monkeypatch.setattr(mart_load, "_create_database", lambda ch, db: events.append(f"create:{db}"))
+    monkeypatch.setattr(
+        mart_load,
+        "_load_governance_outputs",
+        lambda ch, client, cfg, tmpdir: events.append("load_governance") or {"scorecard": 1},
+    )
+    monkeypatch.setattr(
+        mart_load,
+        "_load_manifest_tables",
+        lambda ch, client, cfg, manifest, tmpdir: events.append("load_bronze") or {"shipments": 2},
+    )
+    monkeypatch.setattr(
+        mart_load,
+        "_publish_database",
+        lambda ch, staging, target: events.append(f"publish:{staging}->{target}"),
+    )
+    monkeypatch.setattr(
+        mart_load,
+        "_insert_load_run",
+        lambda ch, cfg, manifest, table_count, row_count, status, error_message=None: events.append(
+            f"status:{status}:{table_count}:{row_count}"
+        ),
+    )
+
+    mart_load.run("unused.yaml")
+
+    assert "load_governance" not in events
+    assert "drop:governance_staging" not in events
+    assert "create:governance_staging" not in events
+    assert "publish:governance_staging->governance" not in events
+    assert "load_bronze" in events
+    assert "publish:bronze_staging->bronze" in events
+    assert "status:SUCCESS:1:2" in events

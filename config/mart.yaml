@@ -29,3 +29,4 @@ schemas:
 mart:
   load_mode: "latest_snapshot"
   parquet_batch_rows: 10000
+  load_governance: "${MART_LOAD_GOVERNANCE:-true}"

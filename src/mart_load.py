@@ -88,6 +88,7 @@ class MartConfig:
     schemas: SchemaConfig
     parquet_batch_rows: int = 10000
     load_mode: str = "latest_snapshot"
+    load_governance: bool = True
 
 
 def load_config(path: str | Path = "config/mart.yaml") -> MartConfig:
@@ -140,6 +141,7 @@ def load_config(path: str | Path = "config/mart.yaml") -> MartConfig:
         ),
         parquet_batch_rows=int(mart.get("parquet_batch_rows", 10000)),
         load_mode=mart.get("load_mode", "latest_snapshot"),
+        load_governance=_as_bool(mart.get("load_governance", True)),
     )
     if config.load_mode != "latest_snapshot":
         raise ValueError(f"Unsupported mart.load_mode: {config.load_mode}")
@@ -524,7 +526,8 @@ def run(config_path: str = "config/mart.yaml") -> None:
         "Starting ClickHouse mart load: "
         f"bronze=s3://{config.bronze.bucket}/{config.bronze.run_prefix}, "
         f"governance=s3://{config.governance.output_bucket}/{config.governance.output_prefix}, "
-        f"batch_rows={config.parquet_batch_rows:,}"
+        f"batch_rows={config.parquet_batch_rows:,}, "
+        f"load_governance={config.load_governance}"
     )
     client = _minio_client(config)
     manifest = _read_manifest(client, config)
@@ -540,17 +543,21 @@ def run(config_path: str = "config/mart.yaml") -> None:
             tmpdir = Path(tmp)
             _ensure_metadata_table(ch, config)
             _drop_database(ch, config.schemas.bronze_staging)
-            _drop_database(ch, config.schemas.governance_staging)
             _create_database(ch, config.schemas.bronze_staging)
-            _create_database(ch, config.schemas.governance_staging)
+            if config.load_governance:
+                _drop_database(ch, config.schemas.governance_staging)
+                _create_database(ch, config.schemas.governance_staging)
             _log("Prepared staging databases")
 
-            loaded_governance = _load_governance_outputs(
-                ch,
-                client,
-                config,
-                tmpdir,
-            )
+            if config.load_governance:
+                loaded_governance = _load_governance_outputs(
+                    ch,
+                    client,
+                    config,
+                    tmpdir,
+                )
+            else:
+                _log("Skipping governance output load because mart.load_governance=false")
             loaded_tables = _load_manifest_tables(
                 ch,
                 client,
@@ -560,9 +567,11 @@ def run(config_path: str = "config/mart.yaml") -> None:
             )
 
             _log("Publishing staging tables to visible databases")
-            _publish_database(ch, config.schemas.governance_staging, config.schemas.governance)
+            if config.load_governance:
+                _publish_database(ch, config.schemas.governance_staging, config.schemas.governance)
             _publish_database(ch, config.schemas.bronze_staging, config.schemas.bronze)
-            _drop_database(ch, config.schemas.governance_staging)
+            if config.load_governance:
+                _drop_database(ch, config.schemas.governance_staging)
             _drop_database(ch, config.schemas.bronze_staging)
             total_rows = sum(loaded_tables.values()) + sum(loaded_governance.values())
             _insert_load_run(

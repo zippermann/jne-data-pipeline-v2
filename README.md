@@ -114,6 +114,12 @@ The mart loader copies the latest governed bronze run from MinIO into ClickHouse
 python -m src.mart_load --config config/mart.yaml
 ```
 
+For a bronze-only ClickHouse load, skip governance artifacts with:
+
+```bash
+MART_LOAD_GOVERNANCE=false python -m src.mart_load --config config/mart.yaml
+```
+
 Airflow runs this as the third task:
 
 ```text
