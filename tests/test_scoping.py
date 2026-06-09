@@ -1,6 +1,7 @@
 from src.bronze import (
     TABLE_SPECS,
     ScopeSettings,
+    _build_sql,
     _expand_required_scopes,
     scope_predicate,
     sanitize_run_id,
@@ -67,3 +68,48 @@ def test_scope_predicate_uses_correct_parent_key_columns():
     assert scope_predicate(scope, "src", "RDSJ_HVO", "DSJ_HVO_NO") == (
         "src.DSJ_HVO_NO IN (SELECT HVO_NO FROM HOA.BRONZE_SCOPE_RDSJ_HVO_R_TEST)"
     )
+
+
+def test_date_guardrail_adds_window_filter_to_scoped_operational_tables():
+    scope = ScopeSettings("JNE", "HOA", "BRONZE_SCOPE_", "R_TEST")
+    config = {
+        "oracle": {"source_schema": "JNE"},
+        "extraction": {"anchor_date_column": "CNOTE_DATE"},
+        "scoping": {
+            "date_guardrails_enabled": True,
+            "date_guardrail_lookback_days": 0,
+            "date_guardrail_lookahead_days": 14,
+        },
+    }
+
+    sql, _binds = _build_sql(
+        config,
+        _spec("CMS_CNOTE_POD"),
+        ["CNOTE_POD_NO", "CNOTE_POD_DATE"],
+        scope,
+        ["CNOTE_POD_NO", "CNOTE_POD_DATE"],
+    )
+
+    assert "src.CNOTE_POD_NO IN (SELECT CNOTE_NO FROM HOA.BRONZE_SCOPE_CNOTE_R_TEST)" in sql
+    assert "src.CNOTE_POD_DATE >= :start_date - 0" in sql
+    assert "src.CNOTE_POD_DATE < :end_date + 14" in sql
+
+
+def test_date_guardrail_can_be_disabled():
+    scope = ScopeSettings("JNE", "HOA", "BRONZE_SCOPE_", "R_TEST")
+    config = {
+        "oracle": {"source_schema": "JNE"},
+        "extraction": {"anchor_date_column": "CNOTE_DATE"},
+        "scoping": {"date_guardrails_enabled": False},
+    }
+
+    sql, _binds = _build_sql(
+        config,
+        _spec("CMS_CNOTE_POD"),
+        ["CNOTE_POD_NO", "CNOTE_POD_DATE"],
+        scope,
+        ["CNOTE_POD_NO", "CNOTE_POD_DATE"],
+    )
+
+    assert "src.CNOTE_POD_NO IN (SELECT CNOTE_NO FROM HOA.BRONZE_SCOPE_CNOTE_R_TEST)" in sql
+    assert "CNOTE_POD_DATE >= :start_date" not in sql

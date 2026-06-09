@@ -44,6 +44,9 @@ scoping:
   scope_schema: "HOA"
   scope_table_prefix: "BRONZE_SCOPE_"
   reference_tables_mode: "full"
+  date_guardrails_enabled: true
+  date_guardrail_lookback_days: 0
+  date_guardrail_lookahead_days: 30
 
 columns:
   mode: "all"

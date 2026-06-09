@@ -3,7 +3,16 @@ from datetime import datetime
 import pyarrow as pa
 
 from src.mart_load import (
+    CnoteFailureMapping,
+    GovernanceConfig,
+    MartConfig,
+    MinioConfig,
+    PostgresConfig,
+    BronzeConfig,
+    SchemaConfig,
     _batch_to_copy_buffer,
+    _candidate_mapping_sql,
+    _create_cnote_failure_candidates,
     _list_parquet_objects,
     load_config,
     postgres_type,
@@ -100,3 +109,61 @@ def test_batch_to_copy_buffer_escapes_text_and_nulls():
         "line\\nbreak\t\\N\n"
         "\\N\t2026-06-06T00:00:00\n"
     )
+
+
+def _mart_config() -> MartConfig:
+    return MartConfig(
+        minio=MinioConfig("localhost:9000", "minioadmin", "minioadmin", False),
+        bronze=BronzeConfig("jne-bronze", "bronze/jne/run_id=R_TEST"),
+        governance=GovernanceConfig("jne-bronze", "governance/jne/run_id=R_TEST"),
+        postgres=PostgresConfig("localhost", 5432, "jne_mart", "jne_mart", "jne_mart"),
+        schemas=SchemaConfig(
+            bronze="bronze",
+            bronze_staging="bronze_staging",
+            governance="governance",
+            governance_staging="governance_staging",
+        ),
+    )
+
+
+def test_candidate_mapping_sql_uses_staging_tables_and_confidence_labels():
+    sql = _candidate_mapping_sql(
+        _mart_config(),
+        CnoteFailureMapping(
+            source_table="CMS_DRCNOTE",
+            bronze_table="cms_drcnote",
+            failed_key="DRCNOTE_NO",
+            cnote_key="DRCNOTE_CNOTE_NO",
+            mapping_method="child_table_record_key",
+            mapping_confidence="medium",
+        ),
+        {"CNOTE_NO", "CNOTE_DATE", "CNOTE_ORIGIN", "CNOTE_DESTINATION", "CNOTE_SERVICES_CODE", "CNOTE_BRANCH_ID"},
+    )
+
+    assert '"governance_staging"."failures"' in sql
+    assert '"governance_staging"."scorecard"' in sql
+    assert '"bronze_staging"."cms_drcnote"' in sql
+    assert '"bronze_staging"."cms_cnote"' in sql
+    assert "'child_table_record_key' AS mapping_method" in sql
+    assert "'medium' AS mapping_confidence" in sql
+    assert "f.table_name = 'CMS_DRCNOTE'" in sql
+    assert "f.column_names LIKE '%DRCNOTE_NO%'" in sql
+
+
+def test_create_cnote_failure_candidates_creates_empty_table_when_governance_missing():
+    class Cursor:
+        def __init__(self):
+            self.statements = []
+            self.params = []
+
+        def execute(self, sql, params=None):
+            self.statements.append(sql)
+            self.params.append(params)
+
+        def fetchone(self):
+            return (False,)
+
+    cursor = Cursor()
+
+    assert _create_cnote_failure_candidates(cursor, _mart_config()) == 0
+    assert any('CREATE TABLE "governance_staging"."cnote_failure_candidates"' in sql for sql in cursor.statements)

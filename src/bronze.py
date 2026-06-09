@@ -216,42 +216,43 @@ class TableSpec:
     stage: Stage
     scope_column: str | None = None
     scope_name: str | None = None
+    date_guard_column: str | None = None
 
 
 TABLE_SPECS: tuple[TableSpec, ...] = (
     TableSpec("CMS_CNOTE", "cms_cnote", Stage.ANCHOR),
     TableSpec("CMS_APICUST", "cms_apicust", Stage.CNOTE, "APICUST_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_CNOTE_AMO", "cms_cnote_amo", Stage.CNOTE, "CNOTE_NO", "CNOTE"),
+    TableSpec("CMS_CNOTE_AMO", "cms_cnote_amo", Stage.CNOTE, "CNOTE_NO", "CNOTE", "CDATE"),
     TableSpec("CMS_DRCNOTE", "cms_drcnote", Stage.CNOTE, "DRCNOTE_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_MRCNOTE", "cms_mrcnote", Stage.CNOTE, "MRCNOTE_NO", "DRCNOTE"),
-    TableSpec("CMS_DHI_HOC", "cms_dhi_hoc", Stage.CNOTE, "DHI_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_MHI_HOC", "cms_mhi_hoc", Stage.CNOTE, "MHI_NO", "DHI_HOC"),
-    TableSpec("CMS_DSTATUS", "cms_dstatus", Stage.CNOTE, "DSTATUS_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_CNOTE_POD", "cms_cnote_pod", Stage.CNOTE, "CNOTE_POD_NO", "CNOTE"),
-    TableSpec("CMS_DHOV_RSHEET", "cms_dhov_rsheet", Stage.CNOTE, "DHOV_RSHEET_CNOTE", "CNOTE"),
-    TableSpec("CMS_DHOUNDEL_POD", "cms_dhoundel_pod", Stage.CNOTE, "DHOUNDEL_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_MHOUNDEL_POD", "cms_mhoundel_pod", Stage.CNOTE, "MHOUNDEL_NO", "DHOUNDEL"),
-    TableSpec("CMS_DRSHEET", "cms_drsheet", Stage.CNOTE, "DRSHEET_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_DRSHEET_PRA", "cms_drsheet_pra", Stage.CNOTE, "DRSHEET_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_DBAG_HO", "cms_dbag_ho", Stage.CNOTE, "DBAG_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_DHOCNOTE", "cms_dhocnote", Stage.CNOTE, "DHOCNOTE_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_DHICNOTE", "cms_dhicnote", Stage.CNOTE, "DHICNOTE_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_COST_DTRANSIT_AGEN", "cms_cost_dtransit_agen", Stage.CNOTE, "CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_MFCNOTE", "cms_mfcnote", Stage.CNOTE, "MFCNOTE_NO", "CNOTE"),
-    TableSpec("CMS_DCORRECT_DEST", "cms_dcorrect_dest", Stage.CNOTE, "DCORRECT_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_MANIFEST", "cms_manifest", Stage.BAG_MANIFEST, "MANIFEST_NO", "MANIFEST"),
-    TableSpec("CMS_MFBAG", "cms_mfbag", Stage.BAG_MANIFEST, "MFBAG_MAN_NO", "MANIFEST"),
-    TableSpec("CMS_DMBAG", "cms_dmbag", Stage.BAG_MANIFEST, "DMBAG_BAG_NO", "MFBAG"),
-    TableSpec("CMS_MMBAG", "cms_mmbag", Stage.BAG_MANIFEST, "MMBAG_NO", "DMBAG"),
-    TableSpec("CMS_DSMU", "cms_dsmu", Stage.BAG_MANIFEST, "DSMU_BAG_NO", "DMBAG"),
-    TableSpec("CMS_MSMU", "cms_msmu", Stage.BAG_MANIFEST, "MSMU_NO", "SMU"),
-    TableSpec("CMS_COST_MTRANSIT_AGEN", "cms_cost_mtransit_agen", Stage.BAG_MANIFEST, "MANIFEST_NO", "COST_MANIFEST"),
-    TableSpec("CMS_MRSHEET", "cms_mrsheet", Stage.RUNSHEET_DO, "MRSHEET_NO", "DRSHEET"),
-    TableSpec("CMS_MSJ", "cms_msj", Stage.RUNSHEET_DO, "MSJ_NO", "MSJ"),
-    TableSpec("CMS_RDSJ", "cms_rdsj", Stage.RUNSHEET_DO, "RDSJ_HVI_NO", "HVI"),
-    TableSpec("CMS_MHICNOTE", "cms_mhicnote", Stage.RUNSHEET_DO, "MHICNOTE_NO", "HVI"),
-    TableSpec("CMS_MHOCNOTE", "cms_mhocnote", Stage.RUNSHEET_DO, "MHOCNOTE_NO", "HVO"),
-    TableSpec("CMS_DSJ", "cms_dsj", Stage.RUNSHEET_DO, "DSJ_HVO_NO", "RDSJ_HVO"),
+    TableSpec("CMS_MRCNOTE", "cms_mrcnote", Stage.CNOTE, "MRCNOTE_NO", "DRCNOTE", "MRCNOTE_DATE"),
+    TableSpec("CMS_DHI_HOC", "cms_dhi_hoc", Stage.CNOTE, "DHI_CNOTE_NO", "CNOTE", "CDATE"),
+    TableSpec("CMS_MHI_HOC", "cms_mhi_hoc", Stage.CNOTE, "MHI_NO", "DHI_HOC", "MHI_DATE"),
+    TableSpec("CMS_DSTATUS", "cms_dstatus", Stage.CNOTE, "DSTATUS_CNOTE_NO", "CNOTE", "CREATE_DATE"),
+    TableSpec("CMS_CNOTE_POD", "cms_cnote_pod", Stage.CNOTE, "CNOTE_POD_NO", "CNOTE", "CNOTE_POD_DATE"),
+    TableSpec("CMS_DHOV_RSHEET", "cms_dhov_rsheet", Stage.CNOTE, "DHOV_RSHEET_CNOTE", "CNOTE", "CREATE_DATE"),
+    TableSpec("CMS_DHOUNDEL_POD", "cms_dhoundel_pod", Stage.CNOTE, "DHOUNDEL_CNOTE_NO", "CNOTE", "CREATE_DATE"),
+    TableSpec("CMS_MHOUNDEL_POD", "cms_mhoundel_pod", Stage.CNOTE, "MHOUNDEL_NO", "DHOUNDEL", "MHOUNDEL_DATE"),
+    TableSpec("CMS_DRSHEET", "cms_drsheet", Stage.CNOTE, "DRSHEET_CNOTE_NO", "CNOTE", "DRSHEET_DATE"),
+    TableSpec("CMS_DRSHEET_PRA", "cms_drsheet_pra", Stage.CNOTE, "DRSHEET_CNOTE_NO", "CNOTE", "CREATION_DATE"),
+    TableSpec("CMS_DBAG_HO", "cms_dbag_ho", Stage.CNOTE, "DBAG_CNOTE_NO", "CNOTE", "CDATE"),
+    TableSpec("CMS_DHOCNOTE", "cms_dhocnote", Stage.CNOTE, "DHOCNOTE_CNOTE_NO", "CNOTE", "DHOCNOTE_TDATE"),
+    TableSpec("CMS_DHICNOTE", "cms_dhicnote", Stage.CNOTE, "DHICNOTE_CNOTE_NO", "CNOTE", "DHICNOTE_TDATE"),
+    TableSpec("CMS_COST_DTRANSIT_AGEN", "cms_cost_dtransit_agen", Stage.CNOTE, "CNOTE_NO", "CNOTE", "ESB_TIME"),
+    TableSpec("CMS_MFCNOTE", "cms_mfcnote", Stage.CNOTE, "MFCNOTE_NO", "CNOTE", "MFCNOTE_CRDATE"),
+    TableSpec("CMS_DCORRECT_DEST", "cms_dcorrect_dest", Stage.CNOTE, "DCORRECT_CNOTE_NO", "CNOTE", "DCORRECT_CDATE"),
+    TableSpec("CMS_MANIFEST", "cms_manifest", Stage.BAG_MANIFEST, "MANIFEST_NO", "MANIFEST", "MANIFEST_DATE"),
+    TableSpec("CMS_MFBAG", "cms_mfbag", Stage.BAG_MANIFEST, "MFBAG_MAN_NO", "MANIFEST", "MFBAG_CRDATE"),
+    TableSpec("CMS_DMBAG", "cms_dmbag", Stage.BAG_MANIFEST, "DMBAG_BAG_NO", "MFBAG", "ESB_TIME"),
+    TableSpec("CMS_MMBAG", "cms_mmbag", Stage.BAG_MANIFEST, "MMBAG_NO", "DMBAG", "MMBAG_DATE"),
+    TableSpec("CMS_DSMU", "cms_dsmu", Stage.BAG_MANIFEST, "DSMU_BAG_NO", "DMBAG", "ESB_TIME"),
+    TableSpec("CMS_MSMU", "cms_msmu", Stage.BAG_MANIFEST, "MSMU_NO", "SMU", "MSMU_DATE"),
+    TableSpec("CMS_COST_MTRANSIT_AGEN", "cms_cost_mtransit_agen", Stage.BAG_MANIFEST, "MANIFEST_NO", "COST_MANIFEST", "MANIFEST_DATE"),
+    TableSpec("CMS_MRSHEET", "cms_mrsheet", Stage.RUNSHEET_DO, "MRSHEET_NO", "DRSHEET", "MRSHEET_DATE"),
+    TableSpec("CMS_MSJ", "cms_msj", Stage.RUNSHEET_DO, "MSJ_NO", "MSJ", "MSJ_DATE"),
+    TableSpec("CMS_RDSJ", "cms_rdsj", Stage.RUNSHEET_DO, "RDSJ_HVI_NO", "HVI", "RDSJ_CDATE"),
+    TableSpec("CMS_MHICNOTE", "cms_mhicnote", Stage.RUNSHEET_DO, "MHICNOTE_NO", "HVI", "MHICNOTE_DATE"),
+    TableSpec("CMS_MHOCNOTE", "cms_mhocnote", Stage.RUNSHEET_DO, "MHOCNOTE_NO", "HVO", "MHOCNOTE_DATE"),
+    TableSpec("CMS_DSJ", "cms_dsj", Stage.RUNSHEET_DO, "DSJ_HVO_NO", "RDSJ_HVO", "DSJ_CDATE"),
     TableSpec("CMS_DROURATE", "cms_drourate", Stage.REFERENCE),
     TableSpec("ORA_ZONE", "ora_zone", Stage.REFERENCE),
     TableSpec("ORA_USER", "ora_user", Stage.REFERENCE),
@@ -982,20 +983,71 @@ def _prepare_table_output_dir(table_dir: Path) -> None:
             shutil.rmtree(table_dir)
 
 
-def _build_sql(config: dict, spec: TableSpec, columns: list[str], scope: ScopeSettings) -> tuple[str, dict]:
+def _date_guardrails_enabled(config: dict) -> bool:
+    return _as_bool(config.get("scoping", {}).get("date_guardrails_enabled", True))
+
+
+def _date_guardrail_days(config: dict, key: str, default: int) -> int:
+    value = int(config.get("scoping", {}).get(key, default))
+    if value < 0:
+        raise ValueError(f"scoping.{key} must be zero or greater")
+    return value
+
+
+def _date_guard_column(spec: TableSpec, source_columns: Sequence[str]) -> str | None:
+    if not spec.date_guard_column:
+        return None
+    available = {column.upper() for column in source_columns}
+    if spec.date_guard_column.upper() not in available:
+        logger.warning(
+            "Skipping date guardrail for %s because column %s is not present",
+            spec.table,
+            spec.date_guard_column,
+        )
+        return None
+    return spec.date_guard_column
+
+
+def _build_sql(
+    config: dict,
+    spec: TableSpec,
+    columns: list[str],
+    scope: ScopeSettings,
+    source_columns: Sequence[str] | None = None,
+) -> tuple[str, dict]:
     source_schema = config["oracle"].get("source_schema", "JNE").upper()
     alias = "src"
     column_sql = ", ".join(f"{alias}.{col}" for col in columns)
     sql = f"SELECT {column_sql} FROM {source_schema}.{spec.table} {alias}"
     binds = {}
+    predicates = []
 
     if spec.stage == Stage.ANCHOR:
         date_col = config["extraction"]["anchor_date_column"]
-        sql += f" WHERE {alias}.{date_col} >= :start_date AND {alias}.{date_col} < :end_date"
+        predicates.append(f"{alias}.{date_col} >= :start_date AND {alias}.{date_col} < :end_date")
     elif spec.stage != Stage.REFERENCE:
         if not spec.scope_name or not spec.scope_column:
             raise RuntimeError(f"Missing scope declaration for {spec.table}")
-        sql += " WHERE " + table_scope_predicate(source_schema, scope, spec, alias)
+        predicates.append(table_scope_predicate(source_schema, scope, spec, alias))
+        guard_column = None
+        if _date_guardrails_enabled(config):
+            guard_column = _date_guard_column(spec, source_columns or columns)
+        if guard_column:
+            lookback_days = _date_guardrail_days(config, "date_guardrail_lookback_days", 0)
+            lookahead_days = _date_guardrail_days(config, "date_guardrail_lookahead_days", 30)
+            predicates.append(
+                f"{alias}.{guard_column} >= :start_date - {lookback_days} "
+                f"AND {alias}.{guard_column} < :end_date + {lookahead_days}"
+            )
+            logger.info(
+                "Applying date guardrail for %s on %s: start-%s day(s), end+%s day(s)",
+                spec.table,
+                guard_column,
+                lookback_days,
+                lookahead_days,
+            )
+    if predicates:
+        sql += " WHERE " + " AND ".join(f"({predicate})" for predicate in predicates)
     return sql, binds
 
 
@@ -1028,9 +1080,10 @@ def extract_table(
 
     with connect(oracle_settings) as conn:
         source_schema = config["oracle"].get("source_schema", "JNE")
-        columns = _projection(table_columns(conn, source_schema, spec.table), spec, exclusions)
-        sql, binds = _build_sql(config, spec, columns, scope)
-        if spec.stage == Stage.ANCHOR:
+        source_columns = table_columns(conn, source_schema, spec.table)
+        columns = _projection(source_columns, spec, exclusions)
+        sql, binds = _build_sql(config, spec, columns, scope, source_columns)
+        if ":start_date" in sql or ":end_date" in sql:
             binds = {"start_date": window.start, "end_date": window.end}
 
         logger.info("Extracting %s to %s", spec.table, table_dir)

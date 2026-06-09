@@ -92,6 +92,16 @@ class MartConfig:
     load_mode: str = "latest_snapshot"
 
 
+@dataclass(frozen=True)
+class CnoteFailureMapping:
+    source_table: str
+    bronze_table: str
+    failed_key: str
+    cnote_key: str
+    mapping_method: str
+    mapping_confidence: str
+
+
 def load_config(path: str | Path = "config/mart.yaml") -> MartConfig:
     try:
         import yaml
@@ -480,6 +490,189 @@ def _load_governance_outputs(
     return loaded
 
 
+CNOTE_FAILURE_MAPPINGS: tuple[CnoteFailureMapping, ...] = (
+    CnoteFailureMapping("CMS_CNOTE", "cms_cnote", "CNOTE_NO", "CNOTE_NO", "direct_cnote_no", "high"),
+    CnoteFailureMapping("CMS_APICUST", "cms_apicust", "APICUST_CNOTE_NO", "APICUST_CNOTE_NO", "child_table_cnote_fk", "high"),
+    CnoteFailureMapping("CMS_CNOTE_AMO", "cms_cnote_amo", "CNOTE_NO", "CNOTE_NO", "child_table_cnote_fk", "high"),
+    CnoteFailureMapping("CMS_DRCNOTE", "cms_drcnote", "DRCNOTE_CNOTE_NO", "DRCNOTE_CNOTE_NO", "child_table_cnote_fk", "high"),
+    CnoteFailureMapping("CMS_DRCNOTE", "cms_drcnote", "DRCNOTE_NO", "DRCNOTE_CNOTE_NO", "child_table_record_key", "medium"),
+    CnoteFailureMapping("CMS_DHI_HOC", "cms_dhi_hoc", "DHI_CNOTE_NO", "DHI_CNOTE_NO", "child_table_cnote_fk", "high"),
+    CnoteFailureMapping("CMS_DSTATUS", "cms_dstatus", "DSTATUS_CNOTE_NO", "DSTATUS_CNOTE_NO", "child_table_cnote_fk", "high"),
+    CnoteFailureMapping("CMS_CNOTE_POD", "cms_cnote_pod", "CNOTE_POD_NO", "CNOTE_POD_NO", "child_table_cnote_fk", "high"),
+    CnoteFailureMapping("CMS_DHOV_RSHEET", "cms_dhov_rsheet", "DHOV_RSHEET_CNOTE", "DHOV_RSHEET_CNOTE", "child_table_cnote_fk", "high"),
+    CnoteFailureMapping("CMS_DHOUNDEL_POD", "cms_dhoundel_pod", "DHOUNDEL_CNOTE_NO", "DHOUNDEL_CNOTE_NO", "child_table_cnote_fk", "high"),
+    CnoteFailureMapping("CMS_DRSHEET", "cms_drsheet", "DRSHEET_CNOTE_NO", "DRSHEET_CNOTE_NO", "child_table_cnote_fk", "high"),
+    CnoteFailureMapping("CMS_DRSHEET_PRA", "cms_drsheet_pra", "DRSHEET_CNOTE_NO", "DRSHEET_CNOTE_NO", "child_table_cnote_fk", "high"),
+    CnoteFailureMapping("CMS_DBAG_HO", "cms_dbag_ho", "DBAG_CNOTE_NO", "DBAG_CNOTE_NO", "child_table_cnote_fk", "high"),
+    CnoteFailureMapping("CMS_DHOCNOTE", "cms_dhocnote", "DHOCNOTE_CNOTE_NO", "DHOCNOTE_CNOTE_NO", "child_table_cnote_fk", "high"),
+    CnoteFailureMapping("CMS_DHICNOTE", "cms_dhicnote", "DHICNOTE_CNOTE_NO", "DHICNOTE_CNOTE_NO", "child_table_cnote_fk", "high"),
+    CnoteFailureMapping("CMS_COST_DTRANSIT_AGEN", "cms_cost_dtransit_agen", "CNOTE_NO", "CNOTE_NO", "child_table_cnote_fk", "high"),
+    CnoteFailureMapping("CMS_MFCNOTE", "cms_mfcnote", "MFCNOTE_NO", "MFCNOTE_NO", "child_table_cnote_fk", "high"),
+    CnoteFailureMapping("CMS_DCORRECT_DEST", "cms_dcorrect_dest", "DCORRECT_CNOTE_NO", "DCORRECT_CNOTE_NO", "child_table_cnote_fk", "high"),
+)
+
+
+def _table_exists(cursor: Any, schema: str, table: str) -> bool:
+    cursor.execute(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = %s AND table_name = %s
+        )
+        """,
+        (schema, table),
+    )
+    return bool(cursor.fetchone()[0])
+
+
+def _table_columns(cursor: Any, schema: str, table: str) -> set[str]:
+    cursor.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = %s AND table_name = %s
+        """,
+        (schema, table),
+    )
+    return {row[0] for row in cursor.fetchall()}
+
+
+def _cnote_column_expr(column: str, available_columns: set[str], alias: str = "c") -> str:
+    if column in available_columns:
+        return f"CAST({alias}.{_quote_ident(column)} AS TEXT)"
+    return "NULL::TEXT"
+
+
+def _candidate_mapping_sql(
+    config: MartConfig,
+    mapping: CnoteFailureMapping,
+    cnote_columns: set[str],
+) -> str:
+    bronze_table = _qualified(config.schemas.bronze_staging, mapping.bronze_table)
+    cnote_table = _qualified(config.schemas.bronze_staging, "cms_cnote")
+    failures_table = _qualified(config.schemas.governance_staging, "failures")
+    scorecard_table = _qualified(config.schemas.governance_staging, "scorecard")
+    source_table = mapping.source_table.replace("'", "''")
+    failed_key = mapping.failed_key.replace("'", "''")
+    mapping_method = mapping.mapping_method.replace("'", "''")
+    mapping_confidence = mapping.mapping_confidence.replace("'", "''")
+    return f"""
+        SELECT DISTINCT
+            CAST(src.{_quote_ident(mapping.cnote_key)} AS TEXT) AS cnote_no,
+            f.index_code,
+            s.element,
+            s.rule_family,
+            f.table_name AS source_table,
+            f.column_names AS source_columns,
+            f.failed_value,
+            f.failure_reason,
+            f.affected_rows,
+            '{mapping_method}' AS mapping_method,
+            '{mapping_confidence}' AS mapping_confidence,
+            f.boundary_suspect,
+            {_cnote_column_expr("CNOTE_DATE", cnote_columns)} AS cnote_date,
+            {_cnote_column_expr("CNOTE_ORIGIN", cnote_columns)} AS cnote_origin,
+            {_cnote_column_expr("CNOTE_DESTINATION", cnote_columns)} AS cnote_destination,
+            {_cnote_column_expr("CNOTE_SERVICES_CODE", cnote_columns)} AS cnote_services_code,
+            {_cnote_column_expr("CNOTE_BRANCH_ID", cnote_columns)} AS cnote_branch_id
+        FROM {failures_table} f
+        JOIN {scorecard_table} s
+          ON s.index_code = f.index_code
+        JOIN {bronze_table} src
+          ON TRIM(CAST(f.failed_value AS TEXT)) = TRIM(CAST(src.{_quote_ident(mapping.failed_key)} AS TEXT))
+        JOIN {cnote_table} c
+          ON TRIM(CAST(src.{_quote_ident(mapping.cnote_key)} AS TEXT)) = TRIM(CAST(c."CNOTE_NO" AS TEXT))
+        WHERE f.table_name = '{source_table}'
+          AND f.failed_value IS NOT NULL
+          AND f.column_names LIKE '%{failed_key}%'
+    """
+
+
+def _create_empty_cnote_failure_candidates(cursor: Any, schema: str) -> None:
+    cursor.execute(f"""
+        CREATE TABLE {_qualified(schema, "cnote_failure_candidates")} (
+            cnote_no TEXT,
+            index_code TEXT,
+            element TEXT,
+            rule_family TEXT,
+            source_table TEXT,
+            source_columns TEXT,
+            failed_value TEXT,
+            failure_reason TEXT,
+            affected_rows BIGINT,
+            mapping_method TEXT,
+            mapping_confidence TEXT,
+            boundary_suspect BOOLEAN,
+            cnote_date TEXT,
+            cnote_origin TEXT,
+            cnote_destination TEXT,
+            cnote_services_code TEXT,
+            cnote_branch_id TEXT
+        )
+    """)
+
+
+def _create_cnote_failure_candidates(cursor: Any, config: MartConfig) -> int:
+    table_name = "cnote_failure_candidates"
+    cursor.execute(f"DROP TABLE IF EXISTS {_qualified(config.schemas.governance_staging, table_name)}")
+
+    required_governance = {"scorecard", "failures"}
+    if any(
+        not _table_exists(cursor, config.schemas.governance_staging, table)
+        for table in required_governance
+    ):
+        _create_empty_cnote_failure_candidates(cursor, config.schemas.governance_staging)
+        _log("governance.cnote_failure_candidates: governance scorecard/failures missing; created empty table")
+        return 0
+
+    if not _table_exists(cursor, config.schemas.bronze_staging, "cms_cnote"):
+        _create_empty_cnote_failure_candidates(cursor, config.schemas.governance_staging)
+        _log("governance.cnote_failure_candidates: bronze.cms_cnote missing; created empty table")
+        return 0
+
+    cnote_columns = _table_columns(cursor, config.schemas.bronze_staging, "cms_cnote")
+    required_cnote_columns = {"CNOTE_NO"}
+    if not required_cnote_columns <= cnote_columns:
+        missing = ", ".join(sorted(required_cnote_columns - cnote_columns))
+        _create_empty_cnote_failure_candidates(cursor, config.schemas.governance_staging)
+        _log(f"governance.cnote_failure_candidates: bronze.cms_cnote missing column(s) {missing}; created empty table")
+        return 0
+
+    statements = []
+    skipped = []
+    for mapping in CNOTE_FAILURE_MAPPINGS:
+        if not _table_exists(cursor, config.schemas.bronze_staging, mapping.bronze_table):
+            skipped.append(f"{mapping.source_table}: table missing")
+            continue
+        columns = _table_columns(cursor, config.schemas.bronze_staging, mapping.bronze_table)
+        required_columns = {mapping.failed_key, mapping.cnote_key}
+        if not required_columns <= columns:
+            skipped.append(f"{mapping.source_table}: missing {', '.join(sorted(required_columns - columns))}")
+            continue
+        statements.append(_candidate_mapping_sql(config, mapping, cnote_columns))
+
+    if not statements:
+        _create_empty_cnote_failure_candidates(cursor, config.schemas.governance_staging)
+        _log("governance.cnote_failure_candidates: no supported mappings available; created empty table")
+        return 0
+
+    union_sql = "\nUNION ALL\n".join(statements)
+    cursor.execute(f"""
+        CREATE TABLE {_qualified(config.schemas.governance_staging, table_name)} AS
+        {union_sql}
+    """)
+    cursor.execute(f"SELECT COUNT(*) FROM {_qualified(config.schemas.governance_staging, table_name)}")
+    row_count = int(cursor.fetchone()[0])
+    _log(
+        "governance.cnote_failure_candidates: "
+        f"created {row_count:,} row(s) from {len(statements)} mapping(s)"
+    )
+    if skipped:
+        _log(f"governance.cnote_failure_candidates: skipped {len(skipped)} mapping(s): {'; '.join(skipped)}")
+    return row_count
+
+
 def _staging_tables(cursor: Any, schema: str) -> list[str]:
     cursor.execute(
         """
@@ -590,6 +783,7 @@ def run(config_path: str = "config/mart.yaml") -> None:
                     tmpdir,
                     commit_callback=con.commit,
                 )
+                loaded_governance["cnote_failure_candidates"] = _create_cnote_failure_candidates(cursor, config)
                 con.commit()
 
                 _log("Publishing staging tables to visible schemas")

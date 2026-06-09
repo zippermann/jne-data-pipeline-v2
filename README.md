@@ -43,6 +43,7 @@ Edit `config/config.yaml` for:
 - Optional table subset for smoke tests
 - Output compression and row group sizing
 - Scope schema/table prefix
+- Date guardrails for scoped operational tables
 - PII exclusion mode
 - Reference table behavior
 - MinIO bucket and object prefix
@@ -58,6 +59,13 @@ extraction:
 
 An empty list extracts every table. The extractor logs row progress every
 `output.progress_rows` rows.
+
+Scoped operational tables also use table-specific date guardrails by default.
+For example, `CMS_CNOTE_POD` must match the in-window CNOTE scope and have
+`CNOTE_POD_DATE` inside the extraction window plus the configured lookahead.
+The default guardrail is `window_start - 0 days` through `window_end + 30 days`
+so end-of-window shipments can still include after-window delivery events.
+Reference tables are not date-guarded.
 
 ## MinIO
 
@@ -119,3 +127,10 @@ extract_bronze -> run_governance -> load_data_mart
 This v1 is a latest-snapshot serving copy. It loads the same bronze tables
 produced by extraction into the `bronze` schema and governance outputs into the
 `governance` schema. MinIO remains the durable bronze archive.
+
+During mart loading, the loader also derives
+`governance.cnote_failure_candidates` from `governance.failures`,
+`governance.scorecard`, and the loaded bronze tables. This table only contains
+failures that can be safely mapped back to a `CNOTE_NO`, with
+`mapping_method` and `mapping_confidence` fields for Tableau drilldowns.
+Unmapped failures remain available in `governance.failures`.
