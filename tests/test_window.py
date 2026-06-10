@@ -1,6 +1,6 @@
 from datetime import date
 
-from src.bronze import resolve_window
+from src.extractor.bronze import resolve_window
 
 
 def test_relative_window_adds_months():

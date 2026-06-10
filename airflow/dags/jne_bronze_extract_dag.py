@@ -52,7 +52,7 @@ with DAG(
         bash_command=(
             "cd /opt/airflow/project && "
             f"{run_context}"
-            "python -m src.bronze "
+            "python -m src.extractor.bronze "
             "--config config/config.yaml "
             '--run-id "$RUN_ID" '
             '--extract-date "$EXTRACT_DATE" '
@@ -65,7 +65,7 @@ with DAG(
         bash_command=(
             "cd /opt/airflow/project && "
             f"{run_context}"
-            "python -m src.runner --config config/governance.yaml"
+            "python -m src.governance.runner --config config/governance.yaml"
         ),
     )
 
@@ -74,7 +74,7 @@ with DAG(
         bash_command=(
             "cd /opt/airflow/project && "
             f"{run_context}"
-            "python -m src.mart_load --config config/mart.yaml"
+            "python -m src.loader.mart_load --config config/mart.yaml"
         ),
     )
 

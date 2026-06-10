@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pyarrow as pa
 
-from src.mart_load import (
+from src.loader.mart_load import (
     CnoteFailureMapping,
     GovernanceConfig,
     MartConfig,
@@ -15,6 +15,7 @@ from src.mart_load import (
     _create_cnote_failure_candidates,
     _list_parquet_objects,
     load_config,
+    run,
     postgres_type,
 )
 
@@ -49,6 +50,7 @@ schemas:
   governance_staging: "governance_staging"
 mart:
   load_mode: "latest_snapshot"
+  load_governance: "${MART_LOAD_GOVERNANCE:-true}"
   parquet_batch_rows: 123
 """,
         encoding="utf-8",
@@ -59,6 +61,29 @@ mart:
     assert config.bronze.run_prefix == "bronze/jne/run_id=R_TEST"
     assert config.postgres.password == "secret"
     assert config.parquet_batch_rows == 123
+    assert config.load_governance is True
+
+
+def test_load_config_can_disable_governance_with_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("BRONZE_RUN_PREFIX", "bronze/jne/run_id=R_TEST")
+    monkeypatch.setenv("MART_LOAD_GOVERNANCE", "false")
+    config_path = tmp_path / "mart.yaml"
+    config_path.write_text(
+        """
+bronze:
+  bucket: "jne-bronze"
+  run_prefix: "${BRONZE_RUN_PREFIX}"
+governance:
+  output_prefix: "governance/jne/run_id=R_TEST"
+mart:
+  load_governance: "${MART_LOAD_GOVERNANCE:-true}"
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.load_governance is False
 
 
 def test_postgres_type_maps_arrow_types():
@@ -167,3 +192,69 @@ def test_create_cnote_failure_candidates_creates_empty_table_when_governance_mis
 
     assert _create_cnote_failure_candidates(cursor, _mart_config()) == 0
     assert any('CREATE TABLE "governance_staging"."cnote_failure_candidates"' in sql for sql in cursor.statements)
+
+
+def test_run_skips_governance_when_disabled(monkeypatch, tmp_path):
+    config = _mart_config()
+    config = MartConfig(
+        minio=config.minio,
+        bronze=config.bronze,
+        governance=config.governance,
+        postgres=config.postgres,
+        schemas=config.schemas,
+        load_governance=False,
+    )
+    statements = []
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql, params=None):
+            statements.append(sql)
+
+    class Connection:
+        autocommit = True
+
+        def cursor(self):
+            return Cursor()
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+    class TemporaryDirectory:
+        def __enter__(self):
+            return str(tmp_path)
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("src.loader.mart_load.load_config", lambda path: config)
+    monkeypatch.setattr("src.loader.mart_load._minio_client", lambda loaded_config: object())
+    monkeypatch.setattr(
+        "src.loader.mart_load._read_manifest",
+        lambda client, loaded_config: {"run_id": "R_TEST", "tables": []},
+    )
+    monkeypatch.setattr("src.loader.mart_load._connect_postgres", lambda loaded_config: Connection())
+    monkeypatch.setattr("src.loader.mart_load.tempfile.TemporaryDirectory", TemporaryDirectory)
+    monkeypatch.setattr("src.loader.mart_load._load_manifest_tables", lambda *args, **kwargs: {"cms_cnote": 10})
+    monkeypatch.setattr(
+        "src.loader.mart_load._load_governance_outputs",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("governance should not load")),
+    )
+    monkeypatch.setattr(
+        "src.loader.mart_load._create_cnote_failure_candidates",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("governance candidates should not build")),
+    )
+
+    run("config/mart.yaml")
+
+    joined = "\n".join(statements)
+    assert '"bronze_staging"' in joined
+    assert '"governance_staging"' not in joined

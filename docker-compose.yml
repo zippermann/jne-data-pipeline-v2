@@ -171,7 +171,7 @@ services:
       <<: [*oracle-env, *minio-env, *mart-postgres-env]
     volumes: *airflow-volumes
     command: >-
-      bash -c "cd /opt/airflow/project && python -m src.bronze --config config/config.yaml --run-id bronze_init_$$(date -u +%Y%m%dT%H%M%S)"
+      bash -c "cd /opt/airflow/project && python -m src.extractor.bronze --config config/config.yaml --run-id bronze_init_$$(date -u +%Y%m%dT%H%M%S)"
     restart: "no"
     networks:
       - jne-network

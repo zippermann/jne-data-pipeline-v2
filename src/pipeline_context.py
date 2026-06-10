@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from src.bronze import MinioSettings, lake_prefix, load_config, resolve_window, sanitize_run_id
+from src.extractor.bronze import MinioSettings, lake_prefix, load_config, resolve_window, sanitize_run_id
 
 
 def bronze_prefix(config_path: str, run_id: str, extract_date: str) -> str:

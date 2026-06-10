@@ -4,15 +4,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from src.config import (
+from src.governance.config import (
     BronzeConfig,
     DuckDBConfig,
     GovernanceConfig,
     GovernanceOutputConfig,
     MinioConfig,
 )
-from src.rules.executors import run_intg1
-from src.rules.registry import RuleSpec
+from src.governance.rules.executors import run_intg1
+from src.governance.rules.registry import RuleSpec
 
 
 duckdb = pytest.importorskip("duckdb")

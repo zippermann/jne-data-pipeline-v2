@@ -8,8 +8,21 @@ in MinIO.
 The first usable path is:
 
 ```bash
-python3 -m src.bronze --config config/config.yaml --run-id local_test
+python3 -m src.extractor.bronze --config config/config.yaml --run-id local_test
 ```
+
+## Source Layout
+
+The `src` package is grouped by pipeline stage:
+
+- `src/extractor/`: Oracle to relational bronze Parquet extraction
+- `src/governance/`: DuckDB governance scoring, rule catalog, and output writing
+- `src/loader/`: MinIO bronze/governance outputs into the Postgres mart
+- `src/pipeline_context.py`: shared Airflow run-prefix/window helpers
+
+Legacy module paths such as `src.bronze`, `src.runner`, and `src.mart_load`
+remain as thin compatibility wrappers, but new code should import from the
+stage packages above.
 
 Local working Parquet lands under:
 
@@ -79,13 +92,14 @@ from the JNE data path.
 
 ## Airflow
 
-The DAG is `jne_bronze_extract`. It runs two tasks in order:
+The DAG is `jne_bronze_extract`. It runs three tasks in order:
 
 - `extract_bronze`: Oracle tables to partitioned Parquet in MinIO
-- `run_governance`: workbook-indexed governance checks over the MinIO bronze run
+- `run_governance`: Python-catalog governance checks over the MinIO bronze run
+- `load_data_mart`: bronze and governance outputs into the Postgres mart
 
 ```bash
-python -m src.bronze --config config/config.yaml --run-id {{ ts_nodash }}
+python -m src.extractor.bronze --config config/config.yaml --run-id {{ ts_nodash }}
 ```
 
 Pass `{"keep_scope": true}` in `dag_run.conf` to leave Oracle scope tables in
@@ -115,7 +129,7 @@ metadata database. Docker Compose includes `mart-postgres` for this purpose.
 The mart loader copies the latest governed bronze run from MinIO into Postgres:
 
 ```bash
-python -m src.mart_load --config config/mart.yaml
+python -m src.loader.mart_load --config config/mart.yaml
 ```
 
 Airflow runs this as the third task:

@@ -19,7 +19,7 @@ from typing import Any, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.bronze import (
+from src.extractor.bronze import (
     CODE_VERSION,
     OracleSettings,
     PartitionedParquetWriter,

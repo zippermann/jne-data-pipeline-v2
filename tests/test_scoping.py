@@ -1,4 +1,4 @@
-from src.bronze import (
+from src.extractor.bronze import (
     TABLE_SPECS,
     ScopeSettings,
     _build_sql,
