@@ -2,6 +2,7 @@ from src.extractor.bronze import (
     TABLE_SPECS,
     ScopeSettings,
     _build_sql,
+    _cnote_limit,
     _expand_required_scopes,
     scope_predicate,
     sanitize_run_id,
@@ -113,3 +114,34 @@ def test_date_guardrail_can_be_disabled():
 
     assert "src.CNOTE_POD_NO IN (SELECT CNOTE_NO FROM HOA.BRONZE_SCOPE_CNOTE_R_TEST)" in sql
     assert "CNOTE_POD_DATE >= :start_date" not in sql
+
+
+def test_anchor_table_uses_cnote_scope_when_limit_is_configured():
+    scope = ScopeSettings("JNE", "HOA", "BRONZE_SCOPE_", "R_TEST")
+    config = {
+        "oracle": {"source_schema": "JNE"},
+        "extraction": {"anchor_date_column": "CNOTE_DATE", "cnote_limit": 100000},
+    }
+
+    sql, _binds = _build_sql(
+        config,
+        _spec("CMS_CNOTE"),
+        ["CNOTE_NO", "CNOTE_DATE"],
+        scope,
+        ["CNOTE_NO", "CNOTE_DATE"],
+    )
+
+    assert "src.CNOTE_DATE >= :start_date AND src.CNOTE_DATE < :end_date" in sql
+    assert "src.CNOTE_NO IN (SELECT CNOTE_NO FROM HOA.BRONZE_SCOPE_CNOTE_R_TEST)" in sql
+
+
+def test_cnote_limit_must_be_positive_when_set():
+    assert _cnote_limit({"extraction": {"cnote_limit": "100000"}}) == 100000
+    assert _cnote_limit({"extraction": {}}) is None
+
+    try:
+        _cnote_limit({"extraction": {"cnote_limit": 0}})
+    except ValueError as exc:
+        assert "extraction.cnote_limit" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for zero cnote_limit")

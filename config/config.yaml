@@ -14,12 +14,13 @@ extraction:
   # Empty list means extract every table in the inventory.
   # For smoke tests, use e.g. ["CMS_CNOTE"] or ["cms_cnote"].
   tables: []
+  cnote_limit: 100000
   window:
     mode: "explicit"
     anchor_month: "2026-05"
     num_months: 1
     start_date: "2026-05-01"
-    end_date: "2026-05-08"
+    end_date: "2026-06-01"
 
 output:
   root: "data/bronze"

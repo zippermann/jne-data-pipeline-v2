@@ -354,12 +354,23 @@ def _create_scope(conn: Any, table_name: str, key_column: str, query: str, binds
     return count
 
 
+def _cnote_limit(config: dict) -> int | None:
+    raw_limit = config.get("extraction", {}).get("cnote_limit")
+    if raw_limit in (None, ""):
+        return None
+    limit = int(raw_limit)
+    if limit <= 0:
+        raise ValueError("extraction.cnote_limit must be greater than zero when set")
+    return limit
+
+
 def materialize_scope_tables(
     conn: Any,
     settings: ScopeSettings,
     window: Window,
     anchor_table: str,
     anchor_date_column: str,
+    cnote_limit: int | None = None,
     required_scopes: set[str] | None = None,
 ) -> dict[str, int]:
     required_scopes = _expand_required_scopes(required_scopes or _all_scope_names())
@@ -373,17 +384,27 @@ def materialize_scope_tables(
     end_literal = f"DATE '{window.end_label}'"
     counts = {}
     if "CNOTE" in required_scopes:
+        cnote_query = f"""
+            SELECT CNOTE_NO
+            FROM {src}.{anchor_table}
+            WHERE {anchor_date_column} >= {start_literal}
+              AND {anchor_date_column} < {end_literal}
+            ORDER BY {anchor_date_column}, CNOTE_NO
+            """
+        if cnote_limit is not None:
+            cnote_query = f"""
+            SELECT CNOTE_NO
+            FROM (
+{cnote_query}
+            )
+            WHERE ROWNUM <= {cnote_limit}
+            """
         logger.info("Creating Oracle scope CNOTE")
         counts["CNOTE"] = _create_scope(
             conn,
             cnote_scope,
             "CNOTE_NO",
-            f"""
-            SELECT CNOTE_NO
-            FROM {src}.{anchor_table}
-            WHERE {anchor_date_column} >= {start_literal}
-              AND {anchor_date_column} < {end_literal}
-            """,
+            cnote_query,
             {},
         )
         logger.info("Oracle scope CNOTE: %s rows", f"{counts['CNOTE']:,}")
@@ -1025,6 +1046,8 @@ def _build_sql(
     if spec.stage == Stage.ANCHOR:
         date_col = config["extraction"]["anchor_date_column"]
         predicates.append(f"{alias}.{date_col} >= :start_date AND {alias}.{date_col} < :end_date")
+        if _cnote_limit(config) is not None:
+            predicates.append(scope_predicate(scope, alias, "CNOTE", "CNOTE_NO"))
     elif spec.stage != Stage.REFERENCE:
         if not spec.scope_name or not spec.scope_column:
             raise RuntimeError(f"Missing scope declaration for {spec.table}")
@@ -1340,26 +1363,32 @@ def run(config_path: str, run_id: str, keep_scope: bool = False, extract_date: s
     scope = ScopeSettings.from_config(config, safe_run_id)
     workers = int(os.getenv("BRONZE_WORKERS", "4"))
     manifest = RunManifest(_manifest_path(config, window, safe_run_id, extract_date), safe_run_id, window)
+    cnote_limit = _cnote_limit(config)
     started = time.monotonic()
 
     logger.info(
-        "Bronze run %s code_version=%s window=[%s, %s) workers=%s",
+        "Bronze run %s code_version=%s window=[%s, %s) workers=%s cnote_limit=%s",
         safe_run_id,
         CODE_VERSION,
         window.start_label,
         window.end_label,
         workers,
+        f"{cnote_limit:,}" if cnote_limit is not None else "none",
     )
     logger.info("Selected tables: %s", ", ".join(spec.table for spec in specs))
 
     with connect(oracle_settings) as conn:
+        required_scopes = required_scopes_for_specs(specs)
+        if cnote_limit is not None:
+            required_scopes.add("CNOTE")
         counts = materialize_scope_tables(
             conn,
             scope,
             window,
             config["extraction"]["anchor_table"],
             config["extraction"]["anchor_date_column"],
-            required_scopes_for_specs(specs),
+            cnote_limit,
+            required_scopes,
         )
         manifest.set_scope_counts(counts)
         logger.info("Scope counts: %s", counts)
