@@ -2,7 +2,6 @@
 
 Each function handles one rule family and returns the same RuleOutcome shape.
 The code favors readability over speed so junior engineers can trace the logic.
-Production governance uses DuckDB and batched table scans instead.
 """
 
 from __future__ import annotations
@@ -124,4 +123,3 @@ RULE_FUNCTIONS = {
     "timeliness": check_timeliness,
     "integrity_orphan": check_integrity_orphan,
 }
-

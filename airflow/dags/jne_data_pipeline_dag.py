@@ -1,8 +1,8 @@
 """
-JNE Bronze Extraction DAG
-=========================
-Relational Oracle → Parquet bronze extraction, governance checks, and
-Postgres mart loading.
+JNE Data Pipeline DAG
+=====================
+Relational Oracle → Parquet bronze extraction, simple governance checks, and
+Postgres bronze mart loading.
 
 Pass {"keep_scope": true} in dag_run.conf to leave Oracle scope tables in place
 for inspection after the run.
@@ -27,9 +27,9 @@ default_args = {
 
 
 with DAG(
-    "jne_bronze_extract",
+    "jne_data_pipeline",
     default_args=default_args,
-    description="JNE relational bronze extraction with governance outputs",
+    description="JNE relational bronze extraction with simple governance checks",
     schedule_interval=None,
     catchup=False,
     max_active_runs=1,
@@ -38,21 +38,20 @@ with DAG(
     run_context = (
         'RUN_ID="{{ ts_nodash }}" && '
         'EXTRACT_DATE="{{ dag_run.logical_date.strftime("%Y-%m-%d") }}" && '
-        'BRONZE_RUN_PREFIX="$(python -m src.pipeline_context bronze-prefix '
+        'BRONZE_RUN_PREFIX="$(python -m pipeline_context bronze-prefix '
         '--config config/config.yaml --run-id "$RUN_ID" --extract-date "$EXTRACT_DATE")" && '
-        'GOVERNANCE_OUTPUT_PREFIX="$(python -m src.pipeline_context governance-prefix --run-id "$RUN_ID")" && '
-        'EXTRACTION_WINDOW_START="$(python -m src.pipeline_context window --config config/config.yaml start)" && '
-        'EXTRACTION_WINDOW_END="$(python -m src.pipeline_context window --config config/config.yaml end)" && '
-        'export RUN_ID EXTRACT_DATE BRONZE_RUN_PREFIX GOVERNANCE_OUTPUT_PREFIX '
+        'EXTRACTION_WINDOW_START="$(python -m pipeline_context window --config config/config.yaml start)" && '
+        'EXTRACTION_WINDOW_END="$(python -m pipeline_context window --config config/config.yaml end)" && '
+        'export RUN_ID EXTRACT_DATE BRONZE_RUN_PREFIX '
         'EXTRACTION_WINDOW_START EXTRACTION_WINDOW_END && '
     )
 
-    extract_bronze = BashOperator(
-        task_id="extract_bronze",
+    extract_oracle = BashOperator(
+        task_id="extract_oracle",
         bash_command=(
             "cd /opt/airflow/project && "
             f"{run_context}"
-            "python -m src.extractor.bronze "
+            "python -m extractor.bronze "
             "--config config/config.yaml "
             '--run-id "$RUN_ID" '
             '--extract-date "$EXTRACT_DATE" '
@@ -65,7 +64,7 @@ with DAG(
         bash_command=(
             "cd /opt/airflow/project && "
             f"{run_context}"
-            "python -m src.governance.runner --config config/governance.yaml"
+            'python -m governance.runner --output-dir "governance/outputs/$RUN_ID"'
         ),
     )
 
@@ -74,8 +73,8 @@ with DAG(
         bash_command=(
             "cd /opt/airflow/project && "
             f"{run_context}"
-            "python -m src.loader.mart_load --config config/mart.yaml"
+            "python -m loader.mart_load --config config/mart.yaml"
         ),
     )
 
-    extract_bronze >> run_governance >> load_data_mart
+    extract_oracle >> run_governance >> load_data_mart

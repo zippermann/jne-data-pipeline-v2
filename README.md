@@ -8,21 +8,20 @@ in MinIO.
 The first usable path is:
 
 ```bash
-python3 -m src.extractor.bronze --config config/config.yaml --run-id local_test
+python3 -m extractor.bronze --config config/config.yaml --run-id local_test
 ```
 
 ## Source Layout
 
-The `src` package is grouped by pipeline stage:
+The runtime packages are grouped by pipeline stage:
 
-- `src/extractor/`: Oracle to relational bronze Parquet extraction
-- `src/governance/`: DuckDB governance scoring, rule catalog, and output writing
-- `src/loader/`: MinIO bronze/governance outputs into the Postgres mart
-- `src/pipeline_context.py`: shared Airflow run-prefix/window helpers
+- `extractor/`: Oracle to relational bronze Parquet extraction
+- `loader/`: MinIO bronze outputs into the Postgres mart
+- `governance/`: lightweight pandas governance checks and workbook reference
+- `pipeline_context.py`: shared Airflow run-prefix/window helpers
 
-Legacy module paths such as `src.bronze`, `src.runner`, and `src.mart_load`
-remain as thin compatibility wrappers, but new code should import from the
-stage packages above.
+`governance/` contains the lightweight pandas governance checker and the source
+workbook used as reference material.
 
 Local working Parquet lands under:
 
@@ -39,13 +38,6 @@ s3://jne-bronze/bronze/jne/window_start=YYYY-MM-DD/window_end=YYYY-MM-DD/extract
 Each source table gets its own folder with `part-*.parquet`, `_SUCCESS`, and the
 run writes a top-level `run_manifest.json` with row counts, file counts, sizes,
 timings, and Oracle scope-table counts.
-
-The old flat-pipeline files are still present under `reference/old-flat-pipeline/`:
-
-- `unify_jne_oracle.sql`
-- `unify_oracle.py`
-- `export_oracle_parquet.py`
-- `jne_etl_pipeline.py`
 
 ## Configuration
 
@@ -92,59 +84,51 @@ from the JNE data path.
 
 ## Airflow
 
-The DAG is `jne_bronze_extract`. It runs three tasks in order:
+The DAG is `jne_data_pipeline`. It runs three tasks in order:
 
-- `extract_bronze`: Oracle tables to partitioned Parquet in MinIO
-- `run_governance`: Python-catalog governance checks over the MinIO bronze run
-- `load_data_mart`: bronze and governance outputs into the Postgres mart
+- `extract_oracle`: Oracle tables to partitioned Parquet in MinIO
+- `run_governance`: simple pandas governance checks with CSV output
+- `load_data_mart`: bronze outputs into the Postgres mart
 
 ```bash
-python -m src.extractor.bronze --config config/config.yaml --run-id {{ ts_nodash }}
+python -m extractor.bronze --config config/config.yaml --run-id {{ ts_nodash }}
 ```
 
 Pass `{"keep_scope": true}` in `dag_run.conf` to leave Oracle scope tables in
 place for manual inspection.
 
-The DAG derives the exact `BRONZE_RUN_PREFIX`, governance output prefix, and
-window labels from the same config for all tasks, so governance points at the
-bronze objects produced by that run.
+The DAG derives the exact `BRONZE_RUN_PREFIX` and window labels from the same
+config for all tasks.
 
 ## Governance Outputs
 
-Governance outputs are written to MinIO under:
+The simple governance runner writes local CSVs:
 
-```text
-s3://jne-bronze/governance/jne/run_id=<run_id>/
+```bash
+python -m governance.runner --output-dir governance/outputs/local_test
 ```
 
-Each governance run writes `scorecard.csv`, `scorecard.parquet`, and
-`failures.parquet`. Bronze source data also stays in MinIO as Parquet, so the
-pipeline does not duplicate data into a database.
+Each run writes `scorecard.csv` and `failures.csv`. The current simple runner
+uses synthetic fixtures as a readable rule harness; the extraction and mart
+paths stay focused on relational bronze Parquet.
 
 ## Postgres Mart Loading
 
 The first Tableau-serving layer is a separate Postgres database, not Airflow's
 metadata database. Docker Compose includes `mart-postgres` for this purpose.
 
-The mart loader copies the latest governed bronze run from MinIO into Postgres:
+The mart loader copies a bronze run from MinIO into Postgres:
 
 ```bash
-python -m src.loader.mart_load --config config/mart.yaml
+python -m loader.mart_load --config config/mart.yaml
 ```
 
 Airflow runs this as the third task:
 
 ```text
-extract_bronze -> run_governance -> load_data_mart
+extract_oracle -> run_governance -> load_data_mart
 ```
 
 This v1 is a latest-snapshot serving copy. It loads the same bronze tables
-produced by extraction into the `bronze` schema and governance outputs into the
-`governance` schema. MinIO remains the durable bronze archive.
-
-During mart loading, the loader also derives
-`governance.cnote_failure_candidates` from `governance.failures`,
-`governance.scorecard`, and the loaded bronze tables. This table only contains
-failures that can be safely mapped back to a `CNOTE_NO`, with
-`mapping_method` and `mapping_confidence` fields for Tableau drilldowns.
-Unmapped failures remain available in `governance.failures`.
+produced by extraction into the `bronze` schema. MinIO remains the durable
+bronze archive.

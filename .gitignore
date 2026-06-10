@@ -4,12 +4,14 @@
 # Markdown context/handoff docs
 *.md
 !README.md
-!reference/**/*.md
 
 # Data files — may contain PII
 data/
 *.csv
 *.parquet
+*.xlsx
+*.xls
+integrity.txt
 
 # Python
 __pycache__/

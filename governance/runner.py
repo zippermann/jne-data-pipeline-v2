@@ -8,19 +8,20 @@ for walkthroughs, not Airflow or production MinIO execution.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import argparse
 from pathlib import Path
 from random import Random
 
 import pandas as pd
 
-from catalog import CATALOG
-from output import write_failures, write_scorecard
-from rules import FAILURE_COLUMNS, RULE_FUNCTIONS, RuleOutcome
+from governance.catalog import CATALOG
+from governance.output import write_failures, write_scorecard
+from governance.rules import FAILURE_COLUMNS, RULE_FUNCTIONS, RuleOutcome
 
 
 RUN_WINDOW_START = "2026-06-01"
 RUN_WINDOW_END = "2026-06-08"
-OUTPUT_DIR = Path("outputs")
+DEFAULT_OUTPUT_DIR = Path("governance/outputs")
 
 
 def _base_cnotes() -> list[str]:
@@ -30,8 +31,8 @@ def _base_cnotes() -> list[str]:
 def load_tables(table_names: set[str]) -> dict[str, pd.DataFrame]:
     """Load required tables as DataFrames.
 
-    TODO: replace with DuckDB-over-MinIO Parquet reader once the connection
-    layer is implemented. For now, generate synthetic data so the demo runs.
+    TODO: replace the synthetic fixtures with a small bronze Parquet reader
+    when the simple checker is ready to run against real extraction outputs.
     """
     random = Random(20260610)
     cnotes = _base_cnotes()
@@ -111,8 +112,9 @@ def _error_outcome(message: str) -> RuleOutcome:
     return RuleOutcome(total_checked=0, total_failed=0, failures=failures)
 
 
-def main() -> None:
+def run(output_dir: str | Path = DEFAULT_OUTPUT_DIR) -> None:
     run_at = datetime.now(timezone.utc).isoformat()
+    output_dir = Path(output_dir)
     data = load_tables(_required_tables())
     results: list[dict] = []
     all_failures: list[pd.DataFrame] = []
@@ -144,12 +146,19 @@ def main() -> None:
             all_failures.append(failures)
 
     failure_frame = pd.concat(all_failures, ignore_index=True) if all_failures else pd.DataFrame()
-    scorecard_path = write_scorecard(results, OUTPUT_DIR / "scorecard.csv")
-    failures_path = write_failures(failure_frame, OUTPUT_DIR / "failures.csv")
+    scorecard_path = write_scorecard(results, output_dir / "scorecard.csv")
+    failures_path = write_failures(failure_frame, output_dir / "failures.csv")
 
     print(f"Indexes run: {len(results)}")
     print(f"Total failures: {int(sum(result['total_failed'] for result in results))}")
     print(f"Outputs: {scorecard_path}, {failures_path}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run the simple JNE governance checker.")
+    parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
+    args = parser.parse_args()
+    run(args.output_dir)
 
 
 if __name__ == "__main__":

@@ -8,10 +8,6 @@ bronze:
   bucket: "${MINIO_BUCKET:-jne-bronze}"
   run_prefix: "${BRONZE_RUN_PREFIX}"
 
-governance:
-  output_bucket: "${GOVERNANCE_OUTPUT_BUCKET:-jne-bronze}"
-  output_prefix: "${GOVERNANCE_OUTPUT_PREFIX:-governance/jne/run_id=local}"
-
 postgres:
   host: "${MART_POSTGRES_HOST:-mart-postgres}"
   port: "${MART_POSTGRES_PORT:-5432}"
@@ -22,10 +18,7 @@ postgres:
 schemas:
   bronze: "bronze"
   bronze_staging: "bronze_staging"
-  governance: "governance"
-  governance_staging: "governance_staging"
 
 mart:
   load_mode: "latest_snapshot"
-  load_governance: "${MART_LOAD_GOVERNANCE:-true}"
   parquet_batch_rows: 10000
