@@ -9,6 +9,7 @@ around stable boundaries; for now one file is easier to audit.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -347,11 +348,17 @@ def _create_scope(conn: Any, table_name: str, key_column: str, query: str, binds
             f"SELECT DISTINCT {key_column} FROM (\n{query}\n) WHERE {key_column} IS NOT NULL",
             binds,
         )
-        cursor.execute(f"CREATE INDEX IDX_{table_name.split('.')[-1][:24]} ON {table_name} ({key_column})")
+        cursor.execute(f"CREATE INDEX {_scope_index_name(table_name)} ON {table_name} ({key_column})")
         cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
         count = cursor.fetchone()[0]
     conn.commit()
     return count
+
+
+def _scope_index_name(table_name: str) -> str:
+    suffix = table_name.split(".")[-1].upper()
+    digest = hashlib.sha1(suffix.encode("utf-8")).hexdigest()[:6].upper()
+    return f"IDX_{suffix[:20]}_{digest}"
 
 
 def _cnote_limit(config: dict) -> int | None:

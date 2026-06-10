@@ -4,6 +4,7 @@ from src.extractor.bronze import (
     _build_sql,
     _cnote_limit,
     _expand_required_scopes,
+    _scope_index_name,
     scope_predicate,
     sanitize_run_id,
 )
@@ -15,6 +16,15 @@ def test_sanitize_run_id_for_oracle_identifier_suffix():
 
 def test_sanitize_run_id_limits_length():
     assert len(sanitize_run_id("x" * 100)) == 40
+
+
+def test_scope_index_name_uses_full_table_hash_to_avoid_prefix_collisions():
+    first = _scope_index_name("HOA.BRONZE_SCOPE_CNOTE_MAY_100K_CNOTES_20260610T084415")
+    second = _scope_index_name("HOA.BRONZE_SCOPE_CNOTE_MAY_100K_CNOTES_20260610T084516")
+
+    assert first != second
+    assert len(first) <= 30
+    assert len(second) <= 30
 
 
 def _spec(table: str):
