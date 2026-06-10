@@ -3,7 +3,7 @@
 
 # Markdown context/handoff docs
 *.md
-!README.md
+!AGENTS.md
 
 # Data files — may contain PII
 data/
