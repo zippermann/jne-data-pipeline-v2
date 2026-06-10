@@ -1,13 +1,19 @@
 from extractor.bronze import (
+    OracleSettings,
     TABLE_SPECS,
+    Window,
     ScopeSettings,
     _build_sql,
     _cnote_limit,
+    _create_scope,
     _expand_required_scopes,
+    _scope_date_filter,
     _scope_index_name,
+    _scope_join_query,
     scope_predicate,
     sanitize_run_id,
 )
+from datetime import date
 
 
 def test_sanitize_run_id_for_oracle_identifier_suffix():
@@ -79,6 +85,69 @@ def test_scope_predicate_uses_correct_parent_key_columns():
     assert scope_predicate(scope, "src", "RDSJ_HVO", "DSJ_HVO_NO") == (
         "src.DSJ_HVO_NO IN (SELECT HVO_NO FROM HOA.BRONZE_SCOPE_RDSJ_HVO_R_TEST)"
     )
+
+
+def test_scope_join_query_drives_from_scope_with_date_filter():
+    window = Window(date(2026, 5, 1), date(2026, 6, 1))
+    query = _scope_join_query(
+        "JNE.CMS_DRSHEET",
+        "src",
+        "src.DRSHEET_NO",
+        "HOA.BRONZE_SCOPE_CNOTE_R_TEST",
+        "scope",
+        "DRSHEET_CNOTE_NO",
+        "CNOTE_NO",
+        _scope_date_filter("src", "DRSHEET_DATE", window, 0, 30),
+    )
+
+    assert "LEADING(scope src)" in query
+    assert "USE_HASH(src)" in query
+    assert "FROM HOA.BRONZE_SCOPE_CNOTE_R_TEST scope" in query
+    assert "JOIN JNE.CMS_DRSHEET src" in query
+    assert "src.DRSHEET_DATE >= DATE '2026-05-01' - 0" in query
+    assert "src.DRSHEET_DATE < DATE '2026-06-01' + 30" in query
+
+
+def test_create_scope_adds_parallel_hint_to_ctas_select():
+    class Cursor:
+        def __init__(self):
+            self.statements = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql, binds=None):
+            self.statements.append(sql)
+
+        def fetchone(self):
+            return (123,)
+
+    class Connection:
+        def __init__(self):
+            self.cursor_obj = Cursor()
+
+        def cursor(self):
+            return self.cursor_obj
+
+        def commit(self):
+            pass
+
+    conn = Connection()
+
+    assert _create_scope(conn, "HOA.BRONZE_SCOPE_TEST", "CNOTE_NO", "SELECT CNOTE_NO FROM JNE.CMS_CNOTE", {}, 4) == 123
+    create_sql = conn.cursor_obj.statements[1]
+    assert "CREATE TABLE HOA.BRONZE_SCOPE_TEST NOLOGGING AS" in create_sql
+    assert "SELECT /*+ PARALLEL(4) */ DISTINCT CNOTE_NO" in create_sql
+
+
+def test_oracle_settings_default_prefetch_rows_tracks_arraysize():
+    settings = OracleSettings.from_config({"oracle": {"fetch_arraysize": 10000}})
+
+    assert settings.fetch_arraysize == 10000
+    assert settings.prefetch_rows == 10001
 
 
 def test_date_guardrail_adds_window_filter_to_scoped_operational_tables():

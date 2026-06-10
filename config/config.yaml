@@ -7,6 +7,7 @@ oracle:
   password: "${ORACLE_PASSWORD}"
   source_schema: "${ORACLE_SCHEMA}"
   fetch_arraysize: 10000
+  prefetch_rows: 10001
 
 extraction:
   anchor_table: "CMS_CNOTE"
@@ -48,6 +49,8 @@ scoping:
   date_guardrails_enabled: true
   date_guardrail_lookback_days: 0
   date_guardrail_lookahead_days: 30
+  ctas_parallel_degree: 4
+  scope_workers: 2
 
 columns:
   mode: "all"

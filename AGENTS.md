@@ -87,6 +87,16 @@ Use `config/config.yaml` for Oracle extraction settings, source schema, window,
 table subset, output sizing, scope naming, date guardrails, PII exclusions, and
 MinIO output.
 
+Oracle extraction tuning knobs:
+
+- `oracle.fetch_arraysize`: fetch batch size during table extraction.
+- `oracle.prefetch_rows`: Oracle client prefetch rows; keep near
+  `fetch_arraysize + 1`.
+- `scoping.ctas_parallel_degree`: Oracle `PARALLEL(n)` hint for scope CTAS.
+- `scoping.scope_workers`: number of independent scope CTAS jobs to run at once.
+- `scoping.date_guardrail_*`: date guardrails applied to extraction SQL and the
+  high-volume DRSHEET/MANIFEST scope queries.
+
 Use `config/mart.yaml` for MinIO input and Postgres mart connection settings.
 The mart loader is bronze-only; it no longer loads governance parquet artifacts
 or builds `governance.cnote_failure_candidates`.

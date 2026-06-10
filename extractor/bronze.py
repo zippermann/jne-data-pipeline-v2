@@ -134,6 +134,7 @@ class OracleSettings:
     sid: str = ""
     service_name: str = ""
     fetch_arraysize: int = 50000
+    prefetch_rows: int | None = None
 
     @classmethod
     def from_config(cls, config: dict) -> "OracleSettings":
@@ -147,6 +148,7 @@ class OracleSettings:
             password=oracle.get("password", ""),
             source_schema=oracle.get("source_schema", "JNE"),
             fetch_arraysize=int(oracle.get("fetch_arraysize", 50000)),
+            prefetch_rows=int(oracle.get("prefetch_rows", int(oracle.get("fetch_arraysize", 50000)) + 1)),
         )
 
     @property
@@ -340,12 +342,25 @@ def _drop_table(conn: Any, table_name: str) -> None:
         )
 
 
-def _create_scope(conn: Any, table_name: str, key_column: str, query: str, binds: dict) -> int:
+def _parallel_hint(degree: int | None) -> str:
+    if not degree or degree <= 1:
+        return ""
+    return f"/*+ PARALLEL({degree}) */ "
+
+
+def _create_scope(
+    conn: Any,
+    table_name: str,
+    key_column: str,
+    query: str,
+    binds: dict,
+    ctas_parallel_degree: int = 1,
+) -> int:
     _drop_table(conn, table_name)
     with conn.cursor() as cursor:
         cursor.execute(
             f"CREATE TABLE {table_name} NOLOGGING AS\n"
-            f"SELECT DISTINCT {key_column} FROM (\n{query}\n) WHERE {key_column} IS NOT NULL",
+            f"SELECT {_parallel_hint(ctas_parallel_degree)}DISTINCT {key_column} FROM (\n{query}\n) WHERE {key_column} IS NOT NULL",
             binds,
         )
         cursor.execute(f"CREATE INDEX {_scope_index_name(table_name)} ON {table_name} ({key_column})")
@@ -371,6 +386,133 @@ def _cnote_limit(config: dict) -> int | None:
     return limit
 
 
+def _scope_date_filter(alias: str, column: str, window: Window, lookback_days: int, lookahead_days: int) -> str:
+    return (
+        f"{alias}.{column} >= DATE '{window.start_label}' - {lookback_days} "
+        f"AND {alias}.{column} < DATE '{window.end_label}' + {lookahead_days}"
+    )
+
+
+def _scope_join_query(
+    source_table: str,
+    source_alias: str,
+    output_expr: str,
+    scope_table: str,
+    scope_alias: str,
+    source_key: str,
+    scope_key: str,
+    date_filter: str | None = None,
+) -> str:
+    where_sql = f"\n            WHERE {date_filter}" if date_filter else ""
+    return f"""
+            SELECT /*+ LEADING({scope_alias} {source_alias}) USE_HASH({source_alias}) */ {output_expr}
+            FROM {scope_table} {scope_alias}
+            JOIN {source_table} {source_alias}
+              ON {source_alias}.{source_key} = {scope_alias}.{scope_key}{where_sql}
+            """
+
+
+def _scope_dependencies() -> dict[str, set[str]]:
+    return {
+        "DRCNOTE": {"CNOTE"},
+        "DHI_HOC": {"CNOTE"},
+        "DHOUNDEL": {"CNOTE"},
+        "DRSHEET": {"CNOTE"},
+        "MANIFEST": {"CNOTE"},
+        "MFBAG": {"MANIFEST"},
+        "DMBAG": {"MFBAG"},
+        "SMU": {"DMBAG"},
+        "MMBAG": {"DMBAG"},
+        "COST_MANIFEST": {"CNOTE"},
+        "HVI": {"CNOTE"},
+        "HVO": {"CNOTE"},
+        "RDSJ_HVO": {"HVI"},
+        "MSJ": {"RDSJ_HVO"},
+    }
+
+
+@dataclass(frozen=True)
+class ScopeJob:
+    name: str
+    table_name: str
+    key_column: str
+    query: str
+
+
+def _run_scope_job(
+    job: ScopeJob,
+    conn: Any,
+    ctas_parallel_degree: int,
+) -> tuple[str, int]:
+    logger.info("Creating Oracle scope %s", job.name)
+    count = _create_scope(
+        conn,
+        job.table_name,
+        job.key_column,
+        job.query,
+        {},
+        ctas_parallel_degree,
+    )
+    logger.info("Oracle scope %s: %s rows", job.name, f"{count:,}")
+    return job.name, count
+
+
+def _run_scope_job_with_new_connection(
+    job: ScopeJob,
+    oracle_settings: OracleSettings,
+    ctas_parallel_degree: int,
+) -> tuple[str, int]:
+    with connect(oracle_settings) as conn:
+        return _run_scope_job(job, conn, ctas_parallel_degree)
+
+
+def _run_scope_jobs(
+    jobs: dict[str, ScopeJob],
+    conn: Any,
+    oracle_settings: OracleSettings | None,
+    ctas_parallel_degree: int,
+    scope_workers: int,
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    dependencies = _scope_dependencies()
+    pending = set(jobs)
+    scope_workers = max(scope_workers, 1)
+    if scope_workers > 1 and oracle_settings is None:
+        logger.warning("scope_workers=%s requested but oracle_settings was not provided; running scopes sequentially", scope_workers)
+        scope_workers = 1
+
+    while pending:
+        ready = sorted(
+            name
+            for name in pending
+            if dependencies.get(name, set()) <= set(counts)
+        )
+        if not ready:
+            raise RuntimeError(f"Scope dependency cycle or missing parent for: {sorted(pending)}")
+
+        wave = ready[:scope_workers]
+        logger.info("Creating Oracle scope wave: %s", ", ".join(wave))
+        if scope_workers == 1:
+            name, count = _run_scope_job(jobs[wave[0]], conn, ctas_parallel_degree)
+            counts[name] = count
+        else:
+            with ThreadPoolExecutor(max_workers=min(scope_workers, len(wave))) as executor:
+                futures = {
+                    executor.submit(
+                        _run_scope_job_with_new_connection,
+                        jobs[name],
+                        oracle_settings,
+                        ctas_parallel_degree,
+                    ): name
+                    for name in wave
+                }
+                for future in as_completed(futures):
+                    name, count = future.result()
+                    counts[name] = count
+        pending.difference_update(wave)
+    return counts
+
+
 def materialize_scope_tables(
     conn: Any,
     settings: ScopeSettings,
@@ -379,6 +521,11 @@ def materialize_scope_tables(
     anchor_date_column: str,
     cnote_limit: int | None = None,
     required_scopes: set[str] | None = None,
+    oracle_settings: OracleSettings | None = None,
+    date_guard_lookback_days: int = 0,
+    date_guard_lookahead_days: int = 30,
+    ctas_parallel_degree: int = 1,
+    scope_workers: int = 1,
 ) -> dict[str, int]:
     required_scopes = _expand_required_scopes(required_scopes or _all_scope_names())
     if not required_scopes:
@@ -390,6 +537,7 @@ def materialize_scope_tables(
     start_literal = f"DATE '{window.start_label}'"
     end_literal = f"DATE '{window.end_label}'"
     counts = {}
+    ctas_parallel_degree = max(int(ctas_parallel_degree), 1)
     if "CNOTE" in required_scopes:
         cnote_query = f"""
             SELECT CNOTE_NO
@@ -413,221 +561,123 @@ def materialize_scope_tables(
             "CNOTE_NO",
             cnote_query,
             {},
+            ctas_parallel_degree,
         )
         logger.info("Oracle scope CNOTE: %s rows", f"{counts['CNOTE']:,}")
 
-    if "DRCNOTE" in required_scopes:
-        logger.info("Creating Oracle scope DRCNOTE")
-        counts["DRCNOTE"] = _create_scope(
-            conn,
+    jobs = {
+        "DRCNOTE": ScopeJob(
+            "DRCNOTE",
             settings.table("DRCNOTE"),
             "DRCNOTE_NO",
-            f"""
-            SELECT DRCNOTE_NO
-            FROM {src}.CMS_DRCNOTE
-            WHERE DRCNOTE_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-            """,
-            {},
-        )
-        logger.info("Oracle scope DRCNOTE: %s rows", f"{counts['DRCNOTE']:,}")
-
-    if "DHI_HOC" in required_scopes:
-        logger.info("Creating Oracle scope DHI_HOC")
-        counts["DHI_HOC"] = _create_scope(
-            conn,
+            _scope_join_query(f"{src}.CMS_DRCNOTE", "src", "src.DRCNOTE_NO", cnote_scope, "scope", "DRCNOTE_CNOTE_NO", "CNOTE_NO"),
+        ),
+        "DHI_HOC": ScopeJob(
+            "DHI_HOC",
             settings.table("DHI_HOC"),
             "DHI_NO",
-            f"""
-            SELECT DHI_NO
-            FROM {src}.CMS_DHI_HOC
-            WHERE DHI_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-            """,
-            {},
-        )
-        logger.info("Oracle scope DHI_HOC: %s rows", f"{counts['DHI_HOC']:,}")
-
-    if "DHOUNDEL" in required_scopes:
-        logger.info("Creating Oracle scope DHOUNDEL")
-        counts["DHOUNDEL"] = _create_scope(
-            conn,
+            _scope_join_query(f"{src}.CMS_DHI_HOC", "src", "src.DHI_NO", cnote_scope, "scope", "DHI_CNOTE_NO", "CNOTE_NO"),
+        ),
+        "DHOUNDEL": ScopeJob(
+            "DHOUNDEL",
             settings.table("DHOUNDEL"),
             "DHOUNDEL_NO",
-            f"""
-            SELECT DHOUNDEL_NO
-            FROM {src}.CMS_DHOUNDEL_POD
-            WHERE DHOUNDEL_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-            """,
-            {},
-        )
-        logger.info("Oracle scope DHOUNDEL: %s rows", f"{counts['DHOUNDEL']:,}")
-
-    if "DRSHEET" in required_scopes:
-        logger.info("Creating Oracle scope DRSHEET")
-        counts["DRSHEET"] = _create_scope(
-            conn,
+            _scope_join_query(f"{src}.CMS_DHOUNDEL_POD", "src", "src.DHOUNDEL_NO", cnote_scope, "scope", "DHOUNDEL_CNOTE_NO", "CNOTE_NO"),
+        ),
+        "DRSHEET": ScopeJob(
+            "DRSHEET",
             settings.table("DRSHEET"),
             "DRSHEET_NO",
-            f"""
-            SELECT DRSHEET_NO
-            FROM {src}.CMS_DRSHEET
-            WHERE DRSHEET_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-            """,
-            {},
-        )
-        logger.info("Oracle scope DRSHEET: %s rows", f"{counts['DRSHEET']:,}")
-
-    if "MANIFEST" in required_scopes:
-        logger.info("Creating Oracle scope MANIFEST")
-        counts["MANIFEST"] = _create_scope(
-            conn,
+            _scope_join_query(
+                f"{src}.CMS_DRSHEET",
+                "src",
+                "src.DRSHEET_NO",
+                cnote_scope,
+                "scope",
+                "DRSHEET_CNOTE_NO",
+                "CNOTE_NO",
+                _scope_date_filter("src", "DRSHEET_DATE", window, date_guard_lookback_days, date_guard_lookahead_days),
+            ),
+        ),
+        "MANIFEST": ScopeJob(
+            "MANIFEST",
             settings.table("MANIFEST"),
             "MANIFEST_NO",
-            f"""
-            SELECT MFCNOTE_MAN_NO AS MANIFEST_NO
-            FROM {src}.CMS_MFCNOTE
-            WHERE MFCNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-            """,
-            {},
-        )
-        logger.info("Oracle scope MANIFEST: %s rows", f"{counts['MANIFEST']:,}")
-
-    if "MFBAG" in required_scopes:
-        logger.info("Creating Oracle scope MFBAG")
-        counts["MFBAG"] = _create_scope(
-            conn,
+            _scope_join_query(
+                f"{src}.CMS_MFCNOTE",
+                "src",
+                "src.MFCNOTE_MAN_NO AS MANIFEST_NO",
+                cnote_scope,
+                "scope",
+                "MFCNOTE_NO",
+                "CNOTE_NO",
+                _scope_date_filter("src", "MFCNOTE_CRDATE", window, date_guard_lookback_days, date_guard_lookahead_days),
+            ),
+        ),
+        "MFBAG": ScopeJob(
+            "MFBAG",
             settings.table("MFBAG"),
             "MFBAG_NO",
             f"""
-            SELECT MFCNOTE_BAG_NO AS MFBAG_NO
-            FROM {src}.CMS_MFCNOTE
-            WHERE MFCNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
+            {_scope_join_query(f"{src}.CMS_MFCNOTE", "src", "src.MFCNOTE_BAG_NO AS MFBAG_NO", cnote_scope, "scope", "MFCNOTE_NO", "CNOTE_NO", _scope_date_filter("src", "MFCNOTE_CRDATE", window, date_guard_lookback_days, date_guard_lookahead_days))}
             UNION
-            SELECT MFBAG_NO
-            FROM {src}.CMS_MFBAG
-            WHERE MFBAG_MAN_NO IN (SELECT MANIFEST_NO FROM {settings.table("MANIFEST")})
+            {_scope_join_query(f"{src}.CMS_MFBAG", "src", "src.MFBAG_NO", settings.table("MANIFEST"), "scope", "MFBAG_MAN_NO", "MANIFEST_NO")}
             """,
-            {},
-        )
-        logger.info("Oracle scope MFBAG: %s rows", f"{counts['MFBAG']:,}")
-
-    if "DMBAG" in required_scopes:
-        logger.info("Creating Oracle scope DMBAG")
-        counts["DMBAG"] = _create_scope(
-            conn,
+        ),
+        "DMBAG": ScopeJob(
+            "DMBAG",
             settings.table("DMBAG"),
             "DMBAG_NO",
-            f"""
-            SELECT DMBAG_NO
-            FROM {src}.CMS_DMBAG
-            WHERE DMBAG_BAG_NO IN (SELECT MFBAG_NO FROM {settings.table("MFBAG")})
-            """,
-            {},
-        )
-        logger.info("Oracle scope DMBAG: %s rows", f"{counts['DMBAG']:,}")
-
-    if "SMU" in required_scopes:
-        logger.info("Creating Oracle scope SMU")
-        counts["SMU"] = _create_scope(
-            conn,
+            _scope_join_query(f"{src}.CMS_DMBAG", "src", "src.DMBAG_NO", settings.table("MFBAG"), "scope", "DMBAG_BAG_NO", "MFBAG_NO"),
+        ),
+        "SMU": ScopeJob(
+            "SMU",
             settings.table("SMU"),
             "SMU_NO",
-            f"""
-            SELECT DSMU_NO AS SMU_NO
-            FROM {src}.CMS_DSMU
-            WHERE DSMU_BAG_NO IN (SELECT DMBAG_NO FROM {settings.table("DMBAG")})
-            """,
-            {},
-        )
-        logger.info("Oracle scope SMU: %s rows", f"{counts['SMU']:,}")
-
-    if "MMBAG" in required_scopes:
-        logger.info("Creating Oracle scope MMBAG")
-        counts["MMBAG"] = _create_scope(
-            conn,
+            _scope_join_query(f"{src}.CMS_DSMU", "src", "src.DSMU_NO AS SMU_NO", settings.table("DMBAG"), "scope", "DSMU_BAG_NO", "DMBAG_NO"),
+        ),
+        "MMBAG": ScopeJob(
+            "MMBAG",
             settings.table("MMBAG"),
             "MMBAG_NO",
             f"""
             SELECT DMBAG_NO AS MMBAG_NO
             FROM {settings.table("DMBAG")}
             """,
-            {},
-        )
-        logger.info("Oracle scope MMBAG: %s rows", f"{counts['MMBAG']:,}")
-
-    if "COST_MANIFEST" in required_scopes:
-        logger.info("Creating Oracle scope COST_MANIFEST")
-        counts["COST_MANIFEST"] = _create_scope(
-            conn,
+        ),
+        "COST_MANIFEST": ScopeJob(
+            "COST_MANIFEST",
             settings.table("COST_MANIFEST"),
             "MANIFEST_NO",
-            f"""
-            SELECT DMANIFEST_NO AS MANIFEST_NO
-            FROM {src}.CMS_COST_DTRANSIT_AGEN
-            WHERE CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-            """,
-            {},
-        )
-        logger.info("Oracle scope COST_MANIFEST: %s rows", f"{counts['COST_MANIFEST']:,}")
-
-    if "HVI" in required_scopes:
-        logger.info("Creating Oracle scope HVI")
-        counts["HVI"] = _create_scope(
-            conn,
+            _scope_join_query(f"{src}.CMS_COST_DTRANSIT_AGEN", "src", "src.DMANIFEST_NO AS MANIFEST_NO", cnote_scope, "scope", "CNOTE_NO", "CNOTE_NO"),
+        ),
+        "HVI": ScopeJob(
+            "HVI",
             settings.table("HVI"),
             "HVI_NO",
-            f"""
-            SELECT DHICNOTE_NO AS HVI_NO
-            FROM {src}.CMS_DHICNOTE
-            WHERE DHICNOTE_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-            """,
-            {},
-        )
-        logger.info("Oracle scope HVI: %s rows", f"{counts['HVI']:,}")
-
-    if "HVO" in required_scopes:
-        logger.info("Creating Oracle scope HVO")
-        counts["HVO"] = _create_scope(
-            conn,
+            _scope_join_query(f"{src}.CMS_DHICNOTE", "src", "src.DHICNOTE_NO AS HVI_NO", cnote_scope, "scope", "DHICNOTE_CNOTE_NO", "CNOTE_NO"),
+        ),
+        "HVO": ScopeJob(
+            "HVO",
             settings.table("HVO"),
             "HVO_NO",
-            f"""
-            SELECT DHOCNOTE_NO AS HVO_NO
-            FROM {src}.CMS_DHOCNOTE
-            WHERE DHOCNOTE_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-            """,
-            {},
-        )
-        logger.info("Oracle scope HVO: %s rows", f"{counts['HVO']:,}")
-
-    if "RDSJ_HVO" in required_scopes:
-        logger.info("Creating Oracle scope RDSJ_HVO")
-        counts["RDSJ_HVO"] = _create_scope(
-            conn,
+            _scope_join_query(f"{src}.CMS_DHOCNOTE", "src", "src.DHOCNOTE_NO AS HVO_NO", cnote_scope, "scope", "DHOCNOTE_CNOTE_NO", "CNOTE_NO"),
+        ),
+        "RDSJ_HVO": ScopeJob(
+            "RDSJ_HVO",
             settings.table("RDSJ_HVO"),
             "HVO_NO",
-            f"""
-            SELECT RDSJ_HVO_NO AS HVO_NO
-            FROM {src}.CMS_RDSJ
-            WHERE RDSJ_HVI_NO IN (SELECT HVI_NO FROM {settings.table("HVI")})
-            """,
-            {},
-        )
-        logger.info("Oracle scope RDSJ_HVO: %s rows", f"{counts['RDSJ_HVO']:,}")
-
-    if "MSJ" in required_scopes:
-        logger.info("Creating Oracle scope MSJ")
-        counts["MSJ"] = _create_scope(
-            conn,
+            _scope_join_query(f"{src}.CMS_RDSJ", "src", "src.RDSJ_HVO_NO AS HVO_NO", settings.table("HVI"), "scope", "RDSJ_HVI_NO", "HVI_NO"),
+        ),
+        "MSJ": ScopeJob(
+            "MSJ",
             settings.table("MSJ"),
             "MSJ_NO",
-            f"""
-            SELECT DSJ_NO AS MSJ_NO
-            FROM {src}.CMS_DSJ
-            WHERE DSJ_HVO_NO IN (SELECT HVO_NO FROM {settings.table("RDSJ_HVO")})
-            """,
-            {},
-        )
-        logger.info("Oracle scope MSJ: %s rows", f"{counts['MSJ']:,}")
+            _scope_join_query(f"{src}.CMS_DSJ", "src", "src.DSJ_NO AS MSJ_NO", settings.table("RDSJ_HVO"), "scope", "DSJ_HVO_NO", "HVO_NO"),
+        ),
+    }
+    selected_jobs = {name: job for name, job in jobs.items() if name in required_scopes}
+    counts.update(_run_scope_jobs(selected_jobs, conn, oracle_settings, ctas_parallel_degree, scope_workers))
     return counts
 
 
@@ -671,22 +721,7 @@ def _all_scope_names() -> set[str]:
 
 
 def _expand_required_scopes(scopes: set[str]) -> set[str]:
-    dependencies = {
-        "DRCNOTE": {"CNOTE"},
-        "DHI_HOC": {"CNOTE"},
-        "DHOUNDEL": {"CNOTE"},
-        "DRSHEET": {"CNOTE"},
-        "MANIFEST": {"CNOTE"},
-        "MFBAG": {"MANIFEST"},
-        "DMBAG": {"MFBAG"},
-        "SMU": {"DMBAG"},
-        "MMBAG": {"DMBAG"},
-        "COST_MANIFEST": {"CNOTE"},
-        "HVI": {"CNOTE"},
-        "HVO": {"CNOTE"},
-        "RDSJ_HVO": {"HVI"},
-        "MSJ": {"RDSJ_HVO"},
-    }
+    dependencies = _scope_dependencies()
     expanded = {scope.upper() for scope in scopes}
     changed = True
     while changed:
@@ -1119,6 +1154,8 @@ def extract_table(
         logger.info("Extracting %s to %s", spec.table, table_dir)
         with conn.cursor() as cursor:
             cursor.arraysize = oracle_settings.fetch_arraysize
+            if oracle_settings.prefetch_rows is not None:
+                cursor.prefetchrows = oracle_settings.prefetch_rows
             try:
                 cursor.execute(sql, binds)
             except Exception as exc:
@@ -1371,15 +1408,22 @@ def run(config_path: str, run_id: str, keep_scope: bool = False, extract_date: s
     workers = int(os.getenv("BRONZE_WORKERS", "4"))
     manifest = RunManifest(_manifest_path(config, window, safe_run_id, extract_date), safe_run_id, window)
     cnote_limit = _cnote_limit(config)
+    scoping_config = config.get("scoping", {})
+    scope_workers = int(os.getenv("BRONZE_SCOPE_WORKERS", scoping_config.get("scope_workers", 1)))
+    ctas_parallel_degree = int(os.getenv("BRONZE_SCOPE_PARALLEL_DEGREE", scoping_config.get("ctas_parallel_degree", 1)))
+    date_guard_lookback_days = _date_guardrail_days(config, "date_guardrail_lookback_days", 0)
+    date_guard_lookahead_days = _date_guardrail_days(config, "date_guardrail_lookahead_days", 30)
     started = time.monotonic()
 
     logger.info(
-        "Bronze run %s code_version=%s window=[%s, %s) workers=%s cnote_limit=%s",
+        "Bronze run %s code_version=%s window=[%s, %s) workers=%s scope_workers=%s ctas_parallel_degree=%s cnote_limit=%s",
         safe_run_id,
         CODE_VERSION,
         window.start_label,
         window.end_label,
         workers,
+        scope_workers,
+        ctas_parallel_degree,
         f"{cnote_limit:,}" if cnote_limit is not None else "none",
     )
     logger.info("Selected tables: %s", ", ".join(spec.table for spec in specs))
@@ -1396,6 +1440,11 @@ def run(config_path: str, run_id: str, keep_scope: bool = False, extract_date: s
             config["extraction"]["anchor_date_column"],
             cnote_limit,
             required_scopes,
+            oracle_settings,
+            date_guard_lookback_days,
+            date_guard_lookahead_days,
+            ctas_parallel_degree,
+            scope_workers,
         )
         manifest.set_scope_counts(counts)
         logger.info("Scope counts: %s", counts)
