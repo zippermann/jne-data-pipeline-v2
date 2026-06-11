@@ -16,13 +16,19 @@ class RuleOutcome:
     total_checked: int
     total_failed: int
     failures: pd.DataFrame
+    checks: pd.DataFrame | None = None
 
 
 FAILURE_COLUMNS = ["cnote_no", "failed_value", "failure_reason"]
+CHECK_COLUMNS = ["cnote_no", "status", "variable_1", "variable_2"]
 
 
 def _empty_failures() -> pd.DataFrame:
     return pd.DataFrame(columns=FAILURE_COLUMNS)
+
+
+def _empty_checks() -> pd.DataFrame:
+    return pd.DataFrame(columns=CHECK_COLUMNS)
 
 
 def _cnote_values(df: pd.DataFrame, params: dict) -> pd.Series:
@@ -39,6 +45,24 @@ def _as_failure_frame(cnote_no: pd.Series, failed_value: pd.Series | str, reason
         "cnote_no": cnote_no.fillna("").astype(str),
         "failed_value": failed_value.fillna("").astype(str),
         "failure_reason": reason,
+    })
+
+
+def _as_check_frame(
+    cnote_no: pd.Series,
+    failed: pd.Series,
+    variable_1: pd.Series | str = "",
+    variable_2: pd.Series | str = "",
+) -> pd.DataFrame:
+    if isinstance(variable_1, str):
+        variable_1 = pd.Series([variable_1] * len(cnote_no), index=cnote_no.index)
+    if isinstance(variable_2, str):
+        variable_2 = pd.Series([variable_2] * len(cnote_no), index=cnote_no.index)
+    return pd.DataFrame({
+        "cnote_no": cnote_no.fillna("").astype(str),
+        "status": failed.map({True: "FAIL", False: "PASS"}).astype(str),
+        "variable_1": variable_1.fillna("").astype(str),
+        "variable_2": variable_2.fillna("").astype(str),
     })
 
 
@@ -89,7 +113,8 @@ def check_completeness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutco
     values = table[column]
     failed = values.isna() | values.astype("string").str.strip().eq("")
     failures = _as_failure_frame(_cnote_values(table.loc[failed], params), values.loc[failed], f"{column} is null or empty")
-    return RuleOutcome(len(table), int(failed.sum()), failures)
+    checks = _as_check_frame(_cnote_values(table, params), failed, values, "")
+    return RuleOutcome(len(table), int(failed.sum()), failures, checks)
 
 
 def check_conditional_completeness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -114,7 +139,8 @@ def check_conditional_completeness(data: dict[str, pd.DataFrame], params: dict) 
         values.loc[failed],
         f"{column} is required when {condition_column} is {condition_label}",
     )
-    return RuleOutcome(int(condition.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(_cnote_values(table.loc[condition], params), failed.loc[condition], values.loc[condition], table.loc[condition, condition_column])
+    return RuleOutcome(int(condition.sum()), int(failed.sum()), failures, checks)
 
 
 def check_reference_conditional_completeness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -136,7 +162,8 @@ def check_reference_conditional_completeness(data: dict[str, pd.DataFrame], para
         values.loc[failed],
         f"{column} is required when {params['condition_column']} exists in reference rows",
     )
-    return RuleOutcome(int(condition.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(_cnote_values(table.loc[condition], params), failed.loc[condition], values.loc[condition], table.loc[condition, params["condition_column"]])
+    return RuleOutcome(int(condition.sum()), int(failed.sum()), failures, checks)
 
 
 def check_validity_regex(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -146,7 +173,8 @@ def check_validity_regex(data: dict[str, pd.DataFrame], params: dict) -> RuleOut
     present = values.notna() & values.astype("string").str.strip().ne("")
     failed = present & ~values.astype("string").str.match(params["pattern"])
     failures = _as_failure_frame(_cnote_values(table.loc[failed], params), values.loc[failed], f"{column} does not match pattern")
-    return RuleOutcome(int(present.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(_cnote_values(table.loc[present], params), failed.loc[present], values.loc[present], params["pattern"])
+    return RuleOutcome(int(present.sum()), int(failed.sum()), failures, checks)
 
 
 def check_uniqueness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -160,7 +188,11 @@ def check_uniqueness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome
     else:
         failed_value = failed_rows[columns].astype(str).agg("|".join, axis=1)
     failures = _as_failure_frame(_cnote_values(failed_rows, params), failed_value, f"{', '.join(columns)} is duplicated")
-    return RuleOutcome(int(present.sum()), len(failed_rows), failures)
+    present_rows = table.loc[present]
+    present_values = present_rows[columns].astype(str).agg("|".join, axis=1)
+    failed_present = present_rows.duplicated(subset=columns, keep=False)
+    checks = _as_check_frame(_cnote_values(present_rows, params), failed_present, present_values, "")
+    return RuleOutcome(int(present.sum()), len(failed_rows), failures, checks)
 
 
 def check_pair_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -172,7 +204,8 @@ def check_pair_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleO
     # Null comparisons are skipped because some child rows are optional by business path.
     failed_value = left_value.loc[failed].astype(str) + " != " + right_value.loc[failed].astype(str)
     failures = _as_failure_frame(_merged_cnote_values(merged.loc[failed], params), failed_value, "paired values do not match")
-    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(_merged_cnote_values(merged.loc[comparable], params), failed.loc[comparable], left_value.loc[comparable], right_value.loc[comparable])
+    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
 def check_prefix_match(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -188,7 +221,8 @@ def check_prefix_match(data: dict[str, pd.DataFrame], params: dict) -> RuleOutco
         failed_value,
         f"first {prefix_length} characters do not match",
     )
-    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(_merged_cnote_values(merged.loc[comparable], params), failed.loc[comparable], left_value.loc[comparable], right_value.loc[comparable])
+    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
 def check_suffix_after_prefix_match(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -204,7 +238,8 @@ def check_suffix_after_prefix_match(data: dict[str, pd.DataFrame], params: dict)
         failed_value,
         f"characters after first {prefix_length} do not match",
     )
-    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(_merged_cnote_values(merged.loc[comparable], params), failed.loc[comparable], left_value.loc[comparable], right_value.loc[comparable])
+    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
 def check_rounded_pair_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -222,7 +257,8 @@ def check_rounded_pair_consistency(data: dict[str, pd.DataFrame], params: dict) 
         failed_value,
         "rounded numeric values do not match",
     )
-    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(_merged_cnote_values(merged.loc[comparable], params), failed.loc[comparable], left_raw.loc[comparable], right_raw.loc[comparable])
+    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
 def check_bridged_pair_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -245,7 +281,8 @@ def check_bridged_pair_consistency(data: dict[str, pd.DataFrame], params: dict) 
         failed_value,
         "bridged values do not match",
     )
-    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(_merged_cnote_values(merged.loc[comparable], params), failed.loc[comparable], left_value.loc[comparable], right_value.loc[comparable])
+    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
 def check_bridged_substring_match(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -263,7 +300,8 @@ def check_bridged_substring_match(data: dict[str, pd.DataFrame], params: dict) -
         failed_value,
         "bridged substring does not match",
     )
-    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(_merged_cnote_values(merged.loc[comparable], params), failed.loc[comparable], left_value.loc[comparable], right_value.loc[comparable])
+    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
 def check_aggregate_sum_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -292,7 +330,13 @@ def check_aggregate_sum_consistency(data: dict[str, pd.DataFrame], params: dict)
         failed_value,
         "master value does not match bridged detail sum",
     )
-    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(
+        _cnote_values(merged.loc[comparable], {"cnote_column": params.get("cnote_column", params["master_key"])}),
+        failed.loc[comparable],
+        master_value.loc[comparable],
+        detail_value.loc[comparable],
+    )
+    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
 def check_aggregate_count_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -318,7 +362,13 @@ def check_aggregate_count_consistency(data: dict[str, pd.DataFrame], params: dic
         failed_value,
         "master count does not match bridged detail count",
     )
-    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(
+        _cnote_values(merged.loc[comparable], {"cnote_column": params.get("cnote_column", params["master_key"])}),
+        failed.loc[comparable],
+        master_value.loc[comparable],
+        merged.loc[comparable, "detail_count"],
+    )
+    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
 
@@ -330,7 +380,8 @@ def check_validity_datetime(data: dict[str, pd.DataFrame], params: dict) -> Rule
     parsed = pd.to_datetime(values.where(present), errors="coerce")
     failed = present & parsed.isna()
     failures = _as_failure_frame(_cnote_values(table.loc[failed], params), values.loc[failed], f"{column} is not a valid timestamp")
-    return RuleOutcome(int(present.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(_cnote_values(table.loc[present], params), failed.loc[present], values.loc[present], "")
+    return RuleOutcome(int(present.sum()), int(failed.sum()), failures, checks)
 
 
 def check_validity_integer(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -342,7 +393,8 @@ def check_validity_integer(data: dict[str, pd.DataFrame], params: dict) -> RuleO
     # A value passes when it parses as a number and carries no fractional part.
     failed = present & (numeric.isna() | numeric.ne(numeric.round(0)))
     failures = _as_failure_frame(_cnote_values(table.loc[failed], params), values.loc[failed], f"{column} is not a whole number")
-    return RuleOutcome(int(present.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(_cnote_values(table.loc[present], params), failed.loc[present], values.loc[present], "")
+    return RuleOutcome(int(present.sum()), int(failed.sum()), failures, checks)
 
 
 def _normalized_strings(values: pd.Series) -> pd.Series:
@@ -358,7 +410,8 @@ def check_validity_in_set(data: dict[str, pd.DataFrame], params: dict) -> RuleOu
     present = _present(values)
     failed = present & ~_normalized_strings(values).isin(allowed)
     failures = _as_failure_frame(_cnote_values(table.loc[failed], params), values.loc[failed], f"{column} is not one of {sorted(allowed)}")
-    return RuleOutcome(int(present.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(_cnote_values(table.loc[present], params), failed.loc[present], values.loc[present], ",".join(sorted(allowed)))
+    return RuleOutcome(int(present.sum()), int(failed.sum()), failures, checks)
 
 
 def _reference_values(data: dict[str, pd.DataFrame], params: dict) -> set[str]:
@@ -378,7 +431,8 @@ def check_value_in_reference(data: dict[str, pd.DataFrame], params: dict) -> Rul
         values.loc[failed],
         f"{column} not found in {params['reference_table']}.{params['reference_column']}",
     )
-    return RuleOutcome(int(present.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(_cnote_values(table.loc[present], params), failed.loc[present], values.loc[present], params["reference_table"])
+    return RuleOutcome(int(present.sum()), int(failed.sum()), failures, checks)
 
 
 def check_reference_format(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -395,7 +449,8 @@ def check_reference_format(data: dict[str, pd.DataFrame], params: dict) -> RuleO
         values.loc[failed],
         f"{column} is not alphanumeric or not found in {params['reference_table']}.{params['reference_column']}",
     )
-    return RuleOutcome(int(present.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(_cnote_values(table.loc[present], params), failed.loc[present], values.loc[present], params["reference_table"])
+    return RuleOutcome(int(present.sum()), int(failed.sum()), failures, checks)
 
 
 def check_non_negative(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -405,7 +460,8 @@ def check_non_negative(data: dict[str, pd.DataFrame], params: dict) -> RuleOutco
     present = values.notna()
     failed = present & values.lt(0)
     failures = _as_failure_frame(_cnote_values(table.loc[failed], params), table[column].loc[failed], f"{column} is negative")
-    return RuleOutcome(int(present.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(_cnote_values(table.loc[present], params), failed.loc[present], table.loc[present, column], "0")
+    return RuleOutcome(int(present.sum()), int(failed.sum()), failures, checks)
 
 
 def check_non_negative_not_in_reference(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -421,7 +477,8 @@ def check_non_negative_not_in_reference(data: dict[str, pd.DataFrame], params: d
         table[column].loc[failed],
         f"{column} is negative or the record appears in {params['reference_table']}",
     )
-    return RuleOutcome(int(present.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(_cnote_values(table.loc[present], params), failed.loc[present], table.loc[present, column], params["reference_table"])
+    return RuleOutcome(int(present.sum()), int(failed.sum()), failures, checks)
 
 
 def check_count_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -438,7 +495,8 @@ def check_count_consistency(data: dict[str, pd.DataFrame], params: dict) -> Rule
     failed = comparable & master_value.ne(merged["child_count"])
     failed_value = master_value.loc[failed].astype(str) + " != " + merged.loc[failed, "child_count"].astype(str)
     failures = _as_failure_frame(merged.loc[failed, params["cnote_column"]], failed_value, "master count does not match child count")
-    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(merged.loc[comparable, params["cnote_column"]], failed.loc[comparable], master_value.loc[comparable], merged.loc[comparable, "child_count"])
+    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
 def check_timeliness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -456,7 +514,8 @@ def check_timeliness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome
     # Null dates are skipped here so missingness stays a completeness concern.
     failed_value = start_time.loc[failed].astype(str) + " > " + end_time.loc[failed].astype(str)
     failures = _as_failure_frame(_merged_cnote_values(merged.loc[failed], params), failed_value, "start timestamp is after end timestamp")
-    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(_merged_cnote_values(merged.loc[comparable], params), failed.loc[comparable], start_time.loc[comparable].astype(str), end_time.loc[comparable].astype(str))
+    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
 def check_bridged_timeliness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -479,7 +538,8 @@ def check_bridged_timeliness(data: dict[str, pd.DataFrame], params: dict) -> Rul
         failed_value,
         "start timestamp is after bridged end timestamp",
     )
-    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(_merged_cnote_values(merged.loc[comparable], params), failed.loc[comparable], start_time.loc[comparable].astype(str), end_time.loc[comparable].astype(str))
+    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
 def _cnotes_for_failed_groups(groups: list[str]) -> pd.Series:
@@ -500,6 +560,7 @@ def check_manifest_code_sequence(data: dict[str, pd.DataFrame], params: dict) ->
     checked = 0
     failed_cnotes: list[str] = []
     failed_values: list[str] = []
+    check_rows: list[dict[str, str]] = []
 
     frame = merged.assign(_manifest_code=code, _event_time=event_time)
     for cnote_no, group in frame.groupby(cnote_column, dropna=True):
@@ -511,7 +572,14 @@ def check_manifest_code_sequence(data: dict[str, pd.DataFrame], params: dict) ->
             if om_times.empty or tm_times.empty:
                 continue
             checked += 1
-            if om_times.max() > tm_times.min():
+            failed_check = om_times.max() > tm_times.min()
+            check_rows.append({
+                "cnote_no": str(cnote_no),
+                "status": "FAIL" if failed_check else "PASS",
+                "variable_1": str(om_times.max()),
+                "variable_2": str(tm_times.min()),
+            })
+            if failed_check:
                 failed_cnotes.append(str(cnote_no))
                 failed_values.append(f"OM {om_times.max()} > TM {tm_times.min()}")
         elif mode == "tm_sequence_before_im":
@@ -519,6 +587,13 @@ def check_manifest_code_sequence(data: dict[str, pd.DataFrame], params: dict) ->
                 checked += 1
             duplicate_tm = len(tm_times) > 1 and tm_times.duplicated().any()
             tm_after_im = not tm_times.empty and not im_times.empty and tm_times.max() > im_times.min()
+            if len(tm_times) > 1 or (not tm_times.empty and not im_times.empty):
+                check_rows.append({
+                    "cnote_no": str(cnote_no),
+                    "status": "FAIL" if duplicate_tm or tm_after_im else "PASS",
+                    "variable_1": str(tm_times.max()) if not tm_times.empty else "",
+                    "variable_2": str(im_times.min()) if not im_times.empty else "",
+                })
             if duplicate_tm or tm_after_im:
                 failed_cnotes.append(str(cnote_no))
                 if duplicate_tm:
@@ -529,7 +604,14 @@ def check_manifest_code_sequence(data: dict[str, pd.DataFrame], params: dict) ->
             if tm_times.empty or im_times.empty:
                 continue
             checked += 1
-            if im_times.min() < tm_times.max():
+            failed_check = im_times.min() < tm_times.max()
+            check_rows.append({
+                "cnote_no": str(cnote_no),
+                "status": "FAIL" if failed_check else "PASS",
+                "variable_1": str(tm_times.max()),
+                "variable_2": str(im_times.min()),
+            })
+            if failed_check:
                 failed_cnotes.append(str(cnote_no))
                 failed_values.append(f"IM {im_times.min()} < TM {tm_times.max()}")
         else:
@@ -540,7 +622,8 @@ def check_manifest_code_sequence(data: dict[str, pd.DataFrame], params: dict) ->
         pd.Series(failed_values, dtype="string"),
         "manifest code sequence is out of order",
     )
-    return RuleOutcome(checked, len(failed_cnotes), failures)
+    checks = pd.DataFrame(check_rows, columns=CHECK_COLUMNS)
+    return RuleOutcome(checked, len(failed_cnotes), failures, checks)
 
 
 def check_cnote_im_manifest_before_msj(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -573,7 +656,14 @@ def check_cnote_im_manifest_before_msj(data: dict[str, pd.DataFrame], params: di
         failed_value,
         "CNOTE inbound manifest time is after MSJ sign date",
     )
-    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
+    comparable_rows = comparison.loc[comparable]
+    checks = _as_check_frame(
+        pd.Series(comparable_rows.index.astype(str), index=comparable_rows.index),
+        failed.loc[comparable],
+        comparable_rows["im_time"].astype(str),
+        comparable_rows["msj_time"].astype(str),
+    )
+    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
 def check_integrity_orphan(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
@@ -584,7 +674,8 @@ def check_integrity_orphan(data: dict[str, pd.DataFrame], params: dict) -> RuleO
     present = child_values.notna() & child_values.astype("string").str.strip().ne("")
     failed = present & ~child_values.astype(str).isin(parent_values)
     failures = _as_failure_frame(_cnote_values(child.loc[failed], params), child_values.loc[failed], "parent key is missing")
-    return RuleOutcome(int(present.sum()), int(failed.sum()), failures)
+    checks = _as_check_frame(_cnote_values(child.loc[present], params), failed.loc[present], child_values.loc[present], params["parent_table"])
+    return RuleOutcome(int(present.sum()), int(failed.sum()), failures, checks)
 
 
 RULE_FUNCTIONS = {

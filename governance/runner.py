@@ -2,7 +2,7 @@
 
 The production path reads the run manifest written by ``extractor.bronze``,
 loads only the bronze tables needed by runnable catalog entries, and emits a
-scorecard plus row-level failures. A synthetic mode remains available for local
+single long CNOTE-level result. A synthetic mode remains available for local
 rule tests and demos, but Airflow uses the bronze manifest path.
 """
 
@@ -23,7 +23,7 @@ import pandas as pd
 
 from extractor.bronze import MinioSettings, load_config
 from governance.catalog import CATALOG
-from governance.output import write_failures, write_scorecard
+from governance.output import write_governance_results
 from governance.rules import FAILURE_COLUMNS, RULE_FUNCTIONS, RuleOutcome
 
 
@@ -180,6 +180,8 @@ def load_tables(table_names: set[str]) -> dict[str, pd.DataFrame]:
 def _required_tables() -> set[str]:
     tables: set[str] = set()
     for entry in CATALOG:
+        if entry.get("enabled") is False:
+            continue
         tables.update(_entry_tables(entry))
     return tables
 
@@ -427,47 +429,47 @@ def _error_outcome(message: str) -> RuleOutcome:
     return RuleOutcome(total_checked=0, total_failed=0, failures=failures)
 
 
-def _skip_outcome(message: str) -> RuleOutcome:
-    failures = pd.DataFrame([[None, message, "rule skipped"]], columns=FAILURE_COLUMNS)
-    return RuleOutcome(total_checked=0, total_failed=0, failures=failures)
+def _entry_column_name(entry: dict) -> str:
+    params = entry["params"]
+    candidates = []
+    for key in (
+        "column",
+        "left_column",
+        "right_column",
+        "start_column",
+        "end_column",
+        "master_value_column",
+        "master_count_column",
+        "detail_value_column",
+        "detail_count_column",
+        "child_column",
+        "parent_column",
+    ):
+        value = params.get(key)
+        if value and value not in candidates:
+            candidates.append(str(value))
+    for value in params.get("columns", []):
+        if value and value not in candidates:
+            candidates.append(str(value))
+    return ", ".join(candidates)
 
 
-def _append_result(
-    results: list[dict],
+def _add_check_rows(
+    result_frames: list[pd.DataFrame],
     entry: dict,
     outcome: RuleOutcome,
-    run_at: str,
-    status: str,
-    error_message: str = "",
 ) -> None:
-    results.append({
-        "index_code": entry["index_code"],
-        "element": entry["element"],
-        "rule_family": entry["rule_family"],
-        "table": entry["table"],
-        "total_checked": outcome.total_checked,
-        "total_failed": outcome.total_failed,
-        "status": status,
-        "error_message": error_message,
-        "run_at": run_at,
-    })
-
-
-def _add_failures(
-    all_failures: list[pd.DataFrame],
-    entry: dict,
-    outcome: RuleOutcome,
-    run_at: str,
-    status: str,
-) -> None:
-    failures = outcome.failures.copy()
-    if failures.empty:
+    checks = outcome.checks
+    if checks is None or checks.empty:
         return
-    failures["run_at"] = run_at
-    failures["index_code"] = entry["index_code"]
-    failures["element"] = entry["element"]
-    failures["status"] = status
-    all_failures.append(failures)
+    rows = checks.copy()
+    rows["index_code"] = entry["index_code"]
+    rows["main_indicator"] = entry.get("indicator", "")
+    rows["column_name"] = _entry_column_name(entry)
+    rows["table_name"] = entry["table"]
+    rows["impact_billing"] = entry.get("impact_billing", "")
+    rows["impact_operational"] = entry.get("impact_operational", "")
+    result_frames.append(rows)
 
 
 def _run_entries(
@@ -478,15 +480,18 @@ def _run_entries(
     strict: bool,
 ) -> None:
     run_at = datetime.now(timezone.utc).isoformat()
-    results: list[dict] = []
-    all_failures: list[pd.DataFrame] = []
+    result_frames: list[pd.DataFrame] = []
+    status_counts: dict[str, int] = {}
     error_count = 0
+    disabled_count = 0
+    skipped_count = 0
 
     for entry in CATALOG:
+        if entry.get("enabled") is False:
+            disabled_count += 1
+            continue
         if entry["index_code"] in skipped:
-            outcome = _skip_outcome(skipped[entry["index_code"]])
-            _append_result(results, entry, outcome, run_at, "SKIPPED", skipped[entry["index_code"]])
-            _add_failures(all_failures, entry, outcome, run_at, "SKIPPED")
+            skipped_count += 1
             continue
         if entry not in entries:
             continue
@@ -504,18 +509,20 @@ def _run_entries(
             print(f"ERROR: {entry['index_code']} failed: {exc}", flush=True)
             outcome = _error_outcome(error_message)
 
-        _append_result(results, entry, outcome, run_at, status, error_message)
-        _add_failures(all_failures, entry, outcome, run_at, status)
+        status_counts[status] = status_counts.get(status, 0) + 1
+        _add_check_rows(result_frames, entry, outcome)
 
-    failure_frame = pd.concat(all_failures, ignore_index=True) if all_failures else pd.DataFrame()
-    scorecard_path = write_scorecard(results, output_dir / "scorecard.csv")
-    failures_path = write_failures(failure_frame, output_dir / "failures.csv")
-    status_counts = pd.Series([row["status"] for row in results]).value_counts().to_dict()
+    result_frame = pd.concat(result_frames, ignore_index=True) if result_frames else pd.DataFrame()
+    results_path = write_governance_results(result_frame, output_dir / "governance_results.csv")
+    row_status_counts = result_frame["status"].value_counts().to_dict() if not result_frame.empty else {}
 
-    print(f"Catalog entries evaluated: {len(results)}")
-    print(f"Status counts: {status_counts}")
-    print(f"Total data failures: {int(sum(result['total_failed'] for result in results))}")
-    print(f"Outputs: {scorecard_path}, {failures_path}")
+    print(f"Catalog entries evaluated: {sum(status_counts.values())}")
+    print(f"Rule status counts: {status_counts}")
+    print(f"Disabled entries: {disabled_count}")
+    print(f"Skipped entries: {skipped_count}")
+    print(f"CNOTE result rows: {len(result_frame):,}")
+    print(f"CNOTE row status counts: {row_status_counts}")
+    print(f"Output: {results_path}")
     if strict and error_count:
         raise RuntimeError(f"Governance completed with {error_count} rule implementation error(s)")
 
@@ -535,6 +542,8 @@ def run(
         skipped = {}
         available_tables = set(data)
         for entry in CATALOG:
+            if entry.get("enabled") is False:
+                continue
             missing_tables = sorted(_entry_tables(entry) - available_tables)
             missing_columns = _missing_entry_columns(entry, data) if not missing_tables else []
             if missing_tables:
@@ -561,6 +570,8 @@ def run(
         runnable = []
         skipped = {}
         for entry in CATALOG:
+            if entry.get("enabled") is False:
+                continue
             missing_tables = sorted(_entry_tables(entry) - available_tables)
             if missing_tables:
                 skipped[entry["index_code"]] = "missing bronze table(s): " + ", ".join(missing_tables)
@@ -569,9 +580,6 @@ def run(
 
         required_columns = _required_columns(runnable)
         data = _load_bronze_tables(bronze_source, required_columns)
-        manifest_path = output_dir / "bronze_manifest.json"
-        manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        manifest_path.write_text(json.dumps(bronze_source.manifest, indent=2, sort_keys=True), encoding="utf-8")
         _run_entries(runnable, data, skipped, output_dir, strict)
 
 

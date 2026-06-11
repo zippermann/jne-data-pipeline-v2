@@ -122,13 +122,11 @@ An empty list extracts every configured table.
 ## Governance
 
 `governance/runner.py` reads the bronze `run_manifest.json`, loads the required
-Parquet columns for catalog rules, and writes:
+Parquet columns for active catalog rules, and writes one long CNOTE-level file:
 
-- `scorecard.csv`
-- `failures.csv`
-- `bronze_manifest.json`
+- `governance_results.csv`
 
-Scorecard rows use explicit statuses:
+Result rows use explicit statuses:
 
 - `PASS`: rule ran and found no failed rows.
 - `FAIL`: rule ran and found failed rows.

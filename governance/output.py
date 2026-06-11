@@ -1,4 +1,4 @@
-"""CSV writers for governance scorecards and row-level failures."""
+"""CSV writer for the long CNOTE-level governance result."""
 
 from __future__ import annotations
 
@@ -7,35 +7,24 @@ from pathlib import Path
 import pandas as pd
 
 
-def write_scorecard(results: list[dict], path: str | Path) -> Path:
-    output_path = Path(path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    rows = []
-    for result in results:
-        total_checked = result["total_checked"]
-        total_failed = result["total_failed"]
-        fail_rate = 0 if total_checked == 0 else total_failed / total_checked
-        rows.append({
-            "index_code": result["index_code"],
-            "element": result["element"],
-            "rule_family": result["rule_family"],
-            "table": result["table"],
-            "status": result.get("status", "FAIL" if total_failed else "PASS"),
-            "total_checked": total_checked,
-            "total_failed": total_failed,
-            "fail_rate": f"{fail_rate:.4f}",
-            "error_message": result.get("error_message", ""),
-            "run_at": result["run_at"],
-        })
-    pd.DataFrame(rows).to_csv(output_path, index=False)
-    return output_path
+RESULT_COLUMNS = [
+    "cnote_no",
+    "index_code",
+    "main_indicator",
+    "column_name",
+    "table_name",
+    "status",
+    "variable_1",
+    "variable_2",
+    "impact_billing",
+    "impact_operational",
+]
 
 
-def write_failures(failures: pd.DataFrame, path: str | Path) -> Path:
+def write_governance_results(results: pd.DataFrame, path: str | Path) -> Path:
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    columns = ["run_at", "index_code", "element", "status", "cnote_no", "failed_value", "failure_reason"]
-    if failures.empty:
-        failures = pd.DataFrame(columns=columns)
-    failures.loc[:, columns].to_csv(output_path, index=False)
+    if results.empty:
+        results = pd.DataFrame(columns=RESULT_COLUMNS)
+    results.loc[:, RESULT_COLUMNS].to_csv(output_path, index=False)
     return output_path

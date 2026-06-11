@@ -1042,6 +1042,76 @@ def _existing_table_result(table_dir: Path, spec: TableSpec, start: float) -> Ta
     )
 
 
+def _minio_table_success_prefix(object_name: str, output_name: str) -> str | None:
+    marker = f"/{output_name}/_SUCCESS"
+    if object_name.endswith(marker):
+        return object_name[: -len("_SUCCESS")]
+    return None
+
+
+def _reuse_drourate_from_minio(
+    config: dict,
+    window: Window,
+    run_id: str,
+    spec: TableSpec,
+    table_dir: Path,
+    extract_date: str | None,
+    start: float,
+) -> TableResult | None:
+    if spec.table.upper() != "CMS_DROURATE":
+        return None
+    settings = MinioSettings.from_config(config)
+    if not settings.enabled:
+        return None
+
+    client = _minio_client(settings)
+    if not client.bucket_exists(settings.bucket):
+        return None
+
+    scan_prefix = settings.prefix.strip("/")
+    success_prefixes = []
+    for obj in client.list_objects(settings.bucket, prefix=scan_prefix, recursive=True):
+        table_prefix = _minio_table_success_prefix(obj.object_name, spec.output_name)
+        if table_prefix:
+            success_prefixes.append(table_prefix)
+    if not success_prefixes:
+        return None
+
+    current_prefix = f"{lake_prefix(settings, window, run_id, extract_date)}/{spec.output_name}/"
+    source_prefix = next((prefix for prefix in success_prefixes if prefix != current_prefix), success_prefixes[0])
+    logger.info("Reusing %s from existing MinIO object prefix minio://%s/%s", spec.table, settings.bucket, source_prefix)
+
+    _prepare_table_output_dir(table_dir)
+    table_dir.mkdir(parents=True, exist_ok=True)
+    file_count = 0
+    size_bytes = 0
+    for obj in client.list_objects(settings.bucket, prefix=source_prefix, recursive=True):
+        relative = obj.object_name[len(source_prefix):]
+        if not relative:
+            continue
+        target = table_dir / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        client.fget_object(settings.bucket, obj.object_name, str(target))
+        if target.name == "_SUCCESS":
+            continue
+        if target.suffix == ".parquet":
+            file_count += 1
+            size_bytes += target.stat().st_size
+
+    existing_result = _existing_table_result(table_dir, spec, start)
+    if existing_result is None:
+        raise RuntimeError(f"Could not reuse {spec.table} from MinIO prefix {source_prefix}: downloaded table is incomplete")
+    return TableResult(
+        table=existing_result.table,
+        output_name=existing_result.output_name,
+        stage=existing_result.stage,
+        row_count=existing_result.row_count,
+        file_count=file_count,
+        size_bytes=size_bytes,
+        elapsed_seconds=time.monotonic() - start,
+    )
+
+
 def _prepare_table_output_dir(table_dir: Path) -> None:
     if table_dir.exists():
         existing_parts = list(table_dir.glob("part-*.parquet"))
@@ -1145,6 +1215,9 @@ def extract_table(
     existing_result = _existing_table_result(table_dir, spec, start)
     if existing_result is not None:
         return existing_result
+    minio_reuse = _reuse_drourate_from_minio(config, window, run_id, spec, table_dir, extract_date, start)
+    if minio_reuse is not None:
+        return minio_reuse
     _prepare_table_output_dir(table_dir)
 
     with connect(oracle_settings) as conn:

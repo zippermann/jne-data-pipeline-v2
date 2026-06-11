@@ -1,3 +1,7 @@
+import tempfile
+from pathlib import Path
+
+import extractor.bronze as bronze
 from extractor.bronze import (
     OracleSettings,
     TABLE_SPECS,
@@ -7,6 +11,8 @@ from extractor.bronze import (
     _cnote_limit,
     _create_scope,
     _expand_required_scopes,
+    _minio_table_success_prefix,
+    _reuse_drourate_from_minio,
     _run_scope_jobs,
     _scope_date_filter,
     _scope_index_name,
@@ -191,6 +197,82 @@ def test_oracle_settings_default_prefetch_rows_tracks_arraysize():
 
     assert settings.fetch_arraysize == 10000
     assert settings.prefetch_rows == 10001
+
+
+def test_minio_table_success_prefix_detects_table_folder():
+    object_name = "bronze/jne/window_start=2026-05-01/run_id=R_1/cms_drourate/_SUCCESS"
+
+    assert _minio_table_success_prefix(object_name, "cms_drourate") == (
+        "bronze/jne/window_start=2026-05-01/run_id=R_1/cms_drourate/"
+    )
+    assert _minio_table_success_prefix(object_name, "cms_cnote") is None
+
+
+def test_reuse_drourate_from_minio_downloads_existing_table():
+    class Object:
+        def __init__(self, object_name):
+            self.object_name = object_name
+
+    class Client:
+        objects = {
+            "bronze/jne/old_run/cms_drourate/_SUCCESS": b"12\n",
+            "bronze/jne/old_run/cms_drourate/part-00001.parquet": b"parquet-bytes",
+        }
+
+        def bucket_exists(self, bucket):
+            assert bucket == "jne-bronze"
+            return True
+
+        def list_objects(self, bucket, prefix, recursive):
+            assert bucket == "jne-bronze"
+            assert recursive is True
+            return [
+                Object(object_name)
+                for object_name in sorted(self.objects)
+                if object_name.startswith(prefix)
+            ]
+
+        def fget_object(self, bucket, object_name, file_path):
+            assert bucket == "jne-bronze"
+            Path(file_path).write_bytes(self.objects[object_name])
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        original_client = bronze._minio_client
+        bronze._minio_client = lambda settings: Client()
+        try:
+            config = {
+                "output": {"root": temp_dir},
+                "minio": {
+                    "enabled": True,
+                    "endpoint": "localhost:9000",
+                    "access_key": "minioadmin",
+                    "secret_key": "minioadmin123",
+                    "bucket": "jne-bronze",
+                    "secure": False,
+                    "prefix": "bronze/jne",
+                },
+            }
+            spec = _spec("CMS_DROURATE")
+            table_dir = Path(temp_dir) / "current" / spec.output_name
+
+            result = _reuse_drourate_from_minio(
+                config,
+                Window(date(2026, 5, 1), date(2026, 6, 1)),
+                "R_TEST",
+                spec,
+                table_dir,
+                "2026-06-11",
+                0.0,
+            )
+        finally:
+            bronze._minio_client = original_client
+
+        assert result is not None
+        assert result.table == "CMS_DROURATE"
+        assert result.row_count == 12
+        assert result.file_count == 1
+        assert (table_dir / "_SUCCESS").read_text(encoding="ascii") == "12\n"
+        assert (table_dir / "part-00001.parquet").read_bytes() == b"parquet-bytes"
 
 
 def test_date_guardrail_adds_window_filter_to_scoped_operational_tables():
