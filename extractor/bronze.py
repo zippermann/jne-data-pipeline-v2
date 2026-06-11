@@ -257,6 +257,7 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
     TableSpec("CMS_MHOCNOTE", "cms_mhocnote", Stage.RUNSHEET_DO, "MHOCNOTE_NO", "HVO", "MHOCNOTE_DATE"),
     TableSpec("CMS_DSJ", "cms_dsj", Stage.RUNSHEET_DO, "DSJ_HVO_NO", "RDSJ_HVO", "DSJ_CDATE"),
     TableSpec("CMS_DROURATE", "cms_drourate", Stage.REFERENCE),
+    TableSpec("ORA_BRANCH", "ora_branch", Stage.REFERENCE),
     TableSpec("ORA_ZONE", "ora_zone", Stage.REFERENCE),
     TableSpec("ORA_USER", "ora_user", Stage.REFERENCE),
     TableSpec("T_MDT_CITY_ORIGIN", "t_mdt_city_origin", Stage.REFERENCE),

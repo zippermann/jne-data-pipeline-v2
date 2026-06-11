@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import tempfile
 import time
 from dataclasses import dataclass
@@ -40,6 +41,8 @@ TABLE_PARAM_KEYS = (
     "reference_table",
     "master_table",
 )
+DROURATE_TABLE = "CMS_DROURATE"
+DROURATE_CODE_PATTERN = re.compile(r"^([A-Z]{3}[0-9]{5})([A-Z]{3}[0-9]{5})$")
 
 
 @dataclass(frozen=True)
@@ -140,6 +143,15 @@ def load_tables(table_names: set[str]) -> dict[str, pd.DataFrame]:
             "DCORRECT_CNOTE_NO": cnotes,
             "DCORRECT_ORIGIN": ["CGK"] * 50,
             "DCORRECT_DEST": ["SUB"] * 50,
+        }),
+        "CMS_DROURATE": pd.DataFrame({
+            "DROURATE_CODE": ["CGKSUB", "CGK10000SUB10000"],
+            "DROURATE_SERVICE": ["REG", "YES"],
+            "__origin_component": ["CGK", "CGK10000"],
+            "__destination_component": ["SUB", "SUB10000"],
+        }),
+        "ORA_BRANCH": pd.DataFrame({
+            "BRANCH_CODE": ["CGK", "SUB"],
         }),
     }
 
@@ -245,7 +257,11 @@ def _entry_columns(entry: dict) -> dict[str, set[str]]:
     add(params.get("child_table"), params.get("child_key"))
     add(params.get("child_table"), params.get("count_column"))
     add(params.get("parent_table"), params.get("parent_column"))
-    add(params.get("reference_table"), params.get("reference_column"))
+    reference_column = {
+        "origin": "__origin_component",
+        "destination": "__destination_component",
+    }.get(params.get("reference_component"), params.get("reference_column"))
+    add(params.get("reference_table"), reference_column)
     for reference in params.get("references", []):
         add(reference.get("table"), reference.get("column"))
     add(params.get("master_table"), params.get("master_key"))
@@ -406,6 +422,159 @@ def _read_parquet_files(paths: Iterable[Path], columns: list[str], *, distinct: 
     return result.drop_duplicates(ignore_index=True) if distinct else result
 
 
+def _normalized_candidate_values(values: pd.Series) -> set[str]:
+    strings = values.fillna("").astype("string").str.strip().str.replace(r"\.0+$", "", regex=True)
+    return set(strings[strings.ne("")].dropna().astype(str))
+
+
+def _drourate_reference_column(params: dict) -> str:
+    return {
+        "origin": "__origin_component",
+        "destination": "__destination_component",
+    }.get(params.get("reference_component"), params["reference_column"])
+
+
+def _frame_from_column_values(columns: dict[str, set[str]]) -> pd.DataFrame:
+    ordered = {column: sorted(values) for column, values in columns.items()}
+    max_length = max((len(values) for values in ordered.values()), default=0)
+    return pd.DataFrame({
+        column: values + [pd.NA] * (max_length - len(values))
+        for column, values in ordered.items()
+    })
+
+
+def _streamed_reference_tables(entries: Iterable[dict], source: GovernanceSource) -> set[str]:
+    streamed = set()
+    for entry in entries:
+        reference_table = entry.get("params", {}).get("reference_table")
+        if reference_table != DROURATE_TABLE:
+            continue
+        table = source.tables.get(DROURATE_TABLE)
+        if table:
+            streamed.add(DROURATE_TABLE)
+    return streamed
+
+
+def _build_drourate_candidates(entries: Iterable[dict], data: dict[str, pd.DataFrame]) -> dict[str, set[str]]:
+    candidates = {
+        "DROURATE_CODE": set(),
+        "DROURATE_SERVICE": set(),
+        "__origin_component": set(),
+        "__destination_component": set(),
+    }
+    for entry in entries:
+        params = entry.get("params", {})
+        if params.get("reference_table") != DROURATE_TABLE:
+            continue
+        table_name = entry["table"]
+        column = params["column"]
+        if table_name not in data or column not in data[table_name].columns:
+            continue
+        reference_column = _drourate_reference_column(params)
+        candidates[reference_column].update(_normalized_candidate_values(data[table_name][column]))
+    return candidates
+
+
+def _drourate_scan_columns(candidates: dict[str, set[str]]) -> list[str]:
+    columns = []
+    if candidates["DROURATE_CODE"] or candidates["__origin_component"] or candidates["__destination_component"]:
+        columns.append("DROURATE_CODE")
+    if candidates["DROURATE_SERVICE"]:
+        columns.append("DROURATE_SERVICE")
+    return columns
+
+
+def _drourate_done(candidates: dict[str, set[str]], matched: dict[str, set[str]]) -> bool:
+    return all(candidates[column] <= matched[column] for column in candidates)
+
+
+def _scan_drourate_path(path: Path, candidates: dict[str, set[str]], matched: dict[str, set[str]]) -> tuple[int, int]:
+    import pyarrow.parquet as pq
+
+    batches = 0
+    malformed_codes = 0
+    columns = _drourate_scan_columns(candidates)
+    if not columns:
+        return batches, malformed_codes
+
+    parquet_file = pq.ParquetFile(path)
+    available = set(parquet_file.schema_arrow.names)
+    read_columns = [column for column in columns if column in available]
+    if not read_columns:
+        return batches, malformed_codes
+
+    for batch in parquet_file.iter_batches(batch_size=1_000_000, columns=read_columns):
+        batches += 1
+        frame = batch.to_pandas()
+        if "DROURATE_SERVICE" in frame.columns and candidates["DROURATE_SERVICE"]:
+            matched["DROURATE_SERVICE"].update(
+                _normalized_candidate_values(frame["DROURATE_SERVICE"]) & candidates["DROURATE_SERVICE"]
+            )
+        if "DROURATE_CODE" in frame.columns:
+            code_candidates = candidates["DROURATE_CODE"]
+            origin_candidates = candidates["__origin_component"]
+            destination_candidates = candidates["__destination_component"]
+            if code_candidates or origin_candidates or destination_candidates:
+                for code in _normalized_candidate_values(frame["DROURATE_CODE"]):
+                    if code in code_candidates:
+                        matched["DROURATE_CODE"].add(code)
+                    code_match = DROURATE_CODE_PATTERN.fullmatch(code)
+                    if not code_match:
+                        malformed_codes += 1
+                        continue
+                    origin, destination = code_match.groups()
+                    if origin in origin_candidates:
+                        matched["__origin_component"].add(origin)
+                    if destination in destination_candidates:
+                        matched["__destination_component"].add(destination)
+        if _drourate_done(candidates, matched):
+            break
+    return batches, malformed_codes
+
+
+def _stream_drourate_reference(source: GovernanceSource, entries: list[dict], data: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    candidates = _build_drourate_candidates(entries, data)
+    matched = {column: set() for column in candidates}
+    started = time.monotonic()
+    batches = 0
+    malformed_codes = 0
+
+    if source.run_path is not None:
+        table = source.tables[DROURATE_TABLE]
+        paths = sorted((source.run_path / table.output_name).glob("part-*.parquet"))
+        for path in paths:
+            path_batches, path_malformed = _scan_drourate_path(path, candidates, matched)
+            batches += path_batches
+            malformed_codes += path_malformed
+            if _drourate_done(candidates, matched):
+                break
+    else:
+        assert source.client is not None and source.bucket is not None and source.tmpdir is not None
+        table = source.tables[DROURATE_TABLE]
+        for object_name in _list_minio_parquet_objects(source, table):
+            local_path = source.tmpdir / f"{table.output_name}-{Path(object_name).name}"
+            source.client.fget_object(source.bucket, object_name, str(local_path))
+            try:
+                path_batches, path_malformed = _scan_drourate_path(local_path, candidates, matched)
+                batches += path_batches
+                malformed_codes += path_malformed
+            finally:
+                local_path.unlink(missing_ok=True)
+            if _drourate_done(candidates, matched):
+                break
+
+    candidate_counts = {column: len(values) for column, values in candidates.items()}
+    matched_counts = {column: len(values) for column, values in matched.items()}
+    unmatched_counts = {column: len(candidates[column] - matched[column]) for column in candidates}
+    print(
+        "Streamed CMS_DROURATE reference candidates: "
+        f"candidates={candidate_counts}, matched={matched_counts}, unmatched={unmatched_counts}, "
+        f"batches={batches}, malformed_codes={malformed_codes}, elapsed={time.monotonic() - started:.1f}s",
+        flush=True,
+    )
+    return _frame_from_column_values(matched)
+
+
 def _load_table_from_minio(source: GovernanceSource, table: BronzeTable, columns: set[str]) -> pd.DataFrame:
     assert source.client is not None and source.bucket is not None and source.tmpdir is not None
     object_names = _list_minio_parquet_objects(source, table)
@@ -414,13 +583,13 @@ def _load_table_from_minio(source: GovernanceSource, table: BronzeTable, columns
         local_path = source.tmpdir / f"{table.output_name}-{Path(object_name).name}"
         source.client.fget_object(source.bucket, object_name, str(local_path))
         local_paths.append(local_path)
-    return _read_parquet_files(local_paths, sorted(columns), distinct=table.table == "CMS_DROURATE")
+    return _read_parquet_files(local_paths, sorted(columns))
 
 
 def _load_table_from_local(source: GovernanceSource, table: BronzeTable, columns: set[str]) -> pd.DataFrame:
     assert source.run_path is not None
     paths = sorted((source.run_path / table.output_name).glob("part-*.parquet"))
-    return _read_parquet_files(paths, sorted(columns), distinct=table.table == "CMS_DROURATE")
+    return _read_parquet_files(paths, sorted(columns))
 
 
 def _load_bronze_tables(source: GovernanceSource, required_columns: dict[str, set[str]]) -> dict[str, pd.DataFrame]:
@@ -595,8 +764,16 @@ def run(
             else:
                 runnable.append(entry)
 
+        streamed_reference_tables = _streamed_reference_tables(runnable, bronze_source)
         required_columns = _required_columns(runnable)
-        data = _load_bronze_tables(bronze_source, required_columns)
+        load_columns = {
+            table: columns
+            for table, columns in required_columns.items()
+            if table not in streamed_reference_tables
+        }
+        data = _load_bronze_tables(bronze_source, load_columns)
+        if DROURATE_TABLE in streamed_reference_tables:
+            data[DROURATE_TABLE] = _stream_drourate_reference(bronze_source, runnable, data)
         available_runnable = []
         for entry in runnable:
             missing_columns = _missing_entry_columns(entry, data)

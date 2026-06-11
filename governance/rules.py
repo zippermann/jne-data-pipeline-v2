@@ -416,7 +416,12 @@ def check_validity_in_set(data: dict[str, pd.DataFrame], params: dict) -> RuleOu
 
 def _reference_values(data: dict[str, pd.DataFrame], params: dict) -> set[str]:
     reference = data[params["reference_table"]]
-    return set(_normalized_strings(reference[params["reference_column"]].dropna()))
+    component_columns = {
+        "origin": "__origin_component",
+        "destination": "__destination_component",
+    }
+    column = component_columns.get(params.get("reference_component"), params["reference_column"])
+    return set(_normalized_strings(reference[column].dropna()))
 
 
 def check_value_in_reference(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:

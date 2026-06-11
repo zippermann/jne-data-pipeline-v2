@@ -18,6 +18,7 @@ from extractor.bronze import (
     _scope_index_name,
     _scope_join_query,
     ScopeJob,
+    Stage,
     scope_predicate,
     sanitize_run_id,
 )
@@ -69,6 +70,12 @@ def test_bag_chain_uses_manifest_bags_not_handover_bags():
     assert _spec("CMS_DMBAG").scope_name == "MFBAG"
     assert _spec("CMS_MMBAG").scope_name == "DMBAG"
     assert _spec("CMS_DSMU").scope_name == "DMBAG"
+
+
+def test_ora_branch_is_extracted_as_reference_table():
+    spec = _spec("ORA_BRANCH")
+
+    assert spec.stage == Stage.REFERENCE
 
 
 def test_scope_dependencies_cover_parent_chains():
