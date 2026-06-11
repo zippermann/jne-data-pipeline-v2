@@ -8,6 +8,7 @@
 # Data files — may contain PII
 data/
 *.csv
+!governance/catalog_skipped_rows.csv
 *.parquet
 *.xlsx
 *.xls

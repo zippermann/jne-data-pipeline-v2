@@ -9,7 +9,7 @@ bronze run into a Postgres mart for Tableau or inspection.
 
 - `extractor/`: Oracle to relational bronze Parquet extraction.
 - `loader/`: MinIO bronze Parquet to Postgres mart loading.
-- `governance/`: small pandas governance runner plus the relational index workbook.
+- `governance/`: pandas governance runner, executable catalog, and index workbook.
 - `pipeline_context.py`: Airflow helper for run prefixes and window labels.
 - `airflow/dags/jne_data_pipeline_dag.py`: Airflow DAG definition.
 - `config/`: extraction, mart, and PII exclusion config.
@@ -30,7 +30,14 @@ python -m extractor.bronze --config config/config.yaml --run-id local_test
 Run governance:
 
 ```bash
-python -m governance.runner --output-dir governance/outputs/local_test
+BRONZE_RUN_PREFIX=bronze/jne/window_start=YYYY-MM-DD/window_end=YYYY-MM-DD/extract_date=YYYY-MM-DD/run_id=<run_id> \
+python -m governance.runner --source minio --config config/config.yaml --output-dir governance/outputs/<run_id>
+```
+
+For a local run directory under `data/bronze/.../run_id=<run_id>/`:
+
+```bash
+python -m governance.runner --source local --bronze-run-path data/bronze/.../run_id=<run_id> --output-dir governance/outputs/<run_id>
 ```
 
 Load a bronze run into Postgres:
@@ -58,7 +65,7 @@ extract_oracle -> run_governance -> load_data_mart
 ```
 
 `extract_oracle` runs `extractor.bronze`.
-`run_governance` runs `governance.runner`.
+`run_governance` runs `governance.runner` against the bronze run manifest.
 `load_data_mart` runs `loader.mart_load`.
 
 Pass `{"keep_scope": true}` in `dag_run.conf` to keep Oracle scope tables for
@@ -114,14 +121,26 @@ An empty list extracts every configured table.
 
 ## Governance
 
-`governance/runner.py` is deliberately simple. It currently uses synthetic
-fixtures as a readable rule harness and writes:
+`governance/runner.py` reads the bronze `run_manifest.json`, loads the required
+Parquet columns for catalog rules, and writes:
 
 - `scorecard.csv`
 - `failures.csv`
+- `bronze_manifest.json`
 
-The workbook `governance/JNE Index List Relational.xlsx` is reference material.
-Do not assume the simple runner covers the full workbook yet.
+Scorecard rows use explicit statuses:
+
+- `PASS`: rule ran and found no failed rows.
+- `FAIL`: rule ran and found failed rows.
+- `SKIPPED`: the bronze manifest did not include a required table.
+- `ERROR`: the table existed, but the rule could not run because of an
+  implementation issue such as a missing column or malformed rule.
+
+By default, governance exits non-zero when any rule has `ERROR`. Use
+`--no-strict` only for inspection runs.
+
+`governance/catalog_skipped_rows.csv` records workbook rows that were not mapped
+into executable catalog rules.
 
 ## Tests
 
@@ -135,7 +154,7 @@ Useful lightweight checks:
 
 ```bash
 python -m compileall extractor loader governance airflow/dags tests pipeline_context.py
-python -m governance.runner --output-dir /tmp/jne-governance-smoke
+python -m governance.runner --source synthetic --no-strict --output-dir /tmp/jne-governance-smoke
 ```
 
 ## Notes For Future Agents

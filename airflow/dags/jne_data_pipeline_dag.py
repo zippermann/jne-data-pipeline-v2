@@ -1,7 +1,7 @@
 """
 JNE Data Pipeline DAG
 =====================
-Relational Oracle → Parquet bronze extraction, simple governance checks, and
+Relational Oracle → Parquet bronze extraction, bronze governance checks, and
 Postgres bronze mart loading.
 
 Pass {"keep_scope": true} in dag_run.conf to leave Oracle scope tables in place
@@ -29,7 +29,7 @@ default_args = {
 with DAG(
     "jne_data_pipeline",
     default_args=default_args,
-    description="JNE relational bronze extraction with simple governance checks",
+    description="JNE relational bronze extraction with bronze governance checks",
     schedule_interval=None,
     catchup=False,
     max_active_runs=1,
@@ -64,7 +64,11 @@ with DAG(
         bash_command=(
             "cd /opt/airflow/project && "
             f"{run_context}"
-            'python -m governance.runner --output-dir "governance/outputs/$RUN_ID"'
+            'python -m governance.runner '
+            '--source minio '
+            '--config config/config.yaml '
+            '--bronze-run-prefix "$BRONZE_RUN_PREFIX" '
+            '--output-dir "governance/outputs/$RUN_ID"'
         ),
     )
 
