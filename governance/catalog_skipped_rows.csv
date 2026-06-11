@@ -1,14 +1,2 @@
 index_code,reason
-COMP2P6,"condition depends on another table or journey state; needs a confirmed cross-table condition for DRSHEET_FLAG"
-COMP2S3,"condition depends on special-request business state; needs a confirmed source column/table before implementing"
-COMP2S5,"condition depends on undelivered business state; needs a confirmed source column/table before implementing"
-COMP3J1,no usable rule description
-TIME1H15 (OM),manifest type sequencing requires confirmed MANIFEST_CODE/type semantics
-TIME1H15 (TM),manifest type sequencing requires confirmed MANIFEST_CODE/type semantics
-TIME1H15 (IM),manifest type sequencing requires confirmed MANIFEST_CODE/type semantics
-TIME1X2,"manifest date to MSJ sign date needs confirmed bridge and manifest type/scope"
-TIME1Z10,"MSJ sign date to MHICNOTE date needs confirmed HVO/HVI bridge"
-TIME1AB5,"MHICNOTE date to MRSHEET date needs confirmed HVI/runsheet bridge"
-INTG1I,same check as existing INTG1I1 (MFCNOTE_MAN_NO -> CMS_MANIFEST)
-ACCU2B12,covered by catalog prefix/suffix pairs ACCU2B12A/ACCU3B12B
-ACCU3B13,covered by catalog prefix/suffix pairs ACCU2B13A/ACCU3B13B
+CONS2K5,"skipped for now; requires aggregate/multicolumn logic because CMS_DMBAG can duplicate by bag"

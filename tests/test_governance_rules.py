@@ -5,6 +5,9 @@ from governance.rules import (
     check_aggregate_sum_consistency,
     check_bridged_pair_consistency,
     check_bridged_timeliness,
+    check_cnote_im_manifest_before_msj,
+    check_manifest_code_sequence,
+    check_reference_conditional_completeness,
     check_uniqueness,
     check_conditional_completeness,
     check_prefix_match,
@@ -90,6 +93,82 @@ def test_conditional_completeness_only_checks_matching_condition():
     assert outcome.total_checked == 2
     assert outcome.total_failed == 1
     assert outcome.failures.iloc[0]["cnote_no"] == "M3"
+
+
+def test_conditional_completeness_can_use_regex_condition():
+    data = {
+        "CMS_MFBAG": pd.DataFrame({
+            "MFBAG_NO": ["B1", "B2", "B3"],
+            "MFBAG_MAN_REF": ["CGK/IM/001", "CGK/TM/002", None],
+        })
+    }
+
+    outcome = check_conditional_completeness(data, {
+        "table": "CMS_MFBAG",
+        "column": "MFBAG_MAN_REF",
+        "condition_column": "MFBAG_MAN_REF",
+        "condition_regex": r"(?:^|/)IM(?:/|$)",
+        "cnote_column": "MFBAG_NO",
+    })
+
+    assert outcome.total_checked == 1
+    assert outcome.total_failed == 0
+    assert outcome.failures.empty
+
+
+def test_reference_conditional_completeness_checks_only_reference_matches():
+    data = {
+        "CMS_DRSHEET": pd.DataFrame({
+            "DRSHEET_CNOTE_NO": ["C1", "C2", "C3"],
+            "DRSHEET_FLAG": ["Y", None, None],
+        }),
+        "CMS_CNOTE_POD": pd.DataFrame({
+            "CNOTE_POD_NO": ["C1", "C2"],
+        }),
+    }
+
+    outcome = check_reference_conditional_completeness(data, {
+        "table": "CMS_DRSHEET",
+        "column": "DRSHEET_FLAG",
+        "condition_column": "DRSHEET_CNOTE_NO",
+        "reference_table": "CMS_CNOTE_POD",
+        "reference_column": "CNOTE_POD_NO",
+        "cnote_column": "DRSHEET_CNOTE_NO",
+    })
+
+    assert outcome.total_checked == 2
+    assert outcome.total_failed == 1
+    assert outcome.failures.iloc[0]["cnote_no"] == "C2"
+
+
+def test_reference_conditional_completeness_accepts_multiple_references():
+    data = {
+        "CMS_DHOV_RSHEET": pd.DataFrame({
+            "DHOV_RSHEET_CNOTE": ["C1", "C2", "C3"],
+            "DHOV_RSHEET_UNDEL": [None, None, "Y"],
+        }),
+        "CMS_DHOUNDEL_POD": pd.DataFrame({
+            "DHOUNDEL_CNOTE_NO": ["C2"],
+        }),
+        "CMS_MHOUNDEL_POD": pd.DataFrame({
+            "MHOUNDEL_NO": ["C3"],
+        }),
+    }
+
+    outcome = check_reference_conditional_completeness(data, {
+        "table": "CMS_DHOV_RSHEET",
+        "column": "DHOV_RSHEET_UNDEL",
+        "condition_column": "DHOV_RSHEET_CNOTE",
+        "references": [
+            {"table": "CMS_DHOUNDEL_POD", "column": "DHOUNDEL_CNOTE_NO"},
+            {"table": "CMS_MHOUNDEL_POD", "column": "MHOUNDEL_NO"},
+        ],
+        "cnote_column": "DHOV_RSHEET_CNOTE",
+    })
+
+    assert outcome.total_checked == 2
+    assert outcome.total_failed == 1
+    assert outcome.failures.iloc[0]["cnote_no"] == "C2"
 
 
 def test_rounded_pair_consistency_compares_rounded_values():
@@ -227,6 +306,214 @@ def test_bridged_timeliness_compares_across_path():
     assert outcome.total_checked == 2
     assert outcome.total_failed == 1
     assert outcome.failures.iloc[0]["cnote_no"] == "C2"
+
+
+def test_bridged_timeliness_uses_first_start_per_group():
+    data = {
+        "CMS_MHOCNOTE": pd.DataFrame({
+            "MHOCNOTE_NO": ["HVO1", "HVO1"],
+            "MHOCNOTE_SIGNDATE": ["2026-06-01 08:00:00", "2026-06-01 12:00:00"],
+        }),
+        "CMS_DSJ": pd.DataFrame({
+            "DSJ_HVO_NO": ["HVO1"],
+            "DSJ_NO": ["MSJ1"],
+        }),
+        "CMS_MSJ": pd.DataFrame({
+            "MSJ_NO": ["MSJ1"],
+            "MSJ_SIGNDATE": ["2026-06-01 09:00:00"],
+        }),
+    }
+
+    outcome = check_bridged_timeliness(data, {
+        "left_table": "CMS_MHOCNOTE",
+        "start_column": "MHOCNOTE_SIGNDATE",
+        "end_column": "MSJ_SIGNDATE",
+        "joins": [
+            {"table": "CMS_DSJ", "left_on": "MHOCNOTE_NO", "right_on": "DSJ_HVO_NO"},
+            {"table": "CMS_MSJ", "left_on": "DSJ_NO", "right_on": "MSJ_NO"},
+        ],
+        "first_start_group": "MSJ_NO",
+        "cnote_column": "MHOCNOTE_NO",
+    })
+
+    assert outcome.total_checked == 1
+    assert outcome.total_failed == 0
+    assert outcome.failures.empty
+
+
+def test_bridged_timeliness_links_msj_to_mhicnote():
+    data = {
+        "CMS_MSJ": pd.DataFrame({
+            "MSJ_NO": ["MSJ1", "MSJ2"],
+            "MSJ_SIGNDATE": ["2026-06-01 08:00:00", "2026-06-01 10:00:00"],
+        }),
+        "CMS_DSJ": pd.DataFrame({
+            "DSJ_NO": ["MSJ1", "MSJ2"],
+            "DSJ_HVO_NO": ["HVO1", "HVO2"],
+        }),
+        "CMS_RDSJ": pd.DataFrame({
+            "RDSJ_HVO_NO": ["HVO1", "HVO2"],
+            "RDSJ_HVI_NO": ["HVI1", "HVI2"],
+        }),
+        "CMS_MHICNOTE": pd.DataFrame({
+            "MHICNOTE_NO": ["HVI1", "HVI2"],
+            "MHICNOTE_DATE": ["2026-06-01 09:00:00", "2026-06-01 09:30:00"],
+        }),
+    }
+
+    outcome = check_bridged_timeliness(data, {
+        "left_table": "CMS_MSJ",
+        "start_column": "MSJ_SIGNDATE",
+        "end_column": "MHICNOTE_DATE",
+        "joins": [
+            {"table": "CMS_DSJ", "left_on": "MSJ_NO", "right_on": "DSJ_NO"},
+            {"table": "CMS_RDSJ", "left_on": "DSJ_HVO_NO", "right_on": "RDSJ_HVO_NO"},
+            {"table": "CMS_MHICNOTE", "left_on": "RDSJ_HVI_NO", "right_on": "MHICNOTE_NO"},
+        ],
+        "cnote_column": "MHICNOTE_NO",
+    })
+
+    assert outcome.total_checked == 2
+    assert outcome.total_failed == 1
+    assert outcome.failures.iloc[0]["cnote_no"] == "HVI2"
+
+
+def test_bridged_timeliness_links_mhicnote_to_mrsheet():
+    data = {
+        "CMS_MHICNOTE": pd.DataFrame({
+            "MHICNOTE_NO": ["HVI1", "HVI2"],
+            "MHICNOTE_DATE": ["2026-06-01 08:00:00", "2026-06-01 10:00:00"],
+        }),
+        "CMS_DHICNOTE": pd.DataFrame({
+            "DHICNOTE_NO": ["HVI1", "HVI2"],
+            "DHICNOTE_CNOTE_NO": ["C1", "C2"],
+        }),
+        "CMS_DRSHEET": pd.DataFrame({
+            "DRSHEET_CNOTE_NO": ["C1", "C2"],
+            "DRSHEET_NO": ["RS1", "RS2"],
+        }),
+        "CMS_MRSHEET": pd.DataFrame({
+            "MRSHEET_NO": ["RS1", "RS2"],
+            "MRSHEET_DATE": ["2026-06-01 09:00:00", "2026-06-01 09:30:00"],
+        }),
+    }
+
+    outcome = check_bridged_timeliness(data, {
+        "left_table": "CMS_MHICNOTE",
+        "start_column": "MHICNOTE_DATE",
+        "end_column": "MRSHEET_DATE",
+        "joins": [
+            {"table": "CMS_DHICNOTE", "left_on": "MHICNOTE_NO", "right_on": "DHICNOTE_NO"},
+            {"table": "CMS_DRSHEET", "left_on": "DHICNOTE_CNOTE_NO", "right_on": "DRSHEET_CNOTE_NO"},
+            {"table": "CMS_MRSHEET", "left_on": "DRSHEET_NO", "right_on": "MRSHEET_NO"},
+        ],
+        "cnote_column": "DHICNOTE_CNOTE_NO",
+    })
+
+    assert outcome.total_checked == 2
+    assert outcome.total_failed == 1
+    assert outcome.failures.iloc[0]["cnote_no"] == "C2"
+
+
+def test_manifest_code_sequence_checks_om_before_tm():
+    data = {
+        "CMS_MFCNOTE": pd.DataFrame({
+            "MFCNOTE_NO": ["C1", "C1", "C2", "C2"],
+            "MFCNOTE_MAN_NO": ["OM1", "TM1", "OM2", "TM2"],
+        }),
+        "CMS_MANIFEST": pd.DataFrame({
+            "MANIFEST_NO": ["OM1", "TM1", "OM2", "TM2"],
+            "MANIFEST_CODE": [1, 2, 1, 2],
+            "MANIFEST_CRDATE": [
+                "2026-06-01 10:00:00",
+                "2026-06-01 09:00:00",
+                "2026-06-01 08:00:00",
+                "2026-06-01 09:00:00",
+            ],
+        }),
+    }
+
+    outcome = check_manifest_code_sequence(data, {
+        "mode": "om_before_tm",
+        "manifest_code_column": "MANIFEST_CODE",
+        "date_column": "MANIFEST_CRDATE",
+        "cnote_column": "MFCNOTE_NO",
+    })
+
+    assert outcome.total_checked == 2
+    assert outcome.total_failed == 1
+    assert outcome.failures.iloc[0]["cnote_no"] == "C1"
+
+
+def test_manifest_code_sequence_checks_tm_before_im():
+    data = {
+        "CMS_MFCNOTE": pd.DataFrame({
+            "MFCNOTE_NO": ["C1", "C1", "C2", "C2"],
+            "MFCNOTE_MAN_NO": ["TM1", "IM1", "TM2", "IM2"],
+        }),
+        "CMS_MANIFEST": pd.DataFrame({
+            "MANIFEST_NO": ["TM1", "IM1", "TM2", "IM2"],
+            "MANIFEST_CODE": [2, 3, 2, 3],
+            "MANIFEST_CRDATE": [
+                "2026-06-01 10:00:00",
+                "2026-06-01 09:00:00",
+                "2026-06-01 08:00:00",
+                "2026-06-01 09:00:00",
+            ],
+        }),
+    }
+
+    outcome = check_manifest_code_sequence(data, {
+        "mode": "tm_sequence_before_im",
+        "manifest_code_column": "MANIFEST_CODE",
+        "date_column": "MANIFEST_CRDATE",
+        "cnote_column": "MFCNOTE_NO",
+    })
+
+    assert outcome.total_checked == 2
+    assert outcome.total_failed == 1
+    assert outcome.failures.iloc[0]["cnote_no"] == "C1"
+
+
+def test_cnote_im_manifest_before_msj_uses_manifest_code_three():
+    data = {
+        "CMS_MFCNOTE": pd.DataFrame({
+            "MFCNOTE_NO": ["C1", "C2"],
+            "MFCNOTE_MAN_NO": ["IM1", "IM2"],
+        }),
+        "CMS_MANIFEST": pd.DataFrame({
+            "MANIFEST_NO": ["IM1", "IM2"],
+            "MANIFEST_CODE": [3, 3],
+            "MANIFEST_DATE": ["2026-06-01 10:00:00", "2026-06-01 08:00:00"],
+        }),
+        "CMS_DHICNOTE": pd.DataFrame({
+            "DHICNOTE_NO": ["HVI1", "HVI2"],
+            "DHICNOTE_CNOTE_NO": ["C1", "C2"],
+        }),
+        "CMS_RDSJ": pd.DataFrame({
+            "RDSJ_HVI_NO": ["HVI1", "HVI2"],
+            "RDSJ_HVO_NO": ["HVO1", "HVO2"],
+        }),
+        "CMS_DSJ": pd.DataFrame({
+            "DSJ_HVO_NO": ["HVO1", "HVO2"],
+            "DSJ_NO": ["MSJ1", "MSJ2"],
+        }),
+        "CMS_MSJ": pd.DataFrame({
+            "MSJ_NO": ["MSJ1", "MSJ2"],
+            "MSJ_SIGNDATE": ["2026-06-01 09:00:00", "2026-06-01 09:00:00"],
+        }),
+    }
+
+    outcome = check_cnote_im_manifest_before_msj(data, {
+        "manifest_code": "3",
+        "manifest_code_column": "MANIFEST_CODE",
+        "manifest_date_column": "MANIFEST_DATE",
+        "msj_date_column": "MSJ_SIGNDATE",
+    })
+
+    assert outcome.total_checked == 2
+    assert outcome.total_failed == 1
+    assert outcome.failures.iloc[0]["cnote_no"] == "C1"
 
 
 def test_aggregate_sum_consistency_groups_detail_rows():

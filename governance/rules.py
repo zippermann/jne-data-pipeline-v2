@@ -96,7 +96,10 @@ def check_conditional_completeness(data: dict[str, pd.DataFrame], params: dict) 
     table = data[params["table"]]
     column = params["column"]
     condition_column = params["condition_column"]
-    if params.get("condition_mode") == "not_null":
+    if params.get("condition_regex"):
+        condition = _string_values(table[condition_column]).str.contains(params["condition_regex"], regex=True, na=False)
+        condition_label = params["condition_regex"]
+    elif params.get("condition_mode") == "not_null":
         # Rule applies whenever the condition column is filled (e.g. an approval date exists).
         condition = _present(table[condition_column])
         condition_label = "filled"
@@ -110,6 +113,28 @@ def check_conditional_completeness(data: dict[str, pd.DataFrame], params: dict) 
         _cnote_values(table.loc[failed], params),
         values.loc[failed],
         f"{column} is required when {condition_column} is {condition_label}",
+    )
+    return RuleOutcome(int(condition.sum()), int(failed.sum()), failures)
+
+
+def check_reference_conditional_completeness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    table = data[params["table"]]
+    column = params["column"]
+    references = params.get("references")
+    if references is None:
+        references = [{"table": params["reference_table"], "column": params["reference_column"]}]
+    condition_values: set[str] = set()
+    for reference_params in references:
+        reference = data[reference_params["table"]]
+        condition_values.update(_normalized_strings(reference[reference_params["column"]].dropna()))
+    condition_key = _normalized_strings(table[params["condition_column"]])
+    condition = condition_key.isin(condition_values)
+    values = table[column]
+    failed = condition & ~_present(values)
+    failures = _as_failure_frame(
+        _cnote_values(table.loc[failed], params),
+        values.loc[failed],
+        f"{column} is required when {params['condition_column']} exists in reference rows",
     )
     return RuleOutcome(int(condition.sum()), int(failed.sum()), failures)
 
@@ -438,6 +463,14 @@ def check_bridged_timeliness(data: dict[str, pd.DataFrame], params: dict) -> Rul
     merged = _merge_bridge(data, params)
     start_time = pd.to_datetime(merged[params["start_column"]], errors="coerce")
     end_time = pd.to_datetime(merged[params["end_column"]], errors="coerce")
+    if params.get("first_start_group"):
+        merged = merged.assign(_start_time=start_time, _end_time=end_time)
+        merged = (
+            merged.sort_values("_start_time")
+            .drop_duplicates(subset=[params["first_start_group"]], keep="first")
+        )
+        start_time = merged["_start_time"]
+        end_time = merged["_end_time"]
     comparable = start_time.notna() & end_time.notna()
     failed = comparable & start_time.gt(end_time)
     failed_value = start_time.loc[failed].astype(str) + " > " + end_time.loc[failed].astype(str)
@@ -445,6 +478,100 @@ def check_bridged_timeliness(data: dict[str, pd.DataFrame], params: dict) -> Rul
         _merged_cnote_values(merged.loc[failed], params),
         failed_value,
         "start timestamp is after bridged end timestamp",
+    )
+    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
+
+
+def _cnotes_for_failed_groups(groups: list[str]) -> pd.Series:
+    return pd.Series(groups, dtype="string")
+
+
+def check_manifest_code_sequence(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    merged = data["CMS_MFCNOTE"].merge(
+        data["CMS_MANIFEST"],
+        left_on="MFCNOTE_MAN_NO",
+        right_on="MANIFEST_NO",
+        suffixes=("_mfcnote", "_manifest"),
+    )
+    cnote_column = params.get("cnote_column", "MFCNOTE_NO")
+    code = _normalized_strings(merged[params.get("manifest_code_column", "MANIFEST_CODE")])
+    event_time = pd.to_datetime(merged[params.get("date_column", "MANIFEST_CRDATE")], errors="coerce")
+    mode = params["mode"]
+    checked = 0
+    failed_cnotes: list[str] = []
+    failed_values: list[str] = []
+
+    frame = merged.assign(_manifest_code=code, _event_time=event_time)
+    for cnote_no, group in frame.groupby(cnote_column, dropna=True):
+        om_times = group.loc[group["_manifest_code"].eq("1"), "_event_time"].dropna().sort_values()
+        tm_times = group.loc[group["_manifest_code"].eq("2"), "_event_time"].dropna().sort_values()
+        im_times = group.loc[group["_manifest_code"].eq("3"), "_event_time"].dropna().sort_values()
+
+        if mode == "om_before_tm":
+            if om_times.empty or tm_times.empty:
+                continue
+            checked += 1
+            if om_times.max() > tm_times.min():
+                failed_cnotes.append(str(cnote_no))
+                failed_values.append(f"OM {om_times.max()} > TM {tm_times.min()}")
+        elif mode == "tm_sequence_before_im":
+            if len(tm_times) > 1 or (not tm_times.empty and not im_times.empty):
+                checked += 1
+            duplicate_tm = len(tm_times) > 1 and tm_times.duplicated().any()
+            tm_after_im = not tm_times.empty and not im_times.empty and tm_times.max() > im_times.min()
+            if duplicate_tm or tm_after_im:
+                failed_cnotes.append(str(cnote_no))
+                if duplicate_tm:
+                    failed_values.append("TM timestamps are duplicated")
+                else:
+                    failed_values.append(f"TM {tm_times.max()} > IM {im_times.min()}")
+        elif mode == "im_after_tm":
+            if tm_times.empty or im_times.empty:
+                continue
+            checked += 1
+            if im_times.min() < tm_times.max():
+                failed_cnotes.append(str(cnote_no))
+                failed_values.append(f"IM {im_times.min()} < TM {tm_times.max()}")
+        else:
+            raise ValueError(f"Unsupported manifest sequence mode: {mode}")
+
+    failures = _as_failure_frame(
+        _cnotes_for_failed_groups(failed_cnotes),
+        pd.Series(failed_values, dtype="string"),
+        "manifest code sequence is out of order",
+    )
+    return RuleOutcome(checked, len(failed_cnotes), failures)
+
+
+def check_cnote_im_manifest_before_msj(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    manifest_path = data["CMS_MFCNOTE"].merge(
+        data["CMS_MANIFEST"],
+        left_on="MFCNOTE_MAN_NO",
+        right_on="MANIFEST_NO",
+    )
+    manifest_code = _normalized_strings(manifest_path[params.get("manifest_code_column", "MANIFEST_CODE")])
+    im_path = manifest_path.loc[manifest_code.eq(str(params.get("manifest_code", "3")))].copy()
+    im_path["_im_time"] = pd.to_datetime(im_path[params.get("manifest_date_column", "MANIFEST_DATE")], errors="coerce")
+    im_by_cnote = im_path.groupby("MFCNOTE_NO")["_im_time"].min()
+
+    msj_path = (
+        data["CMS_DHICNOTE"]
+        .merge(data["CMS_RDSJ"], left_on="DHICNOTE_NO", right_on="RDSJ_HVI_NO")
+        .merge(data["CMS_DSJ"], left_on="RDSJ_HVO_NO", right_on="DSJ_HVO_NO")
+        .merge(data["CMS_MSJ"], left_on="DSJ_NO", right_on="MSJ_NO")
+    )
+    msj_path["_msj_time"] = pd.to_datetime(msj_path[params.get("msj_date_column", "MSJ_SIGNDATE")], errors="coerce")
+    msj_by_cnote = msj_path.groupby("DHICNOTE_CNOTE_NO")["_msj_time"].min()
+
+    comparison = pd.concat([im_by_cnote.rename("im_time"), msj_by_cnote.rename("msj_time")], axis=1, join="inner")
+    comparable = comparison["im_time"].notna() & comparison["msj_time"].notna()
+    failed = comparable & comparison["im_time"].gt(comparison["msj_time"])
+    failed_rows = comparison.loc[failed]
+    failed_value = failed_rows["im_time"].astype(str) + " > " + failed_rows["msj_time"].astype(str)
+    failures = _as_failure_frame(
+        pd.Series(failed_rows.index.astype(str), index=failed_rows.index),
+        failed_value,
+        "CNOTE inbound manifest time is after MSJ sign date",
     )
     return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
 
@@ -463,6 +590,7 @@ def check_integrity_orphan(data: dict[str, pd.DataFrame], params: dict) -> RuleO
 RULE_FUNCTIONS = {
     "completeness": check_completeness,
     "conditional_completeness": check_conditional_completeness,
+    "reference_conditional_completeness": check_reference_conditional_completeness,
     "validity_regex": check_validity_regex,
     "validity_datetime": check_validity_datetime,
     "validity_integer": check_validity_integer,
@@ -483,5 +611,7 @@ RULE_FUNCTIONS = {
     "aggregate_count_consistency": check_aggregate_count_consistency,
     "timeliness": check_timeliness,
     "bridged_timeliness": check_bridged_timeliness,
+    "manifest_code_sequence": check_manifest_code_sequence,
+    "cnote_im_manifest_before_msj": check_cnote_im_manifest_before_msj,
     "integrity_orphan": check_integrity_orphan,
 }

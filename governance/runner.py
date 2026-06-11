@@ -196,6 +196,14 @@ def _entry_tables(entry: dict) -> set[str]:
     for step in params.get("joins", []):
         if "table" in step:
             tables.add(step["table"])
+    for reference in params.get("references", []):
+        if "table" in reference:
+            tables.add(reference["table"])
+    rule_family = entry.get("rule_family")
+    if rule_family == "manifest_code_sequence":
+        tables.update({"CMS_MFCNOTE", "CMS_MANIFEST"})
+    if rule_family == "cnote_im_manifest_before_msj":
+        tables.update({"CMS_MFCNOTE", "CMS_MANIFEST", "CMS_DHICNOTE", "CMS_RDSJ", "CMS_DSJ", "CMS_MSJ"})
     return {table.upper() for table in tables if table}
 
 
@@ -236,6 +244,8 @@ def _entry_columns(entry: dict) -> dict[str, set[str]]:
     add(params.get("child_table"), params.get("count_column"))
     add(params.get("parent_table"), params.get("parent_column"))
     add(params.get("reference_table"), params.get("reference_column"))
+    for reference in params.get("references", []):
+        add(reference.get("table"), reference.get("column"))
     add(params.get("master_table"), params.get("master_key"))
     add(params.get("master_table"), params.get("master_column"))
     add(params.get("master_table"), params.get("cnote_column"))
@@ -246,6 +256,27 @@ def _entry_columns(entry: dict) -> dict[str, set[str]]:
     add(params.get("detail_table"), params.get("detail_key"))
     add(params.get("detail_table"), params.get("detail_value_column"))
     add(params.get("detail_table"), params.get("detail_count_column"))
+    rule_family = entry.get("rule_family")
+    if rule_family == "manifest_code_sequence":
+        add("CMS_MFCNOTE", "MFCNOTE_NO")
+        add("CMS_MFCNOTE", "MFCNOTE_MAN_NO")
+        add("CMS_MANIFEST", "MANIFEST_NO")
+        add("CMS_MANIFEST", params.get("manifest_code_column", "MANIFEST_CODE"))
+        add("CMS_MANIFEST", params.get("date_column", "MANIFEST_CRDATE"))
+    if rule_family == "cnote_im_manifest_before_msj":
+        add("CMS_MFCNOTE", "MFCNOTE_NO")
+        add("CMS_MFCNOTE", "MFCNOTE_MAN_NO")
+        add("CMS_MANIFEST", "MANIFEST_NO")
+        add("CMS_MANIFEST", params.get("manifest_code_column", "MANIFEST_CODE"))
+        add("CMS_MANIFEST", params.get("manifest_date_column", "MANIFEST_DATE"))
+        add("CMS_DHICNOTE", "DHICNOTE_NO")
+        add("CMS_DHICNOTE", "DHICNOTE_CNOTE_NO")
+        add("CMS_RDSJ", "RDSJ_HVI_NO")
+        add("CMS_RDSJ", "RDSJ_HVO_NO")
+        add("CMS_DSJ", "DSJ_HVO_NO")
+        add("CMS_DSJ", "DSJ_NO")
+        add("CMS_MSJ", "MSJ_NO")
+        add("CMS_MSJ", params.get("msj_date_column", "MSJ_SIGNDATE"))
     return columns
 
 
