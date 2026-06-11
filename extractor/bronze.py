@@ -373,7 +373,7 @@ def _create_scope(
 def _scope_index_name(table_name: str) -> str:
     suffix = table_name.split(".")[-1].upper()
     digest = hashlib.sha1(suffix.encode("utf-8")).hexdigest()[:6].upper()
-    return f"IDX_{suffix[:20]}_{digest}"
+    return f"IDX_{suffix[:19]}_{digest}"
 
 
 def _cnote_limit(config: dict) -> int | None:
@@ -472,8 +472,10 @@ def _run_scope_jobs(
     oracle_settings: OracleSettings | None,
     ctas_parallel_degree: int,
     scope_workers: int,
+    existing_counts: dict[str, int] | None = None,
 ) -> dict[str, int]:
-    counts: dict[str, int] = {}
+    counts: dict[str, int] = dict(existing_counts or {})
+    created_counts: dict[str, int] = {}
     dependencies = _scope_dependencies()
     pending = set(jobs)
     scope_workers = max(scope_workers, 1)
@@ -495,6 +497,7 @@ def _run_scope_jobs(
         if scope_workers == 1:
             name, count = _run_scope_job(jobs[wave[0]], conn, ctas_parallel_degree)
             counts[name] = count
+            created_counts[name] = count
         else:
             with ThreadPoolExecutor(max_workers=min(scope_workers, len(wave))) as executor:
                 futures = {
@@ -509,8 +512,9 @@ def _run_scope_jobs(
                 for future in as_completed(futures):
                     name, count = future.result()
                     counts[name] = count
+                    created_counts[name] = count
         pending.difference_update(wave)
-    return counts
+    return created_counts
 
 
 def materialize_scope_tables(
@@ -677,7 +681,7 @@ def materialize_scope_tables(
         ),
     }
     selected_jobs = {name: job for name, job in jobs.items() if name in required_scopes}
-    counts.update(_run_scope_jobs(selected_jobs, conn, oracle_settings, ctas_parallel_degree, scope_workers))
+    counts.update(_run_scope_jobs(selected_jobs, conn, oracle_settings, ctas_parallel_degree, scope_workers, counts))
     return counts
 
 

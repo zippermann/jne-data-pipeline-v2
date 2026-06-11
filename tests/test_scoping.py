@@ -7,9 +7,11 @@ from extractor.bronze import (
     _cnote_limit,
     _create_scope,
     _expand_required_scopes,
+    _run_scope_jobs,
     _scope_date_filter,
     _scope_index_name,
     _scope_join_query,
+    ScopeJob,
     scope_predicate,
     sanitize_run_id,
 )
@@ -141,6 +143,47 @@ def test_create_scope_adds_parallel_hint_to_ctas_select():
     create_sql = conn.cursor_obj.statements[1]
     assert "CREATE TABLE HOA.BRONZE_SCOPE_TEST NOLOGGING AS" in create_sql
     assert "SELECT /*+ PARALLEL(4) */ DISTINCT CNOTE_NO" in create_sql
+
+
+def test_run_scope_jobs_accepts_precreated_parent_scope():
+    class Cursor:
+        def __init__(self):
+            self.statements = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql, binds=None):
+            self.statements.append(sql)
+
+        def fetchone(self):
+            return (7,)
+
+    class Connection:
+        def __init__(self):
+            self.cursor_obj = Cursor()
+
+        def cursor(self):
+            return self.cursor_obj
+
+        def commit(self):
+            pass
+
+    jobs = {
+        "DRCNOTE": ScopeJob(
+            "DRCNOTE",
+            "HOA.BRONZE_SCOPE_DRCNOTE_R_TEST",
+            "DRCNOTE_NO",
+            "SELECT DRCNOTE_NO FROM JNE.CMS_DRCNOTE",
+        )
+    }
+
+    counts = _run_scope_jobs(jobs, Connection(), None, 1, 1, {"CNOTE": 100})
+
+    assert counts == {"DRCNOTE": 7}
 
 
 def test_oracle_settings_default_prefetch_rows_tracks_arraysize():
