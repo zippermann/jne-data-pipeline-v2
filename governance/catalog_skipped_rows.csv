@@ -1,46 +1,14 @@
 index_code,reason
-COMP1B1,already in catalog (catalog correction takes precedence)
-COMP1D2,already in catalog (catalog correction takes precedence)
-COMP1H4,already in catalog (catalog correction takes precedence)
-COMP1H6,already in catalog (catalog correction takes precedence)
-COMP1H9,already in catalog (catalog correction takes precedence)
-COMP1L11,already in catalog (catalog correction takes precedence)
-COMP2P6,"condition depends on another table or journey state; needs a cross-table bridge, confirm rule with team"
-COMP2S3,"condition depends on another table or journey state; needs a cross-table bridge, confirm rule with team"
-COMP2S5,"condition depends on another table or journey state; needs a cross-table bridge, confirm rule with team"
-COMP1V9,already in catalog (catalog correction takes precedence)
-COMP1V19,already in catalog (catalog correction takes precedence)
-COMP1Z10,already in catalog (catalog correction takes precedence)
+COMP2P6,"condition depends on another table or journey state; needs a confirmed cross-table condition for DRSHEET_FLAG"
+COMP2S3,"condition depends on special-request business state; needs a confirmed source column/table before implementing"
+COMP2S5,"condition depends on undelivered business state; needs a confirmed source column/table before implementing"
 COMP3J1,no usable rule description
-VALD1B6,already in catalog (catalog correction takes precedence)
-VALD1B12,already in catalog (catalog correction takes precedence)
-UNIQ1B1,already in catalog (catalog correction takes precedence)
-TIME1B99,already in catalog
-TIME1E7,no direct join key between start and end tables in the simple two-table merge; needs cnote/bag bridging or manifest-type split
-TIME1C9,no direct join key between start and end tables in the simple two-table merge; needs cnote/bag bridging or manifest-type split
-TIME1J18,already in catalog
-TIME1H15 (OM),no direct join key between start and end tables in the simple two-table merge; needs cnote/bag bridging or manifest-type split
-TIME1H15 (TM),no direct join key between start and end tables in the simple two-table merge; needs cnote/bag bridging or manifest-type split
-TIME1H15 (IM),no direct join key between start and end tables in the simple two-table merge; needs cnote/bag bridging or manifest-type split
-TIME1V9,no direct join key between start and end tables in the simple two-table merge; needs cnote/bag bridging or manifest-type split
-TIME1X2,no direct join key between start and end tables in the simple two-table merge; needs cnote/bag bridging or manifest-type split
-TIME1Z10,no direct join key between start and end tables in the simple two-table merge; needs cnote/bag bridging or manifest-type split
-TIME1AB5,no direct join key between start and end tables in the simple two-table merge; needs cnote/bag bridging or manifest-type split
-TIME1Q3,no direct join key between start and end tables in the simple two-table merge; needs cnote/bag bridging or manifest-type split
+TIME1H15 (OM),manifest type sequencing requires confirmed MANIFEST_CODE/type semantics
+TIME1H15 (TM),manifest type sequencing requires confirmed MANIFEST_CODE/type semantics
+TIME1H15 (IM),manifest type sequencing requires confirmed MANIFEST_CODE/type semantics
+TIME1X2,"manifest date to MSJ sign date needs confirmed bridge and manifest type/scope"
+TIME1Z10,"MSJ sign date to MHICNOTE date needs confirmed HVO/HVI bridge"
+TIME1AB5,"MHICNOTE date to MRSHEET date needs confirmed HVI/runsheet bridge"
 INTG1I,same check as existing INTG1I1 (MFCNOTE_MAN_NO -> CMS_MANIFEST)
-CONS1B12,already in catalog
-CONS1B15,already in catalog
-CONS2C3,no direct join key between CMS_MRCNOTE and CMS_CNOTE; needs DRCNOTE bridge
-CONS3H4,substring rule across a multi-hop join (MANIFEST to CNOTE via MFCNOTE); confirm rule and bridge
-CONS2I4,already in catalog
-CONS2K3,DMBAG vs MANIFEST_FROM is multi-hop (DMBAG -> MFBAG -> MANIFEST)
-CONS2K4,DMBAG vs MANIFEST_THRU is multi-hop (DMBAG -> MFBAG -> MANIFEST)
-CONS2X4,COST_MTRANSIT is manifest level; comparison to CNOTE needs COST_D bridge
-CONS2X5,COST_MTRANSIT is manifest level; comparison to CNOTE needs COST_D bridge
-CONS2X6,COST_MTRANSIT is manifest level; comparison to CNOTE needs COST_D bridge
-CONS3J3,aggregate sum of MFCNOTE_WEIGHT per bag; MFCNOTE to bag join path unconfirmed
-CONS3J4,aggregate sum of MFCNOTE_WEIGHT per bag; MFCNOTE to bag join path unconfirmed
-CONS3N10,aggregate sum of MFCNOTE_WEIGHT per SMU; join path unconfirmed
-CONS4L6,aggregate count of MFCNOTE_NO per master bag; join path unconfirmed
-ACCU2B12,covered by catalog prefix/suffix pairs ACCU2B12A/ACCU3B12B/ACCU2B13A/ACCU3B13B
-ACCU3B13,covered by catalog prefix/suffix pairs ACCU2B12A/ACCU3B12B/ACCU2B13A/ACCU3B13B
+ACCU2B12,covered by catalog prefix/suffix pairs ACCU2B12A/ACCU3B12B
+ACCU3B13,covered by catalog prefix/suffix pairs ACCU2B13A/ACCU3B13B

@@ -63,6 +63,18 @@ def _merge_pair(data: dict[str, pd.DataFrame], params: dict) -> pd.DataFrame:
     )
 
 
+def _merge_bridge(data: dict[str, pd.DataFrame], params: dict) -> pd.DataFrame:
+    merged = data[params["left_table"]].copy()
+    for step in params["joins"]:
+        merged = merged.merge(
+            data[step["table"]],
+            left_on=step["left_on"],
+            right_on=step["right_on"],
+            suffixes=("", f"_{step['table'].lower()}"),
+        )
+    return merged
+
+
 def _merged_cnote_values(merged: pd.DataFrame, params: dict) -> pd.Series:
     column = params.get("cnote_column", params.get("left_join_key", "CNOTE_NO"))
     for candidate in (column, f"{column}_left", f"{column}_right"):
@@ -184,6 +196,102 @@ def check_rounded_pair_consistency(data: dict[str, pd.DataFrame], params: dict) 
         _merged_cnote_values(merged.loc[failed], params),
         failed_value,
         "rounded numeric values do not match",
+    )
+    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
+
+
+def check_bridged_pair_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    merged = _merge_bridge(data, params)
+    left_value = merged[params["left_column"]]
+    right_value = merged[params["right_column"]]
+    comparable = left_value.notna() & right_value.notna()
+    if "decimals" in params:
+        left_compare = pd.to_numeric(left_value, errors="coerce").round(int(params["decimals"]))
+        right_compare = pd.to_numeric(right_value, errors="coerce").round(int(params["decimals"]))
+        comparable = left_compare.notna() & right_compare.notna()
+    else:
+        left_compare = _string_values(left_value)
+        right_compare = _string_values(right_value)
+        comparable = left_compare.ne("") & right_compare.ne("")
+    failed = comparable & left_compare.ne(right_compare)
+    failed_value = left_value.loc[failed].astype(str) + " != " + right_value.loc[failed].astype(str)
+    failures = _as_failure_frame(
+        _merged_cnote_values(merged.loc[failed], params),
+        failed_value,
+        "bridged values do not match",
+    )
+    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
+
+
+def check_bridged_substring_match(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    merged = _merge_bridge(data, params)
+    start = int(params["substring_start"])
+    length = int(params["substring_length"])
+    left_value = _string_values(merged[params["left_column"]])
+    right_value = _string_values(merged[params["right_column"]])
+    left_compare = left_value.str[start:start + length]
+    comparable = left_value.ne("") & right_value.ne("")
+    failed = comparable & left_compare.ne(right_value)
+    failed_value = left_value.loc[failed] + " -> " + left_compare.loc[failed] + " != " + right_value.loc[failed]
+    failures = _as_failure_frame(
+        _merged_cnote_values(merged.loc[failed], params),
+        failed_value,
+        "bridged substring does not match",
+    )
+    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
+
+
+def check_aggregate_sum_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    detail_params = {
+        "left_table": params["detail_table"],
+        "joins": params.get("joins", []),
+        "cnote_column": params.get("detail_cnote_column", params["detail_key"]),
+    }
+    detail = _merge_bridge(data, detail_params) if params.get("joins") else data[params["detail_table"]].copy()
+    grouped = (
+        pd.to_numeric(detail[params["detail_value_column"]], errors="coerce")
+        .groupby(detail[params["detail_key"]])
+        .sum(min_count=1)
+        .rename("detail_total")
+    )
+    master = data[params["master_table"]]
+    merged = master.merge(grouped, left_on=params["master_key"], right_index=True, how="inner")
+    master_value = pd.to_numeric(merged[params["master_value_column"]], errors="coerce")
+    detail_value = pd.to_numeric(merged["detail_total"], errors="coerce")
+    decimals = int(params.get("decimals", 0))
+    comparable = master_value.notna() & detail_value.notna()
+    failed = comparable & master_value.round(decimals).ne(detail_value.round(decimals))
+    failed_value = master_value.loc[failed].astype(str) + " != " + detail_value.loc[failed].astype(str)
+    failures = _as_failure_frame(
+        _cnote_values(merged.loc[failed], {"cnote_column": params.get("cnote_column", params["master_key"])}),
+        failed_value,
+        "master value does not match bridged detail sum",
+    )
+    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
+
+
+def check_aggregate_count_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    detail_params = {
+        "left_table": params["detail_table"],
+        "joins": params.get("joins", []),
+        "cnote_column": params.get("detail_cnote_column", params["detail_count_column"]),
+    }
+    detail = _merge_bridge(data, detail_params) if params.get("joins") else data[params["detail_table"]].copy()
+    grouped = (
+        detail.groupby(params["detail_key"])[params["detail_count_column"]]
+        .nunique()
+        .rename("detail_count")
+    )
+    master = data[params["master_table"]]
+    merged = master.merge(grouped, left_on=params["master_key"], right_index=True, how="inner")
+    master_value = pd.to_numeric(merged[params["master_count_column"]], errors="coerce")
+    comparable = master_value.notna()
+    failed = comparable & master_value.ne(merged["detail_count"])
+    failed_value = master_value.loc[failed].astype(str) + " != " + merged.loc[failed, "detail_count"].astype(str)
+    failures = _as_failure_frame(
+        _cnote_values(merged.loc[failed], {"cnote_column": params.get("cnote_column", params["master_key"])}),
+        failed_value,
+        "master count does not match bridged detail count",
     )
     return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
 
@@ -326,6 +434,21 @@ def check_timeliness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome
     return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
 
 
+def check_bridged_timeliness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    merged = _merge_bridge(data, params)
+    start_time = pd.to_datetime(merged[params["start_column"]], errors="coerce")
+    end_time = pd.to_datetime(merged[params["end_column"]], errors="coerce")
+    comparable = start_time.notna() & end_time.notna()
+    failed = comparable & start_time.gt(end_time)
+    failed_value = start_time.loc[failed].astype(str) + " > " + end_time.loc[failed].astype(str)
+    failures = _as_failure_frame(
+        _merged_cnote_values(merged.loc[failed], params),
+        failed_value,
+        "start timestamp is after bridged end timestamp",
+    )
+    return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures)
+
+
 def check_integrity_orphan(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     child = data[params["child_table"]]
     parent = data[params["parent_table"]]
@@ -354,6 +477,11 @@ RULE_FUNCTIONS = {
     "prefix_match": check_prefix_match,
     "suffix_after_prefix_match": check_suffix_after_prefix_match,
     "rounded_pair_consistency": check_rounded_pair_consistency,
+    "bridged_pair_consistency": check_bridged_pair_consistency,
+    "bridged_substring_match": check_bridged_substring_match,
+    "aggregate_sum_consistency": check_aggregate_sum_consistency,
+    "aggregate_count_consistency": check_aggregate_count_consistency,
     "timeliness": check_timeliness,
+    "bridged_timeliness": check_bridged_timeliness,
     "integrity_orphan": check_integrity_orphan,
 }

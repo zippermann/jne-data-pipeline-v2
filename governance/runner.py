@@ -190,6 +190,12 @@ def _entry_tables(entry: dict) -> set[str]:
     for key in TABLE_PARAM_KEYS:
         if key in params:
             tables.add(params[key])
+    for key in ("detail_table", "master_table"):
+        if key in params:
+            tables.add(params[key])
+    for step in params.get("joins", []):
+        if "table" in step:
+            tables.add(step["table"])
     return {table.upper() for table in tables if table}
 
 
@@ -212,6 +218,19 @@ def _entry_columns(entry: dict) -> dict[str, set[str]]:
         add(params.get(f"{prefix}_table"), params.get(f"{prefix}_column"))
         add(params.get(f"{prefix}_table"), params.get(f"{prefix}_join_key") or params.get("join_key"))
 
+    add(params.get("left_table"), params.get("left_column"))
+    add(params.get("left_table"), params.get("start_column"))
+    add(params.get("left_table"), params.get("cnote_column"))
+    add(params.get("right_table"), params.get("right_column"))
+    current_table = params.get("left_table") or params.get("detail_table")
+    for step in params.get("joins", []):
+        add(current_table, step.get("left_on"))
+        add(step.get("table"), step.get("right_on"))
+        current_table = step.get("table")
+    add(current_table, params.get("right_column"))
+    add(current_table, params.get("end_column"))
+    add(current_table, params.get("detail_key"))
+
     add(params.get("child_table"), params.get("child_column"))
     add(params.get("child_table"), params.get("child_key"))
     add(params.get("child_table"), params.get("count_column"))
@@ -220,6 +239,13 @@ def _entry_columns(entry: dict) -> dict[str, set[str]]:
     add(params.get("master_table"), params.get("master_key"))
     add(params.get("master_table"), params.get("master_column"))
     add(params.get("master_table"), params.get("cnote_column"))
+    add(params.get("master_table"), params.get("master_key"))
+    add(params.get("master_table"), params.get("master_value_column"))
+    add(params.get("master_table"), params.get("master_count_column"))
+    add(params.get("master_table"), params.get("cnote_column"))
+    add(params.get("detail_table"), params.get("detail_key"))
+    add(params.get("detail_table"), params.get("detail_value_column"))
+    add(params.get("detail_table"), params.get("detail_count_column"))
     return columns
 
 

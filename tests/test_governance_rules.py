@@ -1,6 +1,10 @@
 import pandas as pd
 
 from governance.rules import (
+    check_aggregate_count_consistency,
+    check_aggregate_sum_consistency,
+    check_bridged_pair_consistency,
+    check_bridged_timeliness,
     check_uniqueness,
     check_conditional_completeness,
     check_prefix_match,
@@ -159,3 +163,129 @@ def test_uniqueness_handles_clean_single_column_rule():
     assert outcome.total_checked == 2
     assert outcome.total_failed == 0
     assert outcome.failures.empty
+
+
+def test_bridged_pair_consistency_compares_across_intermediate_table():
+    data = {
+        "CMS_DMBAG": pd.DataFrame({
+            "DMBAG_BAG_NO": ["B1", "B2"],
+            "DMBAG_ORIGIN": ["CGK", "SUB"],
+        }),
+        "CMS_MFBAG": pd.DataFrame({
+            "MFBAG_NO": ["B1", "B2"],
+            "MFBAG_MAN_NO": ["M1", "M2"],
+        }),
+        "CMS_MANIFEST": pd.DataFrame({
+            "MANIFEST_NO": ["M1", "M2"],
+            "MANIFEST_FROM": ["CGK", "BDO"],
+        }),
+    }
+
+    outcome = check_bridged_pair_consistency(data, {
+        "left_table": "CMS_DMBAG",
+        "left_column": "DMBAG_ORIGIN",
+        "right_column": "MANIFEST_FROM",
+        "joins": [
+            {"table": "CMS_MFBAG", "left_on": "DMBAG_BAG_NO", "right_on": "MFBAG_NO"},
+            {"table": "CMS_MANIFEST", "left_on": "MFBAG_MAN_NO", "right_on": "MANIFEST_NO"},
+        ],
+        "cnote_column": "DMBAG_BAG_NO",
+    })
+
+    assert outcome.total_checked == 2
+    assert outcome.total_failed == 1
+    assert outcome.failures.iloc[0]["cnote_no"] == "B2"
+
+
+def test_bridged_timeliness_compares_across_path():
+    data = {
+        "CMS_MHI_HOC": pd.DataFrame({
+            "MHI_CNOTE_NO": ["C1", "C2"],
+            "MHI_APPROVE_DATE": ["2026-06-01 08:00:00", "2026-06-01 10:00:00"],
+        }),
+        "CMS_DRCNOTE": pd.DataFrame({
+            "DRCNOTE_NO": ["D1", "D2"],
+            "DRCNOTE_CNOTE_NO": ["C1", "C2"],
+        }),
+        "CMS_MRCNOTE": pd.DataFrame({
+            "MRCNOTE_NO": ["D1", "D2"],
+            "MRCNOTE_SIGNDATE": ["2026-06-01 09:00:00", "2026-06-01 09:30:00"],
+        }),
+    }
+
+    outcome = check_bridged_timeliness(data, {
+        "left_table": "CMS_MHI_HOC",
+        "start_column": "MHI_APPROVE_DATE",
+        "end_column": "MRCNOTE_SIGNDATE",
+        "joins": [
+            {"table": "CMS_DRCNOTE", "left_on": "MHI_CNOTE_NO", "right_on": "DRCNOTE_CNOTE_NO"},
+            {"table": "CMS_MRCNOTE", "left_on": "DRCNOTE_NO", "right_on": "MRCNOTE_NO"},
+        ],
+        "cnote_column": "DRCNOTE_CNOTE_NO",
+    })
+
+    assert outcome.total_checked == 2
+    assert outcome.total_failed == 1
+    assert outcome.failures.iloc[0]["cnote_no"] == "C2"
+
+
+def test_aggregate_sum_consistency_groups_detail_rows():
+    data = {
+        "CMS_MFBAG": pd.DataFrame({
+            "MFBAG_NO": ["B1", "B2"],
+            "MFBAG_ACT_WEIGHT": [15, 9],
+        }),
+        "CMS_MFCNOTE": pd.DataFrame({
+            "MFCNOTE_BAG_NO": ["B1", "B1", "B2"],
+            "MFCNOTE_WEIGHT": [10, 5, 7],
+        }),
+    }
+
+    outcome = check_aggregate_sum_consistency(data, {
+        "master_table": "CMS_MFBAG",
+        "master_key": "MFBAG_NO",
+        "master_value_column": "MFBAG_ACT_WEIGHT",
+        "detail_table": "CMS_MFCNOTE",
+        "detail_key": "MFCNOTE_BAG_NO",
+        "detail_value_column": "MFCNOTE_WEIGHT",
+        "cnote_column": "MFBAG_NO",
+        "decimals": 0,
+    })
+
+    assert outcome.total_checked == 2
+    assert outcome.total_failed == 1
+    assert outcome.failures.iloc[0]["cnote_no"] == "B2"
+
+
+def test_aggregate_count_consistency_counts_distinct_detail_rows_across_bridge():
+    data = {
+        "CMS_MMBAG": pd.DataFrame({
+            "MMBAG_NO": ["MB1"],
+            "MMBAG_QTY": [2],
+        }),
+        "CMS_MFCNOTE": pd.DataFrame({
+            "MFCNOTE_NO": ["C1", "C2", "C3"],
+            "MFCNOTE_BAG_NO": ["B1", "B1", "B2"],
+        }),
+        "CMS_DMBAG": pd.DataFrame({
+            "DMBAG_NO": ["MB1", "MB1"],
+            "DMBAG_BAG_NO": ["B1", "B2"],
+        }),
+    }
+
+    outcome = check_aggregate_count_consistency(data, {
+        "master_table": "CMS_MMBAG",
+        "master_key": "MMBAG_NO",
+        "master_count_column": "MMBAG_QTY",
+        "detail_table": "CMS_MFCNOTE",
+        "detail_key": "DMBAG_NO",
+        "detail_count_column": "MFCNOTE_NO",
+        "joins": [
+            {"table": "CMS_DMBAG", "left_on": "MFCNOTE_BAG_NO", "right_on": "DMBAG_BAG_NO"},
+        ],
+        "cnote_column": "MMBAG_NO",
+    })
+
+    assert outcome.total_checked == 1
+    assert outcome.total_failed == 1
+    assert outcome.failures.iloc[0]["cnote_no"] == "MB1"
