@@ -5,8 +5,11 @@ import pandas as pd
 
 from governance.catalog import CATALOG
 from governance.runner import (
+    GovernanceSource,
+    BronzeTable,
     _entry_tables,
     _missing_entry_columns,
+    _list_minio_parquet_objects,
     _read_parquet_files,
     _required_tables,
     _scan_drourate_path,
@@ -48,6 +51,33 @@ def test_entry_tables_collect_all_param_table_roles():
         "REFERENCE_TABLE",
         "MASTER_TABLE",
     }
+
+
+def test_minio_listing_uses_manifest_source_prefix_for_reused_tables():
+    class Item:
+        def __init__(self, object_name):
+            self.object_name = object_name
+
+    class Client:
+        def list_objects(self, bucket, prefix, recursive):
+            assert bucket == "jne-bronze"
+            assert prefix == "bronze/jne/old_run/ora_zone/"
+            assert recursive is True
+            return [
+                Item("bronze/jne/old_run/ora_zone/_SUCCESS"),
+                Item("bronze/jne/old_run/ora_zone/part-00001.parquet"),
+            ]
+
+    source = GovernanceSource(
+        manifest={},
+        tables={},
+        client=Client(),
+        bucket="jne-bronze",
+        prefix="bronze/jne/current_run",
+    )
+    table = BronzeTable("ORA_ZONE", "ora_zone", source_prefix="bronze/jne/old_run/ora_zone/")
+
+    assert _list_minio_parquet_objects(source, table) == ["bronze/jne/old_run/ora_zone/part-00001.parquet"]
 
 
 def test_catalog_entries_include_analysis_metadata():

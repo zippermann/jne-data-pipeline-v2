@@ -40,7 +40,7 @@ For a local run directory under `data/bronze/.../run_id=<run_id>/`:
 python -m governance.runner --source local --bronze-run-path data/bronze/.../run_id=<run_id> --output-dir governance/outputs/<run_id>
 ```
 
-Load a bronze run into Postgres:
+Load a bronze run and governance results into Postgres:
 
 ```bash
 python -m loader.mart_load --config config/mart.yaml
@@ -87,6 +87,9 @@ s3://jne-bronze/bronze/jne/window_start=YYYY-MM-DD/window_end=YYYY-MM-DD/extract
 
 Each extracted source table gets its own folder with `part-*.parquet`,
 `_SUCCESS`, and the run writes a top-level `run_manifest.json`.
+Reference tables are reusable across runs. When a completed reference table
+already exists in MinIO, extraction records `reused: true` and `source_prefix`
+in the manifest instead of pulling the table from Oracle again.
 
 ## Configuration
 
@@ -104,9 +107,12 @@ Oracle extraction tuning knobs:
 - `scoping.date_guardrail_*`: date guardrails applied to extraction SQL and the
   high-volume DRSHEET/MANIFEST scope queries.
 
-Use `config/mart.yaml` for MinIO input and Postgres mart connection settings.
-The mart loader is bronze-only; it no longer loads governance parquet artifacts
-or builds `governance.cnote_failure_candidates`.
+Use `config/mart.yaml` for MinIO input, governance result input, and Postgres
+mart connection settings. The mart loader publishes bronze tables into the
+`bronze` schema and replaces the `governance` schema with the single
+`governance_results` table.
+Reused reference tables are not reloaded into Postgres when the target
+`bronze.<table>` already exists.
 
 Environment placeholders like `${ORACLE_USER}` are expanded at runtime.
 

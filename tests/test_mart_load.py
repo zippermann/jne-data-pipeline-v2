@@ -1,4 +1,5 @@
 from datetime import datetime
+from pathlib import Path
 
 import pyarrow as pa
 
@@ -7,8 +8,10 @@ from loader.mart_load import (
     MinioConfig,
     PostgresConfig,
     BronzeConfig,
+    GovernanceConfig,
     SchemaConfig,
     _batch_to_copy_buffer,
+    _can_skip_reused_reference,
     _list_parquet_objects,
     load_config,
     run,
@@ -18,6 +21,7 @@ from loader.mart_load import (
 
 def test_load_config_expands_environment(tmp_path, monkeypatch):
     monkeypatch.setenv("BRONZE_RUN_PREFIX", "bronze/jne/run_id=R_TEST")
+    monkeypatch.setenv("RUN_ID", "R_TEST")
     monkeypatch.setenv("MART_POSTGRES_PASSWORD", "secret")
     config_path = tmp_path / "mart.yaml"
     config_path.write_text(
@@ -39,6 +43,10 @@ postgres:
 schemas:
   bronze: "bronze"
   bronze_staging: "bronze_staging"
+  governance: "governance"
+governance:
+  enabled: true
+  results_path: "governance/outputs/${RUN_ID}/governance_results.csv"
 mart:
   load_mode: "latest_snapshot"
   parquet_batch_rows: 123
@@ -50,6 +58,7 @@ mart:
 
     assert config.bronze.run_prefix == "bronze/jne/run_id=R_TEST"
     assert config.postgres.password == "secret"
+    assert config.governance.results_path.as_posix() == "governance/outputs/R_TEST/governance_results.csv"
     assert config.parquet_batch_rows == 123
 
 
@@ -87,6 +96,27 @@ def test_list_parquet_objects_filters_and_sorts():
     ]
 
 
+def test_reused_reference_table_can_be_skipped_when_target_exists():
+    class Cursor:
+        def __init__(self, exists):
+            self.exists = exists
+
+        def execute(self, sql, params=None):
+            self.sql = sql
+            self.params = params
+
+        def fetchone(self):
+            return (1,) if self.exists else None
+
+    config = _mart_config()
+    table_info = {"output_name": "ora_zone", "stage": "reference", "reused": True}
+
+    assert _can_skip_reused_reference(Cursor(True), config, table_info) is True
+    assert _can_skip_reused_reference(Cursor(False), config, table_info) is False
+    assert _can_skip_reused_reference(Cursor(True), config, {**table_info, "reused": False}) is False
+    assert _can_skip_reused_reference(Cursor(True), config, {**table_info, "stage": "cnote"}) is False
+
+
 def test_batch_to_copy_buffer_escapes_text_and_nulls():
     batch = pa.record_batch(
         [
@@ -111,12 +141,30 @@ def _mart_config() -> MartConfig:
         schemas=SchemaConfig(
             bronze="bronze",
             bronze_staging="bronze_staging",
+            governance="governance",
         ),
+        governance=GovernanceConfig(True, Path("governance/outputs/R_TEST/governance_results.csv")),
     )
 
 
-def test_run_loads_bronze_only(monkeypatch, tmp_path):
-    config = _mart_config()
+def test_run_loads_bronze_and_governance_results(monkeypatch, tmp_path):
+    governance_path = tmp_path / "governance_results.csv"
+    governance_path.write_text(
+        "cnote_no,index_code,main_indicator,column_name,table_name,status,variable_1,variable_2,impact_billing,impact_operational\n"
+        "CNOTE1,COMP1,Timestamp,COL,TABLE,PASS,1,2,Y,\n",
+        encoding="utf-8",
+    )
+    config = MartConfig(
+        minio=MinioConfig("localhost:9000", "minioadmin", "minioadmin", False),
+        bronze=BronzeConfig("jne-bronze", "bronze/jne/run_id=R_TEST"),
+        postgres=PostgresConfig("localhost", 5432, "jne_mart", "jne_mart", "jne_mart"),
+        schemas=SchemaConfig(
+            bronze="bronze",
+            bronze_staging="bronze_staging",
+            governance="governance",
+        ),
+        governance=GovernanceConfig(True, governance_path),
+    )
     statements = []
 
     class Cursor:
@@ -132,6 +180,14 @@ def test_run_loads_bronze_only(monkeypatch, tmp_path):
         def execute(self, sql, params=None):
             self._last_sql = sql
             statements.append(sql)
+
+        def copy_expert(self, sql, handle):
+            self._last_sql = sql
+            statements.append(sql)
+            handle.read()
+
+        def fetchone(self):
+            return (1,)
 
         def fetchall(self):
             if "information_schema.tables" in self._last_sql:
@@ -171,4 +227,6 @@ def test_run_loads_bronze_only(monkeypatch, tmp_path):
 
     joined = "\n".join(statements)
     assert '"bronze_staging"' in joined
-    assert '"governance_staging"' not in joined
+    assert '"governance"."governance_results"' in joined
+    assert '"governance"."failures"' not in joined
+    assert '"governance"."scorecard"' not in joined

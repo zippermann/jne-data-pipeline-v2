@@ -50,6 +50,7 @@ class BronzeTable:
     table: str
     output_name: str
     row_count: int | None = None
+    source_prefix: str | None = None
 
 
 @dataclass(frozen=True)
@@ -352,6 +353,7 @@ def _manifest_tables(manifest: dict[str, Any]) -> dict[str, BronzeTable]:
             table=source_name,
             output_name=str(item["output_name"]),
             row_count=item.get("row_count"),
+            source_prefix=item.get("source_prefix"),
         )
     return tables
 
@@ -382,7 +384,7 @@ def _source_from_local(run_path: str | Path) -> GovernanceSource:
 
 def _list_minio_parquet_objects(source: GovernanceSource, table: BronzeTable) -> list[str]:
     assert source.client is not None and source.bucket is not None and source.prefix is not None
-    prefix = f"{source.prefix}/{table.output_name}/"
+    prefix = table.source_prefix or f"{source.prefix}/{table.output_name}/"
     return sorted(
         item.object_name
         for item in source.client.list_objects(source.bucket, prefix=prefix, recursive=True)

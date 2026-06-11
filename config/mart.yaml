@@ -18,6 +18,11 @@ postgres:
 schemas:
   bronze: "bronze"
   bronze_staging: "bronze_staging"
+  governance: "governance"
+
+governance:
+  enabled: true
+  results_path: "governance/outputs/${RUN_ID}/governance_results.csv"
 
 mart:
   load_mode: "latest_snapshot"

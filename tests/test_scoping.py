@@ -12,7 +12,7 @@ from extractor.bronze import (
     _create_scope,
     _expand_required_scopes,
     _minio_table_success_prefix,
-    _reuse_drourate_from_minio,
+    _reuse_reference_from_minio,
     _run_scope_jobs,
     _scope_date_filter,
     _scope_index_name,
@@ -215,7 +215,7 @@ def test_minio_table_success_prefix_detects_table_folder():
     assert _minio_table_success_prefix(object_name, "cms_cnote") is None
 
 
-def test_reuse_drourate_from_minio_downloads_existing_table():
+def test_reuse_reference_from_minio_downloads_existing_table():
     class Object:
         def __init__(self, object_name):
             self.object_name = object_name
@@ -262,7 +262,7 @@ def test_reuse_drourate_from_minio_downloads_existing_table():
             spec = _spec("CMS_DROURATE")
             table_dir = Path(temp_dir) / "current" / spec.output_name
 
-            result = _reuse_drourate_from_minio(
+            result = _reuse_reference_from_minio(
                 config,
                 Window(date(2026, 5, 1), date(2026, 6, 1)),
                 "R_TEST",
@@ -278,8 +278,26 @@ def test_reuse_drourate_from_minio_downloads_existing_table():
         assert result.table == "CMS_DROURATE"
         assert result.row_count == 12
         assert result.file_count == 1
+        assert result.reused is True
+        assert result.source_prefix == "bronze/jne/old_run/cms_drourate/"
         assert (table_dir / "_SUCCESS").read_text(encoding="ascii") == "12\n"
         assert (table_dir / "part-00001.parquet").read_bytes() == b"parquet-bytes"
+
+
+def test_reuse_reference_from_minio_ignores_operational_tables():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        config = {"minio": {"enabled": False}}
+        result = _reuse_reference_from_minio(
+            config,
+            Window(date(2026, 5, 1), date(2026, 6, 1)),
+            "R_TEST",
+            _spec("CMS_CNOTE"),
+            Path(temp_dir) / "cms_cnote",
+            "2026-06-11",
+            0.0,
+        )
+
+    assert result is None
 
 
 def test_date_guardrail_adds_window_filter_to_scoped_operational_tables():

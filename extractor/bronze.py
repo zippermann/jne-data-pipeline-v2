@@ -921,6 +921,8 @@ class TableResult:
     file_count: int
     size_bytes: int
     elapsed_seconds: float
+    reused: bool = False
+    source_prefix: str | None = None
 
 
 class RunManifest:
@@ -1050,7 +1052,7 @@ def _minio_table_success_prefix(object_name: str, output_name: str) -> str | Non
     return None
 
 
-def _reuse_drourate_from_minio(
+def _reuse_reference_from_minio(
     config: dict,
     window: Window,
     run_id: str,
@@ -1059,7 +1061,7 @@ def _reuse_drourate_from_minio(
     extract_date: str | None,
     start: float,
 ) -> TableResult | None:
-    if spec.table.upper() != "CMS_DROURATE":
+    if spec.stage != Stage.REFERENCE:
         return None
     settings = MinioSettings.from_config(config)
     if not settings.enabled:
@@ -1080,7 +1082,7 @@ def _reuse_drourate_from_minio(
 
     current_prefix = f"{lake_prefix(settings, window, run_id, extract_date)}/{spec.output_name}/"
     source_prefix = next((prefix for prefix in success_prefixes if prefix != current_prefix), success_prefixes[0])
-    logger.info("Reusing %s from existing MinIO object prefix minio://%s/%s", spec.table, settings.bucket, source_prefix)
+    logger.info("Reusing reference table %s from existing MinIO object prefix minio://%s/%s", spec.table, settings.bucket, source_prefix)
 
     _prepare_table_output_dir(table_dir)
     table_dir.mkdir(parents=True, exist_ok=True)
@@ -1110,6 +1112,8 @@ def _reuse_drourate_from_minio(
         file_count=file_count,
         size_bytes=size_bytes,
         elapsed_seconds=time.monotonic() - start,
+        reused=True,
+        source_prefix=source_prefix,
     )
 
 
@@ -1216,7 +1220,7 @@ def extract_table(
     existing_result = _existing_table_result(table_dir, spec, start)
     if existing_result is not None:
         return existing_result
-    minio_reuse = _reuse_drourate_from_minio(config, window, run_id, spec, table_dir, extract_date, start)
+    minio_reuse = _reuse_reference_from_minio(config, window, run_id, spec, table_dir, extract_date, start)
     if minio_reuse is not None:
         return minio_reuse
     _prepare_table_output_dir(table_dir)
@@ -1389,12 +1393,20 @@ def upload_run_to_minio(
         else _run_dir(Path(config["output"]["root"]), window, run_id)
     )
     prefix = lake_prefix(settings, window, run_id, extract_date)
+    reused_outputs = {
+        item["output_name"]
+        for item in manifest.data.get("tables", [])
+        if item.get("stage") == Stage.REFERENCE.value and item.get("reused") is True
+    }
     uploaded_files = 0
     uploaded_bytes = 0
     for path in sorted(run_dir.rglob("*")):
         if not path.is_file():
             continue
         relative = path.relative_to(run_dir).as_posix()
+        output_name = relative.split("/", 1)[0]
+        if output_name in reused_outputs:
+            continue
         object_name = f"{prefix}/{relative}"
         client.fput_object(settings.bucket, object_name, str(path))
         uploaded_files += 1

@@ -71,6 +71,13 @@ class PostgresConfig:
 class SchemaConfig:
     bronze: str
     bronze_staging: str
+    governance: str
+
+
+@dataclass(frozen=True)
+class GovernanceConfig:
+    enabled: bool
+    results_path: Path
 
 
 @dataclass(frozen=True)
@@ -79,6 +86,7 @@ class MartConfig:
     bronze: BronzeConfig
     postgres: PostgresConfig
     schemas: SchemaConfig
+    governance: GovernanceConfig
     parquet_batch_rows: int = 10000
     load_mode: str = "latest_snapshot"
 
@@ -100,6 +108,9 @@ def load_config(path: str | Path = "config/mart.yaml") -> MartConfig:
     postgres = raw.get("postgres", {})
     schemas = raw.get("schemas", {})
     mart = raw.get("mart", {})
+    governance = raw.get("governance", {})
+    run_id = os.getenv("RUN_ID", "")
+    default_governance_path = Path("governance/outputs") / run_id / "governance_results.csv"
 
     config = MartConfig(
         minio=MinioConfig(
@@ -122,6 +133,11 @@ def load_config(path: str | Path = "config/mart.yaml") -> MartConfig:
         schemas=SchemaConfig(
             bronze=schemas.get("bronze", "bronze"),
             bronze_staging=schemas.get("bronze_staging", "bronze_staging"),
+            governance=schemas.get("governance", "governance"),
+        ),
+        governance=GovernanceConfig(
+            enabled=_as_bool(governance.get("enabled", True)),
+            results_path=Path(governance.get("results_path") or default_governance_path),
         ),
         parquet_batch_rows=int(mart.get("parquet_batch_rows", 10000)),
         load_mode=mart.get("load_mode", "latest_snapshot"),
@@ -414,7 +430,11 @@ def _load_manifest_tables(
     loaded = {}
     for table_info in manifest.get("tables", []):
         table_name = table_info["output_name"]
-        prefix = f"{config.bronze.run_prefix}/{table_name}/"
+        if _can_skip_reused_reference(cursor, config, table_info):
+            _log(f"Skipping reused reference table bronze.{table_name}; target table already exists")
+            loaded[table_name] = int(table_info.get("row_count") or 0)
+            continue
+        prefix = table_info.get("source_prefix") or f"{config.bronze.run_prefix}/{table_name}/"
         objects = _list_parquet_objects(client, config.bronze.bucket, prefix)
         expected_rows = table_info.get("row_count")
         _log(
@@ -434,6 +454,27 @@ def _load_manifest_tables(
             commit_callback=commit_callback,
         )
     return loaded
+
+
+def _table_exists(cursor: Any, schema: str, table: str) -> bool:
+    cursor.execute(
+        """
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = %s AND table_name = %s AND table_type = 'BASE TABLE'
+        LIMIT 1
+        """,
+        (schema, table),
+    )
+    return cursor.fetchone() is not None
+
+
+def _can_skip_reused_reference(cursor: Any, config: MartConfig, table_info: dict[str, Any]) -> bool:
+    return (
+        table_info.get("stage") == "reference"
+        and table_info.get("reused") is True
+        and _table_exists(cursor, config.schemas.bronze, table_info["output_name"])
+    )
 
 
 def _staging_tables(cursor: Any, schema: str) -> list[str]:
@@ -457,6 +498,45 @@ def _publish_schema(cursor: Any, staging_schema: str, target_schema: str) -> Non
             f"ALTER TABLE {_qualified(staging_schema, table_name)} "
             f"SET SCHEMA {_quote_ident(target_schema)}"
         )
+
+
+def _read_csv_header(path: Path) -> list[str]:
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        header = handle.readline().rstrip("\n").rstrip("\r")
+    columns = [column.strip() for column in header.split(",") if column.strip()]
+    if not columns:
+        raise ValueError(f"Governance results CSV has no header: {path}")
+    return columns
+
+
+def _load_governance_results(cursor: Any, config: MartConfig) -> int:
+    if not config.governance.enabled:
+        _log("Skipping governance results load because governance.enabled=false")
+        return 0
+
+    path = config.governance.results_path
+    if not path.exists():
+        raise FileNotFoundError(f"Governance results file not found: {path}")
+
+    _drop_schema(cursor, config.schemas.governance)
+    _create_schema(cursor, config.schemas.governance)
+    columns = _read_csv_header(path)
+    column_defs = ", ".join(f"{_quote_ident(column)} TEXT" for column in columns)
+    cursor.execute(
+        f"CREATE TABLE {_qualified(config.schemas.governance, 'governance_results')} "
+        f"({column_defs})"
+    )
+    column_sql = ", ".join(_quote_ident(column) for column in columns)
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        cursor.copy_expert(
+            f"COPY {_qualified(config.schemas.governance, 'governance_results')} ({column_sql}) "
+            "FROM STDIN WITH (FORMAT csv, HEADER true)",
+            handle,
+        )
+    cursor.execute(f"SELECT COUNT(*) FROM {_qualified(config.schemas.governance, 'governance_results')}")
+    row_count = int(cursor.fetchone()[0])
+    _log(f"Loaded {config.schemas.governance}.governance_results: {row_count:,} rows from {path}")
+    return row_count
 
 
 def _insert_load_run(
@@ -493,7 +573,7 @@ def _insert_load_run(
             config.bronze.bucket,
             config.bronze.run_prefix,
             "",
-            "",
+            str(config.governance.results_path) if config.governance.enabled else "",
             table_count,
             row_count,
             status,
@@ -518,6 +598,7 @@ def run(config_path: str = "config/mart.yaml") -> None:
     con = _connect_postgres(config)
     con.autocommit = False
     loaded_tables: dict[str, int] = {}
+    governance_rows = 0
     try:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
@@ -540,6 +621,8 @@ def run(config_path: str = "config/mart.yaml") -> None:
                 _log("Publishing bronze staging tables")
                 _publish_schema(cursor, config.schemas.bronze_staging, config.schemas.bronze)
                 _drop_schema(cursor, config.schemas.bronze_staging)
+                _log("Publishing governance results")
+                governance_rows = _load_governance_results(cursor, config)
                 total_rows = sum(loaded_tables.values())
                 _insert_load_run(
                     cursor,
@@ -574,6 +657,8 @@ def run(config_path: str = "config/mart.yaml") -> None:
     _log("Loaded Postgres mart snapshot:")
     for table, rows in sorted(loaded_tables.items()):
         _log(f"  bronze.{table}: {rows} rows")
+    if config.governance.enabled:
+        _log(f"  {config.schemas.governance}.governance_results: {governance_rows} rows")
 
 
 def main() -> None:
