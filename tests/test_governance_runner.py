@@ -90,3 +90,24 @@ def test_parquet_loader_ignores_missing_requested_columns_for_later_skip():
         {"table": "BASE", "params": {"column": "MISSING", "cnote_column": "CNOTE_NO"}},
         {"BASE": frame},
     ) == ["BASE.MISSING"]
+
+
+def test_parquet_loader_can_stream_distinct_reference_values():
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+    except ModuleNotFoundError:
+        return
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "part-00000.parquet"
+        table = pa.Table.from_pandas(pd.DataFrame({
+            "DROURATE_CODE": ["CGK", "CGK", "SUB"],
+            "DROURATE_SERVICE": ["REG", "REG", "YES"],
+        }))
+        pq.write_table(table, path)
+
+        frame = _read_parquet_files([path], ["DROURATE_CODE", "DROURATE_SERVICE"], distinct=True)
+
+    assert len(frame) == 2
+    assert set(frame["DROURATE_CODE"]) == {"CGK", "SUB"}

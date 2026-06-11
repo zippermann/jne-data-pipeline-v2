@@ -374,7 +374,7 @@ def _list_minio_parquet_objects(source: GovernanceSource, table: BronzeTable) ->
     )
 
 
-def _read_parquet_files(paths: Iterable[Path], columns: list[str]) -> pd.DataFrame:
+def _read_parquet_files(paths: Iterable[Path], columns: list[str], *, distinct: bool = False) -> pd.DataFrame:
     try:
         import pyarrow.parquet as pq
     except ModuleNotFoundError as exc:
@@ -389,14 +389,21 @@ def _read_parquet_files(paths: Iterable[Path], columns: list[str]) -> pd.DataFra
         parquet_file = pq.ParquetFile(path)
         available = set(parquet_file.schema_arrow.names)
         read_columns = [column for column in requested if column in available]
-        if read_columns:
+        if distinct and read_columns:
+            for batch in parquet_file.iter_batches(batch_size=100_000, columns=read_columns):
+                frames.append(batch.to_pandas().drop_duplicates())
+        elif read_columns:
             frame = pq.read_table(path, columns=read_columns).to_pandas()
+            if distinct:
+                frame = frame.drop_duplicates()
         else:
             frame = pd.DataFrame(index=range(parquet_file.metadata.num_rows))
-        frames.append(frame)
+        if not distinct or not read_columns:
+            frames.append(frame)
     if not frames:
         return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True)
+    result = pd.concat(frames, ignore_index=True)
+    return result.drop_duplicates(ignore_index=True) if distinct else result
 
 
 def _load_table_from_minio(source: GovernanceSource, table: BronzeTable, columns: set[str]) -> pd.DataFrame:
@@ -407,13 +414,13 @@ def _load_table_from_minio(source: GovernanceSource, table: BronzeTable, columns
         local_path = source.tmpdir / f"{table.output_name}-{Path(object_name).name}"
         source.client.fget_object(source.bucket, object_name, str(local_path))
         local_paths.append(local_path)
-    return _read_parquet_files(local_paths, sorted(columns))
+    return _read_parquet_files(local_paths, sorted(columns), distinct=table.table == "CMS_DROURATE")
 
 
 def _load_table_from_local(source: GovernanceSource, table: BronzeTable, columns: set[str]) -> pd.DataFrame:
     assert source.run_path is not None
     paths = sorted((source.run_path / table.output_name).glob("part-*.parquet"))
-    return _read_parquet_files(paths, sorted(columns))
+    return _read_parquet_files(paths, sorted(columns), distinct=table.table == "CMS_DROURATE")
 
 
 def _load_bronze_tables(source: GovernanceSource, required_columns: dict[str, set[str]]) -> dict[str, pd.DataFrame]:
