@@ -3052,10 +3052,10 @@ CATALOG: list[dict] = [
         "indicator": "Timestamp",
         "rule_family": "validity_datetime",
         "table": "CMS_APICUST",
-        "params": {"column": "APICUST_CREATE_DATE", "cnote_column": "APICUST_CNOTE_NO"},
+        "params": {"column": "CREATE_DATE", "cnote_column": "APICUST_CNOTE_NO"},
         "impact_billing": "",
         "impact_operational": "",
-        "description": "CMS_APICUST.APICUST_CREATE_DATE must parse as a timestamp",
+        "description": "CMS_APICUST.CREATE_DATE must parse as a timestamp",
     },
     {
         "index_code": "VALD9A11",

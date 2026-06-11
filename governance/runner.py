@@ -383,9 +383,19 @@ def _read_parquet_files(paths: Iterable[Path], columns: list[str]) -> pd.DataFra
             "Install dependencies with `pip install -r requirements.txt` or rebuild the image."
         ) from exc
 
-    frames = [pq.read_table(path, columns=columns).to_pandas() for path in paths]
+    requested = list(dict.fromkeys(columns))
+    frames = []
+    for path in paths:
+        parquet_file = pq.ParquetFile(path)
+        available = set(parquet_file.schema_arrow.names)
+        read_columns = [column for column in requested if column in available]
+        if read_columns:
+            frame = pq.read_table(path, columns=read_columns).to_pandas()
+        else:
+            frame = pd.DataFrame(index=range(parquet_file.metadata.num_rows))
+        frames.append(frame)
     if not frames:
-        return pd.DataFrame(columns=columns)
+        return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)
 
 
@@ -580,7 +590,14 @@ def run(
 
         required_columns = _required_columns(runnable)
         data = _load_bronze_tables(bronze_source, required_columns)
-        _run_entries(runnable, data, skipped, output_dir, strict)
+        available_runnable = []
+        for entry in runnable:
+            missing_columns = _missing_entry_columns(entry, data)
+            if missing_columns:
+                skipped[entry["index_code"]] = "missing bronze column(s): " + ", ".join(missing_columns)
+            else:
+                available_runnable.append(entry)
+        _run_entries(available_runnable, data, skipped, output_dir, strict)
 
 
 def main() -> None:

@@ -1,5 +1,10 @@
+import tempfile
+from pathlib import Path
+
+import pandas as pd
+
 from governance.catalog import CATALOG
-from governance.runner import _entry_tables, _required_tables
+from governance.runner import _entry_tables, _missing_entry_columns, _read_parquet_files, _required_tables
 
 
 def test_required_tables_include_reference_and_master_tables():
@@ -64,3 +69,24 @@ def test_deleted_and_disabled_index_checks_are_not_active():
     assert by_code["INTG1D1"]["enabled"] is False
     assert by_code["INTG1I1"]["enabled"] is False
     assert by_code["INTG1J"]["enabled"] is False
+
+
+def test_parquet_loader_ignores_missing_requested_columns_for_later_skip():
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+    except ModuleNotFoundError:
+        return
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "part-00000.parquet"
+        table = pa.Table.from_pandas(pd.DataFrame({"KNOWN": ["A"], "CNOTE_NO": ["C1"]}))
+        pq.write_table(table, path)
+
+        frame = _read_parquet_files([path], ["KNOWN", "MISSING", "CNOTE_NO"])
+
+    assert list(frame.columns) == ["KNOWN", "CNOTE_NO"]
+    assert _missing_entry_columns(
+        {"table": "BASE", "params": {"column": "MISSING", "cnote_column": "CNOTE_NO"}},
+        {"BASE": frame},
+    ) == ["BASE.MISSING"]
