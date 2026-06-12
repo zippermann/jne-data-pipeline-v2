@@ -1,8 +1,8 @@
 """
 JNE Data Pipeline DAG
 =====================
-Relational Oracle → Parquet bronze extraction, bronze governance checks, and
-Postgres bronze mart loading.
+Relational Oracle → Parquet bronze extraction, bronze governance checks, derived
+CNOTE enrichment, and Postgres mart loading.
 
 Pass {"keep_scope": true} in dag_run.conf to leave Oracle scope tables in place
 for inspection after the run.
@@ -29,7 +29,7 @@ default_args = {
 with DAG(
     "jne_data_pipeline",
     default_args=default_args,
-    description="JNE relational bronze extraction with bronze governance checks",
+    description="JNE relational bronze extraction with governance and derived mart tables",
     schedule_interval=None,
     catchup=False,
     max_active_runs=1,
@@ -72,6 +72,18 @@ with DAG(
         ),
     )
 
+    build_derived = BashOperator(
+        task_id="build_derived",
+        bash_command=(
+            "cd /opt/airflow/project && "
+            f"{run_context}"
+            'python -m transform.build_derived '
+            '--source minio '
+            '--config config/config.yaml '
+            '--bronze-run-prefix "$BRONZE_RUN_PREFIX"'
+        ),
+    )
+
     load_data_mart = BashOperator(
         task_id="load_data_mart",
         bash_command=(
@@ -81,4 +93,4 @@ with DAG(
         ),
     )
 
-    extract_oracle >> run_governance >> load_data_mart
+    extract_oracle >> run_governance >> build_derived >> load_data_mart

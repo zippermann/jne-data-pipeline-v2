@@ -71,6 +71,8 @@ class PostgresConfig:
 class SchemaConfig:
     bronze: str
     bronze_staging: str
+    derived: str
+    derived_staging: str
     governance: str
 
 
@@ -133,6 +135,8 @@ def load_config(path: str | Path = "config/mart.yaml") -> MartConfig:
         schemas=SchemaConfig(
             bronze=schemas.get("bronze", "bronze"),
             bronze_staging=schemas.get("bronze_staging", "bronze_staging"),
+            derived=schemas.get("derived", "derived"),
+            derived_staging=schemas.get("derived_staging", "derived_staging"),
             governance=schemas.get("governance", "governance"),
         ),
         governance=GovernanceConfig(
@@ -419,6 +423,57 @@ def _load_parquet_table(
     return row_count
 
 
+def _table_object_prefix(config: MartConfig, table_info: dict[str, Any], default_parent: str | None = None) -> str:
+    if table_info.get("source_prefix"):
+        return str(table_info["source_prefix"]).rstrip("/") + "/"
+    if table_info.get("output_prefix"):
+        return str(table_info["output_prefix"]).rstrip("/") + "/"
+    output_name = table_info["output_name"]
+    if default_parent:
+        return f"{config.bronze.run_prefix}/{default_parent.strip('/')}/{output_name}/"
+    return f"{config.bronze.run_prefix}/{output_name}/"
+
+
+def _load_table_entries(
+    cursor: Any,
+    client: Any,
+    config: MartConfig,
+    table_entries: Iterable[dict[str, Any]],
+    tmpdir: Path,
+    staging_schema: str,
+    label: str,
+    default_parent: str | None = None,
+    commit_callback: Callable[[], None] | None = None,
+) -> dict[str, int]:
+    loaded = {}
+    for table_info in table_entries:
+        table_name = table_info["output_name"]
+        if _can_skip_reused_reference(cursor, config, table_info):
+            _log(f"Skipping reused reference table bronze.{table_name}; target table already exists")
+            loaded[table_name] = int(table_info.get("row_count") or 0)
+            continue
+        prefix = _table_object_prefix(config, table_info, default_parent=default_parent)
+        objects = _list_parquet_objects(client, config.bronze.bucket, prefix)
+        expected_rows = table_info.get("row_count")
+        _log(
+            f"Loading {label}.{table_name}: {len(objects)} parquet object(s), "
+            f"expected {_format_count(expected_rows)} rows"
+        )
+        loaded[table_name] = _load_parquet_table(
+            cursor,
+            client,
+            config.bronze.bucket,
+            objects,
+            staging_schema,
+            table_name,
+            config.parquet_batch_rows,
+            tmpdir,
+            expected_rows=expected_rows,
+            commit_callback=commit_callback,
+        )
+    return loaded
+
+
 def _load_manifest_tables(
     cursor: Any,
     client: Any,
@@ -427,33 +482,37 @@ def _load_manifest_tables(
     tmpdir: Path,
     commit_callback: Callable[[], None] | None = None,
 ) -> dict[str, int]:
-    loaded = {}
-    for table_info in manifest.get("tables", []):
-        table_name = table_info["output_name"]
-        if _can_skip_reused_reference(cursor, config, table_info):
-            _log(f"Skipping reused reference table bronze.{table_name}; target table already exists")
-            loaded[table_name] = int(table_info.get("row_count") or 0)
-            continue
-        prefix = table_info.get("source_prefix") or f"{config.bronze.run_prefix}/{table_name}/"
-        objects = _list_parquet_objects(client, config.bronze.bucket, prefix)
-        expected_rows = table_info.get("row_count")
-        _log(
-            f"Loading bronze.{table_name}: {len(objects)} parquet object(s), "
-            f"expected {_format_count(expected_rows)} rows"
-        )
-        loaded[table_name] = _load_parquet_table(
-            cursor,
-            client,
-            config.bronze.bucket,
-            objects,
-            config.schemas.bronze_staging,
-            table_name,
-            config.parquet_batch_rows,
-            tmpdir,
-            expected_rows=expected_rows,
-            commit_callback=commit_callback,
-        )
-    return loaded
+    return _load_table_entries(
+        cursor,
+        client,
+        config,
+        manifest.get("tables", []),
+        tmpdir,
+        config.schemas.bronze_staging,
+        "bronze",
+        commit_callback=commit_callback,
+    )
+
+
+def _load_derived_tables(
+    cursor: Any,
+    client: Any,
+    config: MartConfig,
+    manifest: dict[str, Any],
+    tmpdir: Path,
+    commit_callback: Callable[[], None] | None = None,
+) -> dict[str, int]:
+    return _load_table_entries(
+        cursor,
+        client,
+        config,
+        manifest.get("derived", []),
+        tmpdir,
+        config.schemas.derived_staging,
+        "derived",
+        default_parent="derived",
+        commit_callback=commit_callback,
+    )
 
 
 def _table_exists(cursor: Any, schema: str, table: str) -> bool:
@@ -598,12 +657,14 @@ def run(config_path: str = "config/mart.yaml") -> None:
     con = _connect_postgres(config)
     con.autocommit = False
     loaded_tables: dict[str, int] = {}
+    loaded_derived: dict[str, int] = {}
     governance_rows = 0
     try:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
             with con.cursor() as cursor:
                 _drop_schema(cursor, config.schemas.bronze_staging)
+                _drop_schema(cursor, config.schemas.derived_staging)
                 _create_schema(cursor, config.schemas.bronze_staging)
                 con.commit()
                 _log("Prepared bronze staging schema")
@@ -621,14 +682,33 @@ def run(config_path: str = "config/mart.yaml") -> None:
                 _log("Publishing bronze staging tables")
                 _publish_schema(cursor, config.schemas.bronze_staging, config.schemas.bronze)
                 _drop_schema(cursor, config.schemas.bronze_staging)
+
+                if manifest.get("derived"):
+                    _create_schema(cursor, config.schemas.derived_staging)
+                    con.commit()
+                    _log("Prepared derived staging schema")
+                    loaded_derived = _load_derived_tables(
+                        cursor,
+                        client,
+                        config,
+                        manifest,
+                        tmpdir,
+                        commit_callback=con.commit,
+                    )
+                    con.commit()
+                    _log("Publishing derived staging tables")
+                    _drop_schema(cursor, config.schemas.derived)
+                    _publish_schema(cursor, config.schemas.derived_staging, config.schemas.derived)
+                    _drop_schema(cursor, config.schemas.derived_staging)
+
                 _log("Publishing governance results")
                 governance_rows = _load_governance_results(cursor, config)
-                total_rows = sum(loaded_tables.values())
+                total_rows = sum(loaded_tables.values()) + sum(loaded_derived.values())
                 _insert_load_run(
                     cursor,
                     config,
                     manifest,
-                    table_count=len(loaded_tables),
+                    table_count=len(loaded_tables) + len(loaded_derived),
                     row_count=total_rows,
                     status="SUCCESS",
                 )
@@ -642,8 +722,8 @@ def run(config_path: str = "config/mart.yaml") -> None:
                     cursor,
                     config,
                     manifest,
-                    table_count=len(loaded_tables),
-                    row_count=sum(loaded_tables.values()),
+                    table_count=len(loaded_tables) + len(loaded_derived),
+                    row_count=sum(loaded_tables.values()) + sum(loaded_derived.values()),
                     status="FAILED",
                     error_message=str(exc),
                 )
@@ -657,6 +737,8 @@ def run(config_path: str = "config/mart.yaml") -> None:
     _log("Loaded Postgres mart snapshot:")
     for table, rows in sorted(loaded_tables.items()):
         _log(f"  bronze.{table}: {rows} rows")
+    for table, rows in sorted(loaded_derived.items()):
+        _log(f"  {config.schemas.derived}.{table}: {rows} rows")
     if config.governance.enabled:
         _log(f"  {config.schemas.governance}.governance_results: {governance_rows} rows")
 

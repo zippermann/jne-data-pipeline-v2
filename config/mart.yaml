@@ -18,6 +18,8 @@ postgres:
 schemas:
   bronze: "bronze"
   bronze_staging: "bronze_staging"
+  derived: "derived"
+  derived_staging: "derived_staging"
   governance: "governance"
 
 governance:
