@@ -51,6 +51,7 @@ governance:
   results_path: "governance/outputs/${RUN_ID}/governance_results.csv"
 mart:
   load_mode: "latest_snapshot"
+  skip_stages: ["reference"]
   parquet_batch_rows: 123
 """,
         encoding="utf-8",
@@ -62,6 +63,7 @@ mart:
     assert config.postgres.password == "secret"
     assert config.governance.results_path.as_posix() == "governance/outputs/R_TEST/governance_results.csv"
     assert config.schemas.derived == "derived"
+    assert config.skip_stages == ("reference",)
     assert config.parquet_batch_rows == 123
 
 
@@ -227,13 +229,13 @@ def test_run_loads_bronze_and_governance_results(monkeypatch, tmp_path):
         lambda client, loaded_config: {
             "run_id": "R_TEST",
             "tables": [],
-            "derived": [{"output_name": "cnote_enriched", "row_count": 10}],
+            "derived": [{"output_name": "cms_cnote_transformed", "row_count": 10}],
         },
     )
     monkeypatch.setattr("loader.mart_load._connect_postgres", lambda loaded_config: Connection())
     monkeypatch.setattr("loader.mart_load.tempfile.TemporaryDirectory", TemporaryDirectory)
     monkeypatch.setattr("loader.mart_load._load_manifest_tables", lambda *args, **kwargs: {"cms_cnote": 10})
-    monkeypatch.setattr("loader.mart_load._load_derived_tables", lambda *args, **kwargs: {"cnote_enriched": 10})
+    monkeypatch.setattr("loader.mart_load._load_derived_tables", lambda *args, **kwargs: {"cms_cnote_transformed": 10})
 
     run("config/mart.yaml")
 

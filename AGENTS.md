@@ -2,13 +2,14 @@
 
 This repo is intentionally stripped down to the core relational bronze pipeline.
 It does not build the old flat shipment table. The main path extracts Oracle
-source tables separately, writes partitioned Parquet to MinIO, and can load that
-bronze run into a Postgres mart for Tableau or inspection.
+source tables separately, writes partitioned Parquet to MinIO, transforms the
+CNOTE table, and can load the run into Postgres and ClickHouse marts for Tableau
+or inspection.
 
 ## Current Shape
 
 - `extractor/`: Oracle to relational bronze Parquet extraction.
-- `loader/`: MinIO bronze Parquet to Postgres mart loading.
+- `loader/`: MinIO Parquet to Postgres and ClickHouse mart loading.
 - `governance/`: pandas governance runner, executable catalog, and index workbook.
 - `transform/`: derived CNOTE-level enrichment built from bronze Parquet.
 - `pipeline_context.py`: Airflow helper for run prefixes and window labels.
@@ -41,23 +42,29 @@ For a local run directory under `data/bronze/.../run_id=<run_id>/`:
 python -m governance.runner --source local --bronze-run-path data/bronze/.../run_id=<run_id> --output-dir governance/outputs/<run_id>
 ```
 
-Build the first derived CNOTE enrichment:
+Transform the CNOTE table:
 
 ```bash
 BRONZE_RUN_PREFIX=bronze/jne/window_start=YYYY-MM-DD/window_end=YYYY-MM-DD/extract_date=YYYY-MM-DD/run_id=<run_id> \
-python -m transform.build_derived --source minio --config config/config.yaml
+python -m transform.transform_data --source minio --config config/config.yaml
 ```
 
 For a local run directory:
 
 ```bash
-python -m transform.build_derived --source local --bronze-run-path data/bronze/.../run_id=<run_id>
+python -m transform.transform_data --source local --bronze-run-path data/bronze/.../run_id=<run_id>
 ```
 
 Load a bronze run and governance results into Postgres:
 
 ```bash
 python -m loader.mart_load --config config/mart.yaml
+```
+
+Load the same run into ClickHouse:
+
+```bash
+python -m loader.mart_load_clickhouse --config config/mart_clickhouse.yaml
 ```
 
 Derive Airflow context values:
@@ -75,17 +82,20 @@ The DAG id is `jne_data_pipeline`.
 Task order:
 
 ```text
-extract_oracle -> run_governance -> build_derived -> load_data_mart
+extract_oracle -> run_governance -> transform_data -> [load_data_mart_postgres, load_data_mart_clickhouse]
 ```
 
 `extract_oracle` runs `extractor.bronze`.
 `run_governance` runs `governance.runner` against the bronze run manifest.
-`build_derived` runs `transform.build_derived` and appends `derived` metadata to
+`transform_data` runs `transform.transform_data` and appends `derived` metadata to
 the same run manifest.
-`load_data_mart` runs `loader.mart_load`.
+`load_data_mart_postgres` runs `loader.mart_load`.
+`load_data_mart_clickhouse` runs `loader.mart_load_clickhouse`.
 
 Pass `{"keep_scope": true}` in `dag_run.conf` to keep Oracle scope tables for
 manual inspection after extraction.
+Pass `{"load_postgres": false}` or `{"load_clickhouse": false}` to disable one
+mart destination for a single DAG run.
 
 ## Data Flow
 
@@ -106,8 +116,8 @@ Each extracted source table gets its own folder with `part-*.parquet`,
 Reference tables are reusable across runs. When a completed reference table
 already exists in MinIO, extraction records `reused: true` and `source_prefix`
 in the manifest instead of pulling the table from Oracle again.
-The derived step writes `derived/cnote_enriched/part-*.parquet` and records it in
-the manifest's `derived` section.
+The transform step writes `derived/cms_cnote_transformed/part-*.parquet` and
+records it in the manifest's `derived` section.
 
 ## Configuration
 
@@ -125,12 +135,12 @@ Oracle extraction tuning knobs:
 - `scoping.date_guardrail_*`: date guardrails applied to extraction SQL and the
   high-volume DRSHEET/MANIFEST scope queries.
 
-Use `config/mart.yaml` for MinIO input, governance result input, and Postgres
-mart connection settings. The mart loader publishes bronze tables into the
-`bronze` schema, derived tables into the `derived` schema, and replaces the
-`governance` schema with the single `governance_results` table.
-Reused reference tables are not reloaded into Postgres when the target
-`bronze.<table>` already exists.
+Use `config/mart.yaml` for the Postgres mart and `config/mart_clickhouse.yaml`
+for the ClickHouse mart. Both mart loaders publish bronze tables into the
+`bronze` schema/database, derived tables into `derived`, and governance output
+into `governance.governance_results`. Both skip configured stages such as
+`reference` by default so large reference tables like `cms_drourate` are not
+loaded into the marts.
 
 Environment placeholders like `${ORACLE_USER}` are expanded at runtime.
 
@@ -175,7 +185,7 @@ python -m pytest tests
 Useful lightweight checks:
 
 ```bash
-python -m compileall extractor loader governance airflow/dags tests pipeline_context.py
+python -m compileall extractor loader governance transform airflow/dags tests pipeline_context.py
 python -m governance.runner --source synthetic --no-strict --output-dir /tmp/jne-governance-smoke
 ```
 
@@ -187,5 +197,5 @@ python -m governance.runner --source synthetic --no-strict --output-dir /tmp/jne
 - Preserve relational bronze semantics: no dedupe, no joins, no pivoting during
   extraction.
 - Treat MinIO bronze Parquet as the durable data lake artifact.
-- Keep Postgres mart loading bronze-only until governance output loading is
-  intentionally redesigned.
+- Keep mart loaders manifest-driven and avoid loading bulky reference tables by
+  default unless the user explicitly asks for them.

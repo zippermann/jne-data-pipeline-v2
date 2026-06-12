@@ -1,4 +1,4 @@
-"""Build derived CNOTE-level tables from relational bronze.
+"""Transform bronze CNOTE data into analysis-ready derived tables.
 
 This module is the seed of the future cnote_spine. Add future CNOTE-level
 derived columns here instead of creating parallel one-off transforms.
@@ -19,8 +19,8 @@ from typing import Any
 from extractor.bronze import MinioSettings, load_config
 
 
-DERIVED_TABLE = "cnote_enriched"
-DERIVED_SOURCE_TABLE = "CNOTE_ENRICHED"
+DERIVED_TABLE = "cms_cnote_transformed"
+DERIVED_SOURCE_TABLE = "CMS_CNOTE_TRANSFORMED"
 DERIVED_PREFIX = f"derived/{DERIVED_TABLE}/"
 
 
@@ -96,7 +96,7 @@ def _minio_client(settings: MinioSettings):
         from minio import Minio
     except ModuleNotFoundError as exc:
         raise RuntimeError(
-            "minio is required for derived --source minio. Install dependencies "
+            "minio is required for transform --source minio. Install dependencies "
             "with `pip install -r requirements.txt` or rebuild the Airflow image."
         ) from exc
 
@@ -171,7 +171,7 @@ def _derived_prefix(source: DerivedSource) -> str:
     return f"{source.run_prefix}/{DERIVED_PREFIX}"
 
 
-def _build_cnote_enriched_query(cnote_path: str, mfcnote_path: str, manifest_path: str) -> str:
+def _build_cnote_transform_query(cnote_path: str, mfcnote_path: str, manifest_path: str) -> str:
     return f"""
         WITH transit_cnotes AS (
             SELECT DISTINCT mf.MFCNOTE_NO AS cnote_no
@@ -219,7 +219,7 @@ def _classification_matrix(con: Any) -> list[tuple[str, str, int]]:
         for row in con.execute(
             """
             SELECT delivery_type, shipment_scope, count(*) AS cnotes
-            FROM cnote_enriched
+            FROM cms_cnote_transformed
             GROUP BY 1, 2
             ORDER BY 1, 2
             """
@@ -228,11 +228,11 @@ def _classification_matrix(con: Any) -> list[tuple[str, str, int]]:
 
 
 def _log_quality_summary(con: Any, input_rows: int, output_rows: int) -> None:
-    _log(f"cnote_enriched row count: input={input_rows:,}, output={output_rows:,}")
+    _log(f"{DERIVED_TABLE} row count: input={input_rows:,}, output={output_rows:,}")
     if input_rows != output_rows:
-        raise RuntimeError(f"cnote_enriched row count mismatch: input={input_rows:,}, output={output_rows:,}")
+        raise RuntimeError(f"{DERIVED_TABLE} row count mismatch: input={input_rows:,}, output={output_rows:,}")
 
-    _log("cnote_enriched classification matrix:")
+    _log(f"{DERIVED_TABLE} classification matrix:")
     matrix = _classification_matrix(con)
     counts = {(delivery, scope): count for delivery, scope, count in matrix}
     for delivery, scope, count in matrix:
@@ -299,7 +299,7 @@ def _upload_manifest_to_minio(source: DerivedSource, tmpdir: Path) -> None:
     source.client.fput_object(source.bucket, f"{source.run_prefix}/run_manifest.json", str(manifest_path))
 
 
-def build_derived(source: DerivedSource, config: dict, tmpdir: Path | None = None) -> dict[str, Any]:
+def transform_data(source: DerivedSource, config: dict, tmpdir: Path | None = None) -> dict[str, Any]:
     started = time.monotonic()
     con = _duckdb_connection(config)
     if source.settings is not None:
@@ -308,16 +308,16 @@ def build_derived(source: DerivedSource, config: dict, tmpdir: Path | None = Non
     cnote_path = _parquet_glob(source, "CMS_CNOTE")
     mfcnote_path = _parquet_glob(source, "CMS_MFCNOTE")
     manifest_path = _parquet_glob(source, "CMS_MANIFEST")
-    query = _build_cnote_enriched_query(cnote_path, mfcnote_path, manifest_path)
+    query = _build_cnote_transform_query(cnote_path, mfcnote_path, manifest_path)
 
-    con.execute(f"CREATE TEMP VIEW cnote_enriched AS {query}")
+    con.execute(f"CREATE TEMP VIEW {DERIVED_TABLE} AS {query}")
     input_rows = int(con.execute(f"SELECT COUNT(*) FROM read_parquet({_quote_sql(cnote_path)})").fetchone()[0])
-    output_rows = int(con.execute("SELECT COUNT(*) FROM cnote_enriched").fetchone()[0])
+    output_rows = int(con.execute(f"SELECT COUNT(*) FROM {DERIVED_TABLE}").fetchone()[0])
     _log_quality_summary(con, input_rows, output_rows)
 
     if source.run_path is not None:
         output_dir = source.run_path / DERIVED_PREFIX
-        row_count = _copy_to_parquet(con, "SELECT * FROM cnote_enriched", output_dir)
+        row_count = _copy_to_parquet(con, f"SELECT * FROM {DERIVED_TABLE}", output_dir)
         entry = _derived_manifest_entry(row_count, output_dir, source)
         _update_manifest(source.manifest, entry)
         _write_local_manifest(source)
@@ -325,13 +325,13 @@ def build_derived(source: DerivedSource, config: dict, tmpdir: Path | None = Non
         if tmpdir is None:
             raise ValueError("tmpdir is required for minio derived output")
         output_dir = tmpdir / DERIVED_TABLE
-        row_count = _copy_to_parquet(con, "SELECT * FROM cnote_enriched", output_dir)
+        row_count = _copy_to_parquet(con, f"SELECT * FROM {DERIVED_TABLE}", output_dir)
         entry = _derived_manifest_entry(row_count, output_dir, source)
         _update_manifest(source.manifest, entry)
         _upload_derived_to_minio(source, output_dir)
         _upload_manifest_to_minio(source, tmpdir)
 
-    _log(f"Built derived.{DERIVED_TABLE}: {row_count:,} rows in {time.monotonic() - started:.1f}s")
+    _log(f"Transformed derived.{DERIVED_TABLE}: {row_count:,} rows in {time.monotonic() - started:.1f}s")
     return entry
 
 
@@ -346,18 +346,18 @@ def run(
         if bronze_run_path is None:
             raise ValueError("--bronze-run-path is required for transform --source local")
         source = _source_from_local(bronze_run_path)
-        build_derived(source, config)
+        transform_data(source, config)
         return
     if source_name == "minio":
         source = _source_from_minio(config_path, bronze_run_prefix)
         with tempfile.TemporaryDirectory() as tmp:
-            build_derived(source, config, Path(tmp))
+            transform_data(source, config, Path(tmp))
         return
     raise ValueError(f"Unsupported transform source: {source_name}")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build derived JNE tables from a bronze run.")
+    parser = argparse.ArgumentParser(description="Transform JNE bronze tables into derived outputs.")
     parser.add_argument("--config", default="config/config.yaml")
     parser.add_argument("--source", choices=["minio", "local"], default="minio")
     parser.add_argument("--bronze-run-prefix")

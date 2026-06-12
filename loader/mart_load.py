@@ -89,6 +89,7 @@ class MartConfig:
     postgres: PostgresConfig
     schemas: SchemaConfig
     governance: GovernanceConfig
+    skip_stages: tuple[str, ...] = ()
     parquet_batch_rows: int = 10000
     load_mode: str = "latest_snapshot"
 
@@ -143,6 +144,7 @@ def load_config(path: str | Path = "config/mart.yaml") -> MartConfig:
             enabled=_as_bool(governance.get("enabled", True)),
             results_path=Path(governance.get("results_path") or default_governance_path),
         ),
+        skip_stages=tuple(str(stage).lower() for stage in mart.get("skip_stages", [])),
         parquet_batch_rows=int(mart.get("parquet_batch_rows", 10000)),
         load_mode=mart.get("load_mode", "latest_snapshot"),
     )
@@ -448,6 +450,9 @@ def _load_table_entries(
     loaded = {}
     for table_info in table_entries:
         table_name = table_info["output_name"]
+        if str(table_info.get("stage", "")).lower() in config.skip_stages:
+            _log(f"Skipping {label}.{table_name} because stage={table_info.get('stage')} is configured in mart.skip_stages")
+            continue
         if _can_skip_reused_reference(cursor, config, table_info):
             _log(f"Skipping reused reference table bronze.{table_name}; target table already exists")
             loaded[table_name] = int(table_info.get("row_count") or 0)

@@ -1,8 +1,8 @@
 """
 JNE Data Pipeline DAG
 =====================
-Relational Oracle → Parquet bronze extraction, bronze governance checks, derived
-CNOTE enrichment, and Postgres mart loading.
+Relational Oracle → Parquet bronze extraction, bronze governance checks,
+CNOTE transformation, and mart loading.
 
 Pass {"keep_scope": true} in dag_run.conf to leave Oracle scope tables in place
 for inspection after the run.
@@ -72,25 +72,39 @@ with DAG(
         ),
     )
 
-    build_derived = BashOperator(
-        task_id="build_derived",
+    transform_data = BashOperator(
+        task_id="transform_data",
         bash_command=(
             "cd /opt/airflow/project && "
             f"{run_context}"
-            'python -m transform.build_derived '
+            'python -m transform.transform_data '
             '--source minio '
             '--config config/config.yaml '
             '--bronze-run-prefix "$BRONZE_RUN_PREFIX"'
         ),
     )
 
-    load_data_mart = BashOperator(
-        task_id="load_data_mart",
+    load_data_mart_postgres = BashOperator(
+        task_id="load_data_mart_postgres",
         bash_command=(
             "cd /opt/airflow/project && "
             f"{run_context}"
-            "python -m loader.mart_load --config config/mart.yaml"
+            '{{ "python -m loader.mart_load --config config/mart.yaml" '
+            'if dag_run.conf.get("load_postgres", True) else '
+            '"echo Postgres mart load disabled by dag_run.conf" }}'
         ),
     )
 
-    extract_oracle >> run_governance >> build_derived >> load_data_mart
+    load_data_mart_clickhouse = BashOperator(
+        task_id="load_data_mart_clickhouse",
+        bash_command=(
+            "cd /opt/airflow/project && "
+            f"{run_context}"
+            '{{ "python -m loader.mart_load_clickhouse --config config/mart_clickhouse.yaml" '
+            'if dag_run.conf.get("load_clickhouse", True) else '
+            '"echo ClickHouse mart load disabled by dag_run.conf" }}'
+        ),
+    )
+
+    extract_oracle >> run_governance >> transform_data
+    transform_data >> [load_data_mart_postgres, load_data_mart_clickhouse]

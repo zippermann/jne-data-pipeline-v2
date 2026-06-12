@@ -1,6 +1,6 @@
 import json
 
-from transform.build_derived import (
+from transform.transform_data import (
     DERIVED_TABLE,
     _derived_manifest_entry,
     _update_manifest,
@@ -33,12 +33,12 @@ def test_update_manifest_replaces_existing_derived_entry(tmp_path):
 
     assert json.loads(json.dumps(manifest))["derived"] == [
         {
-            "table": "CNOTE_ENRICHED",
+            "table": "CMS_CNOTE_TRANSFORMED",
             "output_name": DERIVED_TABLE,
             "stage": "derived",
             "row_count": 10,
             "file_count": 1,
             "size_bytes": len(b"placeholder"),
-            "source_prefix": "bronze/jne/run_id=R_TEST/derived/cnote_enriched/",
+            "source_prefix": "bronze/jne/run_id=R_TEST/derived/cms_cnote_transformed/",
         }
     ]
