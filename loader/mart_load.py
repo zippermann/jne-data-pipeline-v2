@@ -436,6 +436,17 @@ def _table_object_prefix(config: MartConfig, table_info: dict[str, Any], default
     return f"{config.bronze.run_prefix}/{output_name}/"
 
 
+def _mart_table_name(table_info: dict[str, Any]) -> str:
+    if table_info.get("output_name") == "cms_cnote_transformed":
+        return "cms_cnote"
+    return table_info["output_name"]
+
+
+def _should_skip_bronze_table(table_info: dict[str, Any], config: MartConfig) -> bool:
+    stage = str(table_info.get("stage", "")).lower()
+    return stage in config.skip_stages or table_info.get("output_name") == "cms_cnote"
+
+
 def _load_table_entries(
     cursor: Any,
     client: Any,
@@ -449,9 +460,10 @@ def _load_table_entries(
 ) -> dict[str, int]:
     loaded = {}
     for table_info in table_entries:
-        table_name = table_info["output_name"]
-        if str(table_info.get("stage", "")).lower() in config.skip_stages:
-            _log(f"Skipping {label}.{table_name} because stage={table_info.get('stage')} is configured in mart.skip_stages")
+        source_name = table_info["output_name"]
+        table_name = _mart_table_name(table_info)
+        if label == "bronze" and _should_skip_bronze_table(table_info, config):
+            _log(f"Skipping bronze.{source_name}; mart uses transformed cms_cnote and skips configured stages")
             continue
         if _can_skip_reused_reference(cursor, config, table_info):
             _log(f"Skipping reused reference table bronze.{table_name}; target table already exists")
@@ -513,8 +525,8 @@ def _load_derived_tables(
         config,
         manifest.get("derived", []),
         tmpdir,
-        config.schemas.derived_staging,
-        "derived",
+        config.schemas.bronze_staging,
+        "bronze",
         default_parent="derived",
         commit_callback=commit_callback,
     )
@@ -684,14 +696,8 @@ def run(config_path: str = "config/mart.yaml") -> None:
                 )
                 con.commit()
 
-                _log("Publishing bronze staging tables")
-                _publish_schema(cursor, config.schemas.bronze_staging, config.schemas.bronze)
-                _drop_schema(cursor, config.schemas.bronze_staging)
-
                 if manifest.get("derived"):
-                    _create_schema(cursor, config.schemas.derived_staging)
-                    con.commit()
-                    _log("Prepared derived staging schema")
+                    _log("Loading transformed CNOTE into bronze staging")
                     loaded_derived = _load_derived_tables(
                         cursor,
                         client,
@@ -701,10 +707,11 @@ def run(config_path: str = "config/mart.yaml") -> None:
                         commit_callback=con.commit,
                     )
                     con.commit()
-                    _log("Publishing derived staging tables")
-                    _drop_schema(cursor, config.schemas.derived)
-                    _publish_schema(cursor, config.schemas.derived_staging, config.schemas.derived)
-                    _drop_schema(cursor, config.schemas.derived_staging)
+
+                _log("Publishing bronze staging tables")
+                _publish_schema(cursor, config.schemas.bronze_staging, config.schemas.bronze)
+                _drop_schema(cursor, config.schemas.bronze_staging)
+                _drop_schema(cursor, config.schemas.derived)
 
                 _log("Publishing governance results")
                 governance_rows = _load_governance_results(cursor, config)
@@ -743,7 +750,7 @@ def run(config_path: str = "config/mart.yaml") -> None:
     for table, rows in sorted(loaded_tables.items()):
         _log(f"  bronze.{table}: {rows} rows")
     for table, rows in sorted(loaded_derived.items()):
-        _log(f"  {config.schemas.derived}.{table}: {rows} rows")
+        _log(f"  {config.schemas.bronze}.{table}: {rows} rows (transformed)")
     if config.governance.enabled:
         _log(f"  {config.schemas.governance}.governance_results: {governance_rows} rows")
 

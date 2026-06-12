@@ -136,11 +136,12 @@ Oracle extraction tuning knobs:
   high-volume DRSHEET/MANIFEST scope queries.
 
 Use `config/mart.yaml` for the Postgres mart and `config/mart_clickhouse.yaml`
-for the ClickHouse mart. Both mart loaders publish bronze tables into the
-`bronze` schema/database, derived tables into `derived`, and governance output
-into `governance.governance_results`. Both skip configured stages such as
-`reference` by default so large reference tables like `cms_drourate` are not
-loaded into the marts.
+for the ClickHouse mart. Both mart loaders publish tables into the `bronze`
+schema/database and replace raw `bronze.cms_cnote` with the transformed
+`derived/cms_cnote_transformed` data. Governance output lands in
+`governance.governance_results`. Both skip configured stages such as `reference`
+by default so large reference tables like `cms_drourate` are not loaded into the
+marts.
 
 Environment placeholders like `${ORACLE_USER}` are expanded at runtime.
 

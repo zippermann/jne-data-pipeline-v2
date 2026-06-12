@@ -224,6 +224,17 @@ def _table_object_prefix(config: MartClickHouseConfig, table_info: dict[str, Any
     return f"{config.bronze.run_prefix}/{output_name}/"
 
 
+def _mart_table_name(table_info: dict[str, Any]) -> str:
+    if table_info.get("output_name") == "cms_cnote_transformed":
+        return "cms_cnote"
+    return table_info["output_name"]
+
+
+def _should_skip_bronze_table(table_info: dict[str, Any], config: MartClickHouseConfig) -> bool:
+    stage = str(table_info.get("stage", "")).lower()
+    return stage in config.skip_stages or table_info.get("output_name") == "cms_cnote"
+
+
 def _s3_url(config: MartClickHouseConfig, prefix: str, pattern: str = "part-*.parquet") -> str:
     protocol = "https" if config.minio.secure else "http"
     endpoint = config.minio.endpoint.rstrip("/")
@@ -284,11 +295,12 @@ def _load_s3_table(
     label: str,
     default_parent: str | None = None,
 ) -> int:
-    table_name = table_info["output_name"]
+    source_name = table_info["output_name"]
+    table_name = _mart_table_name(table_info)
     prefix = _table_object_prefix(config, table_info, default_parent=default_parent)
     s3_expr = _s3_table_expr(config, prefix)
     started = time.monotonic()
-    _log(f"Loading ClickHouse {label}.{table_name} from {_s3_url(config, prefix)}")
+    _log(f"Loading ClickHouse {label}.{table_name} from {source_name} at {_s3_url(config, prefix)}")
     _create_empty_table_from_s3(client, schema, table_name, s3_expr)
     _command(client, f"INSERT INTO {_qualified(schema, table_name)} SELECT * FROM {s3_expr}")
     row_count = int(_query_scalar(client, f"SELECT count() FROM {_qualified(schema, table_name)}"))
@@ -309,9 +321,10 @@ def _load_table_entries(
 ) -> dict[str, int]:
     loaded = {}
     for table_info in entries:
-        table_name = table_info["output_name"]
-        if str(table_info.get("stage", "")).lower() in config.skip_stages:
-            _log(f"Skipping ClickHouse {label}.{table_name} because stage={table_info.get('stage')} is configured in mart.skip_stages")
+        source_name = table_info["output_name"]
+        table_name = _mart_table_name(table_info)
+        if label == "bronze" and _should_skip_bronze_table(table_info, config):
+            _log(f"Skipping ClickHouse bronze.{source_name}; mart uses transformed cms_cnote and skips configured stages")
             continue
         loaded[table_name] = _load_s3_table(
             client,
@@ -496,19 +509,18 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
             config.schemas.bronze_staging,
             "bronze",
         )
-        _publish_schema(client, config.schemas.bronze_staging, config.schemas.bronze)
-
         if manifest.get("derived"):
-            _create_database(client, config.schemas.derived_staging)
+            _log("Loading transformed CNOTE into ClickHouse bronze staging")
             loaded_derived = _load_table_entries(
                 client,
                 config,
                 manifest.get("derived", []),
-                config.schemas.derived_staging,
-                "derived",
+                config.schemas.bronze_staging,
+                "bronze",
                 default_parent="derived",
             )
-            _publish_schema(client, config.schemas.derived_staging, config.schemas.derived)
+        _publish_schema(client, config.schemas.bronze_staging, config.schemas.bronze)
+        _drop_database(client, config.schemas.derived)
 
         governance_rows = _load_governance_results(client, config)
         total_rows = sum(loaded_tables.values()) + sum(loaded_derived.values()) + governance_rows

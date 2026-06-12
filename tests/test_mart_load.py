@@ -235,13 +235,12 @@ def test_run_loads_bronze_and_governance_results(monkeypatch, tmp_path):
     monkeypatch.setattr("loader.mart_load._connect_postgres", lambda loaded_config: Connection())
     monkeypatch.setattr("loader.mart_load.tempfile.TemporaryDirectory", TemporaryDirectory)
     monkeypatch.setattr("loader.mart_load._load_manifest_tables", lambda *args, **kwargs: {"cms_cnote": 10})
-    monkeypatch.setattr("loader.mart_load._load_derived_tables", lambda *args, **kwargs: {"cms_cnote_transformed": 10})
+    monkeypatch.setattr("loader.mart_load._load_derived_tables", lambda *args, **kwargs: {"cms_cnote": 10})
 
     run("config/mart.yaml")
 
     joined = "\n".join(statements)
     assert '"bronze_staging"' in joined
-    assert '"derived_staging"' in joined
     assert '"derived"' in joined
     assert '"governance"."governance_results"' in joined
     assert '"governance"."failures"' not in joined

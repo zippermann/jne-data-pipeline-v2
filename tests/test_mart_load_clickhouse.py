@@ -98,20 +98,21 @@ def test_clickhouse_derived_prefix_defaults_under_derived_folder():
     assert prefix == "bronze/jne/run_id=R_TEST/derived/cms_cnote_transformed/"
 
 
-def test_clickhouse_loader_skips_reference_stages(monkeypatch):
+def test_clickhouse_loader_replaces_raw_cnote_with_transformed_cnote(monkeypatch):
     loaded = []
 
     def fake_load(client, config, schema, table_info, label, default_parent=None):
-        loaded.append(table_info["output_name"])
+        loaded.append((table_info["output_name"], default_parent))
         return 12
 
     monkeypatch.setattr("loader.mart_load_clickhouse._load_s3_table", fake_load)
     entries = [
         {"output_name": "cms_cnote", "stage": "anchor", "row_count": 12},
+        {"output_name": "cms_cnote_transformed", "stage": "derived", "row_count": 12},
         {"output_name": "cms_drourate", "stage": "reference", "row_count": 78_000_000},
     ]
 
-    result = _load_table_entries(object(), _config(), entries, "bronze_staging", "bronze")
+    result = _load_table_entries(object(), _config(), entries, "bronze_staging", "bronze", default_parent="derived")
 
     assert result == {"cms_cnote": 12}
-    assert loaded == ["cms_cnote"]
+    assert loaded == [("cms_cnote_transformed", "derived")]
