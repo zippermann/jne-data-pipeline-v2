@@ -9,6 +9,7 @@ around stable boundaries; for now one file is easier to audit.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -133,6 +134,7 @@ class OracleSettings:
     sid: str = ""
     service_name: str = ""
     fetch_arraysize: int = 50000
+    prefetch_rows: int | None = None
 
     @classmethod
     def from_config(cls, config: dict) -> "OracleSettings":
@@ -146,6 +148,7 @@ class OracleSettings:
             password=oracle.get("password", ""),
             source_schema=oracle.get("source_schema", "JNE"),
             fetch_arraysize=int(oracle.get("fetch_arraysize", 50000)),
+            prefetch_rows=int(oracle.get("prefetch_rows", int(oracle.get("fetch_arraysize", 50000)) + 1)),
         )
 
     @property
@@ -216,43 +219,45 @@ class TableSpec:
     stage: Stage
     scope_column: str | None = None
     scope_name: str | None = None
+    date_guard_column: str | None = None
 
 
 TABLE_SPECS: tuple[TableSpec, ...] = (
     TableSpec("CMS_CNOTE", "cms_cnote", Stage.ANCHOR),
     TableSpec("CMS_APICUST", "cms_apicust", Stage.CNOTE, "APICUST_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_CNOTE_AMO", "cms_cnote_amo", Stage.CNOTE, "CNOTE_NO", "CNOTE"),
+    TableSpec("CMS_CNOTE_AMO", "cms_cnote_amo", Stage.CNOTE, "CNOTE_NO", "CNOTE", "CDATE"),
     TableSpec("CMS_DRCNOTE", "cms_drcnote", Stage.CNOTE, "DRCNOTE_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_MRCNOTE", "cms_mrcnote", Stage.CNOTE, "MRCNOTE_NO", "DRCNOTE"),
-    TableSpec("CMS_DHI_HOC", "cms_dhi_hoc", Stage.CNOTE, "DHI_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_MHI_HOC", "cms_mhi_hoc", Stage.CNOTE, "MHI_NO", "DHI_HOC"),
-    TableSpec("CMS_DSTATUS", "cms_dstatus", Stage.CNOTE, "DSTATUS_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_CNOTE_POD", "cms_cnote_pod", Stage.CNOTE, "CNOTE_POD_NO", "CNOTE"),
-    TableSpec("CMS_DHOV_RSHEET", "cms_dhov_rsheet", Stage.CNOTE, "DHOV_RSHEET_CNOTE", "CNOTE"),
-    TableSpec("CMS_DHOUNDEL_POD", "cms_dhoundel_pod", Stage.CNOTE, "DHOUNDEL_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_MHOUNDEL_POD", "cms_mhoundel_pod", Stage.CNOTE, "MHOUNDEL_NO", "DHOUNDEL"),
-    TableSpec("CMS_DRSHEET", "cms_drsheet", Stage.CNOTE, "DRSHEET_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_DRSHEET_PRA", "cms_drsheet_pra", Stage.CNOTE, "DRSHEET_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_DBAG_HO", "cms_dbag_ho", Stage.CNOTE, "DBAG_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_DHOCNOTE", "cms_dhocnote", Stage.CNOTE, "DHOCNOTE_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_DHICNOTE", "cms_dhicnote", Stage.CNOTE, "DHICNOTE_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_COST_DTRANSIT_AGEN", "cms_cost_dtransit_agen", Stage.CNOTE, "CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_MFCNOTE", "cms_mfcnote", Stage.CNOTE, "MFCNOTE_NO", "CNOTE"),
-    TableSpec("CMS_DCORRECT_DEST", "cms_dcorrect_dest", Stage.CNOTE, "DCORRECT_CNOTE_NO", "CNOTE"),
-    TableSpec("CMS_MANIFEST", "cms_manifest", Stage.BAG_MANIFEST, "MANIFEST_NO", "MANIFEST"),
-    TableSpec("CMS_MFBAG", "cms_mfbag", Stage.BAG_MANIFEST, "MFBAG_MAN_NO", "MANIFEST"),
-    TableSpec("CMS_DMBAG", "cms_dmbag", Stage.BAG_MANIFEST, "DMBAG_BAG_NO", "MFBAG"),
-    TableSpec("CMS_MMBAG", "cms_mmbag", Stage.BAG_MANIFEST, "MMBAG_NO", "DMBAG"),
-    TableSpec("CMS_DSMU", "cms_dsmu", Stage.BAG_MANIFEST, "DSMU_BAG_NO", "DMBAG"),
-    TableSpec("CMS_MSMU", "cms_msmu", Stage.BAG_MANIFEST, "MSMU_NO", "SMU"),
-    TableSpec("CMS_COST_MTRANSIT_AGEN", "cms_cost_mtransit_agen", Stage.BAG_MANIFEST, "MANIFEST_NO", "COST_MANIFEST"),
-    TableSpec("CMS_MRSHEET", "cms_mrsheet", Stage.RUNSHEET_DO, "MRSHEET_NO", "DRSHEET"),
-    TableSpec("CMS_MSJ", "cms_msj", Stage.RUNSHEET_DO, "MSJ_NO", "MSJ"),
-    TableSpec("CMS_RDSJ", "cms_rdsj", Stage.RUNSHEET_DO, "RDSJ_HVI_NO", "HVI"),
-    TableSpec("CMS_MHICNOTE", "cms_mhicnote", Stage.RUNSHEET_DO, "MHICNOTE_NO", "HVI"),
-    TableSpec("CMS_MHOCNOTE", "cms_mhocnote", Stage.RUNSHEET_DO, "MHOCNOTE_NO", "HVO"),
-    TableSpec("CMS_DSJ", "cms_dsj", Stage.RUNSHEET_DO, "DSJ_HVO_NO", "RDSJ_HVO"),
+    TableSpec("CMS_MRCNOTE", "cms_mrcnote", Stage.CNOTE, "MRCNOTE_NO", "DRCNOTE", "MRCNOTE_DATE"),
+    TableSpec("CMS_DHI_HOC", "cms_dhi_hoc", Stage.CNOTE, "DHI_CNOTE_NO", "CNOTE", "CDATE"),
+    TableSpec("CMS_MHI_HOC", "cms_mhi_hoc", Stage.CNOTE, "MHI_NO", "DHI_HOC", "MHI_DATE"),
+    TableSpec("CMS_DSTATUS", "cms_dstatus", Stage.CNOTE, "DSTATUS_CNOTE_NO", "CNOTE", "CREATE_DATE"),
+    TableSpec("CMS_CNOTE_POD", "cms_cnote_pod", Stage.CNOTE, "CNOTE_POD_NO", "CNOTE", "CNOTE_POD_DATE"),
+    TableSpec("CMS_DHOV_RSHEET", "cms_dhov_rsheet", Stage.CNOTE, "DHOV_RSHEET_CNOTE", "CNOTE", "CREATE_DATE"),
+    TableSpec("CMS_DHOUNDEL_POD", "cms_dhoundel_pod", Stage.CNOTE, "DHOUNDEL_CNOTE_NO", "CNOTE", "CREATE_DATE"),
+    TableSpec("CMS_MHOUNDEL_POD", "cms_mhoundel_pod", Stage.CNOTE, "MHOUNDEL_NO", "DHOUNDEL", "MHOUNDEL_DATE"),
+    TableSpec("CMS_DRSHEET", "cms_drsheet", Stage.CNOTE, "DRSHEET_CNOTE_NO", "CNOTE", "DRSHEET_DATE"),
+    TableSpec("CMS_DRSHEET_PRA", "cms_drsheet_pra", Stage.CNOTE, "DRSHEET_CNOTE_NO", "CNOTE", "CREATION_DATE"),
+    TableSpec("CMS_DBAG_HO", "cms_dbag_ho", Stage.CNOTE, "DBAG_CNOTE_NO", "CNOTE", "CDATE"),
+    TableSpec("CMS_DHOCNOTE", "cms_dhocnote", Stage.CNOTE, "DHOCNOTE_CNOTE_NO", "CNOTE", "DHOCNOTE_TDATE"),
+    TableSpec("CMS_DHICNOTE", "cms_dhicnote", Stage.CNOTE, "DHICNOTE_CNOTE_NO", "CNOTE", "DHICNOTE_TDATE"),
+    TableSpec("CMS_COST_DTRANSIT_AGEN", "cms_cost_dtransit_agen", Stage.CNOTE, "CNOTE_NO", "CNOTE", "ESB_TIME"),
+    TableSpec("CMS_MFCNOTE", "cms_mfcnote", Stage.CNOTE, "MFCNOTE_NO", "CNOTE", "MFCNOTE_CRDATE"),
+    TableSpec("CMS_DCORRECT_DEST", "cms_dcorrect_dest", Stage.CNOTE, "DCORRECT_CNOTE_NO", "CNOTE", "DCORRECT_CDATE"),
+    TableSpec("CMS_MANIFEST", "cms_manifest", Stage.BAG_MANIFEST, "MANIFEST_NO", "MANIFEST", "MANIFEST_DATE"),
+    TableSpec("CMS_MFBAG", "cms_mfbag", Stage.BAG_MANIFEST, "MFBAG_MAN_NO", "MANIFEST", "MFBAG_CRDATE"),
+    TableSpec("CMS_DMBAG", "cms_dmbag", Stage.BAG_MANIFEST, "DMBAG_BAG_NO", "MFBAG", "ESB_TIME"),
+    TableSpec("CMS_MMBAG", "cms_mmbag", Stage.BAG_MANIFEST, "MMBAG_NO", "DMBAG", "MMBAG_DATE"),
+    TableSpec("CMS_DSMU", "cms_dsmu", Stage.BAG_MANIFEST, "DSMU_BAG_NO", "DMBAG", "ESB_TIME"),
+    TableSpec("CMS_MSMU", "cms_msmu", Stage.BAG_MANIFEST, "MSMU_NO", "SMU", "MSMU_DATE"),
+    TableSpec("CMS_COST_MTRANSIT_AGEN", "cms_cost_mtransit_agen", Stage.BAG_MANIFEST, "MANIFEST_NO", "COST_MANIFEST", "MANIFEST_DATE"),
+    TableSpec("CMS_MRSHEET", "cms_mrsheet", Stage.RUNSHEET_DO, "MRSHEET_NO", "DRSHEET", "MRSHEET_DATE"),
+    TableSpec("CMS_MSJ", "cms_msj", Stage.RUNSHEET_DO, "MSJ_NO", "MSJ", "MSJ_DATE"),
+    TableSpec("CMS_RDSJ", "cms_rdsj", Stage.RUNSHEET_DO, "RDSJ_HVI_NO", "HVI", "RDSJ_CDATE"),
+    TableSpec("CMS_MHICNOTE", "cms_mhicnote", Stage.RUNSHEET_DO, "MHICNOTE_NO", "HVI", "MHICNOTE_DATE"),
+    TableSpec("CMS_MHOCNOTE", "cms_mhocnote", Stage.RUNSHEET_DO, "MHOCNOTE_NO", "HVO", "MHOCNOTE_DATE"),
+    TableSpec("CMS_DSJ", "cms_dsj", Stage.RUNSHEET_DO, "DSJ_HVO_NO", "RDSJ_HVO", "DSJ_CDATE"),
     TableSpec("CMS_DROURATE", "cms_drourate", Stage.REFERENCE),
+    TableSpec("ORA_BRANCH", "ora_branch", Stage.REFERENCE),
     TableSpec("ORA_ZONE", "ora_zone", Stage.REFERENCE),
     TableSpec("ORA_USER", "ora_user", Stage.REFERENCE),
     TableSpec("T_MDT_CITY_ORIGIN", "t_mdt_city_origin", Stage.REFERENCE),
@@ -338,19 +343,179 @@ def _drop_table(conn: Any, table_name: str) -> None:
         )
 
 
-def _create_scope(conn: Any, table_name: str, key_column: str, query: str, binds: dict) -> int:
+def _parallel_hint(degree: int | None) -> str:
+    if not degree or degree <= 1:
+        return ""
+    return f"/*+ PARALLEL({degree}) */ "
+
+
+def _create_scope(
+    conn: Any,
+    table_name: str,
+    key_column: str,
+    query: str,
+    binds: dict,
+    ctas_parallel_degree: int = 1,
+) -> int:
     _drop_table(conn, table_name)
     with conn.cursor() as cursor:
         cursor.execute(
             f"CREATE TABLE {table_name} NOLOGGING AS\n"
-            f"SELECT DISTINCT {key_column} FROM (\n{query}\n) WHERE {key_column} IS NOT NULL",
+            f"SELECT {_parallel_hint(ctas_parallel_degree)}DISTINCT {key_column} FROM (\n{query}\n) WHERE {key_column} IS NOT NULL",
             binds,
         )
-        cursor.execute(f"CREATE INDEX IDX_{table_name.split('.')[-1][:24]} ON {table_name} ({key_column})")
+        cursor.execute(f"CREATE INDEX {_scope_index_name(table_name)} ON {table_name} ({key_column})")
         cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
         count = cursor.fetchone()[0]
     conn.commit()
     return count
+
+
+def _scope_index_name(table_name: str) -> str:
+    suffix = table_name.split(".")[-1].upper()
+    digest = hashlib.sha1(suffix.encode("utf-8")).hexdigest()[:6].upper()
+    return f"IDX_{suffix[:19]}_{digest}"
+
+
+def _cnote_limit(config: dict) -> int | None:
+    raw_limit = config.get("extraction", {}).get("cnote_limit")
+    if raw_limit in (None, ""):
+        return None
+    limit = int(raw_limit)
+    if limit <= 0:
+        raise ValueError("extraction.cnote_limit must be greater than zero when set")
+    return limit
+
+
+def _scope_date_filter(alias: str, column: str, window: Window, lookback_days: int, lookahead_days: int) -> str:
+    return (
+        f"{alias}.{column} >= DATE '{window.start_label}' - {lookback_days} "
+        f"AND {alias}.{column} < DATE '{window.end_label}' + {lookahead_days}"
+    )
+
+
+def _scope_join_query(
+    source_table: str,
+    source_alias: str,
+    output_expr: str,
+    scope_table: str,
+    scope_alias: str,
+    source_key: str,
+    scope_key: str,
+    date_filter: str | None = None,
+) -> str:
+    where_sql = f"\n            WHERE {date_filter}" if date_filter else ""
+    return f"""
+            SELECT /*+ LEADING({scope_alias} {source_alias}) USE_HASH({source_alias}) */ {output_expr}
+            FROM {scope_table} {scope_alias}
+            JOIN {source_table} {source_alias}
+              ON {source_alias}.{source_key} = {scope_alias}.{scope_key}{where_sql}
+            """
+
+
+def _scope_dependencies() -> dict[str, set[str]]:
+    return {
+        "DRCNOTE": {"CNOTE"},
+        "DHI_HOC": {"CNOTE"},
+        "DHOUNDEL": {"CNOTE"},
+        "DRSHEET": {"CNOTE"},
+        "MANIFEST": {"CNOTE"},
+        "MFBAG": {"MANIFEST"},
+        "DMBAG": {"MFBAG"},
+        "SMU": {"DMBAG"},
+        "MMBAG": {"DMBAG"},
+        "COST_MANIFEST": {"CNOTE"},
+        "HVI": {"CNOTE"},
+        "HVO": {"CNOTE"},
+        "RDSJ_HVO": {"HVI"},
+        "MSJ": {"RDSJ_HVO"},
+    }
+
+
+@dataclass(frozen=True)
+class ScopeJob:
+    name: str
+    table_name: str
+    key_column: str
+    query: str
+
+
+def _run_scope_job(
+    job: ScopeJob,
+    conn: Any,
+    ctas_parallel_degree: int,
+) -> tuple[str, int]:
+    logger.info("Creating Oracle scope %s", job.name)
+    count = _create_scope(
+        conn,
+        job.table_name,
+        job.key_column,
+        job.query,
+        {},
+        ctas_parallel_degree,
+    )
+    logger.info("Oracle scope %s: %s rows", job.name, f"{count:,}")
+    return job.name, count
+
+
+def _run_scope_job_with_new_connection(
+    job: ScopeJob,
+    oracle_settings: OracleSettings,
+    ctas_parallel_degree: int,
+) -> tuple[str, int]:
+    with connect(oracle_settings) as conn:
+        return _run_scope_job(job, conn, ctas_parallel_degree)
+
+
+def _run_scope_jobs(
+    jobs: dict[str, ScopeJob],
+    conn: Any,
+    oracle_settings: OracleSettings | None,
+    ctas_parallel_degree: int,
+    scope_workers: int,
+    existing_counts: dict[str, int] | None = None,
+) -> dict[str, int]:
+    counts: dict[str, int] = dict(existing_counts or {})
+    created_counts: dict[str, int] = {}
+    dependencies = _scope_dependencies()
+    pending = set(jobs)
+    scope_workers = max(scope_workers, 1)
+    if scope_workers > 1 and oracle_settings is None:
+        logger.warning("scope_workers=%s requested but oracle_settings was not provided; running scopes sequentially", scope_workers)
+        scope_workers = 1
+
+    while pending:
+        ready = sorted(
+            name
+            for name in pending
+            if dependencies.get(name, set()) <= set(counts)
+        )
+        if not ready:
+            raise RuntimeError(f"Scope dependency cycle or missing parent for: {sorted(pending)}")
+
+        wave = ready[:scope_workers]
+        logger.info("Creating Oracle scope wave: %s", ", ".join(wave))
+        if scope_workers == 1:
+            name, count = _run_scope_job(jobs[wave[0]], conn, ctas_parallel_degree)
+            counts[name] = count
+            created_counts[name] = count
+        else:
+            with ThreadPoolExecutor(max_workers=min(scope_workers, len(wave))) as executor:
+                futures = {
+                    executor.submit(
+                        _run_scope_job_with_new_connection,
+                        jobs[name],
+                        oracle_settings,
+                        ctas_parallel_degree,
+                    ): name
+                    for name in wave
+                }
+                for future in as_completed(futures):
+                    name, count = future.result()
+                    counts[name] = count
+                    created_counts[name] = count
+        pending.difference_update(wave)
+    return created_counts
 
 
 def materialize_scope_tables(
@@ -359,7 +524,13 @@ def materialize_scope_tables(
     window: Window,
     anchor_table: str,
     anchor_date_column: str,
+    cnote_limit: int | None = None,
     required_scopes: set[str] | None = None,
+    oracle_settings: OracleSettings | None = None,
+    date_guard_lookback_days: int = 0,
+    date_guard_lookahead_days: int = 30,
+    ctas_parallel_degree: int = 1,
+    scope_workers: int = 1,
 ) -> dict[str, int]:
     required_scopes = _expand_required_scopes(required_scopes or _all_scope_names())
     if not required_scopes:
@@ -371,234 +542,147 @@ def materialize_scope_tables(
     start_literal = f"DATE '{window.start_label}'"
     end_literal = f"DATE '{window.end_label}'"
     counts = {}
+    ctas_parallel_degree = max(int(ctas_parallel_degree), 1)
     if "CNOTE" in required_scopes:
+        cnote_query = f"""
+            SELECT CNOTE_NO
+            FROM {src}.{anchor_table}
+            WHERE {anchor_date_column} >= {start_literal}
+              AND {anchor_date_column} < {end_literal}
+            ORDER BY {anchor_date_column}, CNOTE_NO
+            """
+        if cnote_limit is not None:
+            cnote_query = f"""
+            SELECT CNOTE_NO
+            FROM (
+{cnote_query}
+            )
+            WHERE ROWNUM <= {cnote_limit}
+            """
         logger.info("Creating Oracle scope CNOTE")
         counts["CNOTE"] = _create_scope(
             conn,
             cnote_scope,
             "CNOTE_NO",
-            f"""
-            SELECT CNOTE_NO
-            FROM {src}.{anchor_table}
-            WHERE {anchor_date_column} >= {start_literal}
-              AND {anchor_date_column} < {end_literal}
-            """,
+            cnote_query,
             {},
+            ctas_parallel_degree,
         )
         logger.info("Oracle scope CNOTE: %s rows", f"{counts['CNOTE']:,}")
 
-    if "DRCNOTE" in required_scopes:
-        logger.info("Creating Oracle scope DRCNOTE")
-        counts["DRCNOTE"] = _create_scope(
-            conn,
+    jobs = {
+        "DRCNOTE": ScopeJob(
+            "DRCNOTE",
             settings.table("DRCNOTE"),
             "DRCNOTE_NO",
-            f"""
-            SELECT DRCNOTE_NO
-            FROM {src}.CMS_DRCNOTE
-            WHERE DRCNOTE_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-            """,
-            {},
-        )
-        logger.info("Oracle scope DRCNOTE: %s rows", f"{counts['DRCNOTE']:,}")
-
-    if "DHI_HOC" in required_scopes:
-        logger.info("Creating Oracle scope DHI_HOC")
-        counts["DHI_HOC"] = _create_scope(
-            conn,
+            _scope_join_query(f"{src}.CMS_DRCNOTE", "src", "src.DRCNOTE_NO", cnote_scope, "scope", "DRCNOTE_CNOTE_NO", "CNOTE_NO"),
+        ),
+        "DHI_HOC": ScopeJob(
+            "DHI_HOC",
             settings.table("DHI_HOC"),
             "DHI_NO",
-            f"""
-            SELECT DHI_NO
-            FROM {src}.CMS_DHI_HOC
-            WHERE DHI_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-            """,
-            {},
-        )
-        logger.info("Oracle scope DHI_HOC: %s rows", f"{counts['DHI_HOC']:,}")
-
-    if "DHOUNDEL" in required_scopes:
-        logger.info("Creating Oracle scope DHOUNDEL")
-        counts["DHOUNDEL"] = _create_scope(
-            conn,
+            _scope_join_query(f"{src}.CMS_DHI_HOC", "src", "src.DHI_NO", cnote_scope, "scope", "DHI_CNOTE_NO", "CNOTE_NO"),
+        ),
+        "DHOUNDEL": ScopeJob(
+            "DHOUNDEL",
             settings.table("DHOUNDEL"),
             "DHOUNDEL_NO",
-            f"""
-            SELECT DHOUNDEL_NO
-            FROM {src}.CMS_DHOUNDEL_POD
-            WHERE DHOUNDEL_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-            """,
-            {},
-        )
-        logger.info("Oracle scope DHOUNDEL: %s rows", f"{counts['DHOUNDEL']:,}")
-
-    if "DRSHEET" in required_scopes:
-        logger.info("Creating Oracle scope DRSHEET")
-        counts["DRSHEET"] = _create_scope(
-            conn,
+            _scope_join_query(f"{src}.CMS_DHOUNDEL_POD", "src", "src.DHOUNDEL_NO", cnote_scope, "scope", "DHOUNDEL_CNOTE_NO", "CNOTE_NO"),
+        ),
+        "DRSHEET": ScopeJob(
+            "DRSHEET",
             settings.table("DRSHEET"),
             "DRSHEET_NO",
-            f"""
-            SELECT DRSHEET_NO
-            FROM {src}.CMS_DRSHEET
-            WHERE DRSHEET_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-            """,
-            {},
-        )
-        logger.info("Oracle scope DRSHEET: %s rows", f"{counts['DRSHEET']:,}")
-
-    if "MANIFEST" in required_scopes:
-        logger.info("Creating Oracle scope MANIFEST")
-        counts["MANIFEST"] = _create_scope(
-            conn,
+            _scope_join_query(
+                f"{src}.CMS_DRSHEET",
+                "src",
+                "src.DRSHEET_NO",
+                cnote_scope,
+                "scope",
+                "DRSHEET_CNOTE_NO",
+                "CNOTE_NO",
+                _scope_date_filter("src", "DRSHEET_DATE", window, date_guard_lookback_days, date_guard_lookahead_days),
+            ),
+        ),
+        "MANIFEST": ScopeJob(
+            "MANIFEST",
             settings.table("MANIFEST"),
             "MANIFEST_NO",
-            f"""
-            SELECT MFCNOTE_MAN_NO AS MANIFEST_NO
-            FROM {src}.CMS_MFCNOTE
-            WHERE MFCNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-            """,
-            {},
-        )
-        logger.info("Oracle scope MANIFEST: %s rows", f"{counts['MANIFEST']:,}")
-
-    if "MFBAG" in required_scopes:
-        logger.info("Creating Oracle scope MFBAG")
-        counts["MFBAG"] = _create_scope(
-            conn,
+            _scope_join_query(
+                f"{src}.CMS_MFCNOTE",
+                "src",
+                "src.MFCNOTE_MAN_NO AS MANIFEST_NO",
+                cnote_scope,
+                "scope",
+                "MFCNOTE_NO",
+                "CNOTE_NO",
+                _scope_date_filter("src", "MFCNOTE_CRDATE", window, date_guard_lookback_days, date_guard_lookahead_days),
+            ),
+        ),
+        "MFBAG": ScopeJob(
+            "MFBAG",
             settings.table("MFBAG"),
             "MFBAG_NO",
             f"""
-            SELECT MFCNOTE_BAG_NO AS MFBAG_NO
-            FROM {src}.CMS_MFCNOTE
-            WHERE MFCNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
+            {_scope_join_query(f"{src}.CMS_MFCNOTE", "src", "src.MFCNOTE_BAG_NO AS MFBAG_NO", cnote_scope, "scope", "MFCNOTE_NO", "CNOTE_NO", _scope_date_filter("src", "MFCNOTE_CRDATE", window, date_guard_lookback_days, date_guard_lookahead_days))}
             UNION
-            SELECT MFBAG_NO
-            FROM {src}.CMS_MFBAG
-            WHERE MFBAG_MAN_NO IN (SELECT MANIFEST_NO FROM {settings.table("MANIFEST")})
+            {_scope_join_query(f"{src}.CMS_MFBAG", "src", "src.MFBAG_NO", settings.table("MANIFEST"), "scope", "MFBAG_MAN_NO", "MANIFEST_NO")}
             """,
-            {},
-        )
-        logger.info("Oracle scope MFBAG: %s rows", f"{counts['MFBAG']:,}")
-
-    if "DMBAG" in required_scopes:
-        logger.info("Creating Oracle scope DMBAG")
-        counts["DMBAG"] = _create_scope(
-            conn,
+        ),
+        "DMBAG": ScopeJob(
+            "DMBAG",
             settings.table("DMBAG"),
             "DMBAG_NO",
-            f"""
-            SELECT DMBAG_NO
-            FROM {src}.CMS_DMBAG
-            WHERE DMBAG_BAG_NO IN (SELECT MFBAG_NO FROM {settings.table("MFBAG")})
-            """,
-            {},
-        )
-        logger.info("Oracle scope DMBAG: %s rows", f"{counts['DMBAG']:,}")
-
-    if "SMU" in required_scopes:
-        logger.info("Creating Oracle scope SMU")
-        counts["SMU"] = _create_scope(
-            conn,
+            _scope_join_query(f"{src}.CMS_DMBAG", "src", "src.DMBAG_NO", settings.table("MFBAG"), "scope", "DMBAG_BAG_NO", "MFBAG_NO"),
+        ),
+        "SMU": ScopeJob(
+            "SMU",
             settings.table("SMU"),
             "SMU_NO",
-            f"""
-            SELECT DSMU_NO AS SMU_NO
-            FROM {src}.CMS_DSMU
-            WHERE DSMU_BAG_NO IN (SELECT DMBAG_NO FROM {settings.table("DMBAG")})
-            """,
-            {},
-        )
-        logger.info("Oracle scope SMU: %s rows", f"{counts['SMU']:,}")
-
-    if "MMBAG" in required_scopes:
-        logger.info("Creating Oracle scope MMBAG")
-        counts["MMBAG"] = _create_scope(
-            conn,
+            _scope_join_query(f"{src}.CMS_DSMU", "src", "src.DSMU_NO AS SMU_NO", settings.table("DMBAG"), "scope", "DSMU_BAG_NO", "DMBAG_NO"),
+        ),
+        "MMBAG": ScopeJob(
+            "MMBAG",
             settings.table("MMBAG"),
             "MMBAG_NO",
             f"""
             SELECT DMBAG_NO AS MMBAG_NO
             FROM {settings.table("DMBAG")}
             """,
-            {},
-        )
-        logger.info("Oracle scope MMBAG: %s rows", f"{counts['MMBAG']:,}")
-
-    if "COST_MANIFEST" in required_scopes:
-        logger.info("Creating Oracle scope COST_MANIFEST")
-        counts["COST_MANIFEST"] = _create_scope(
-            conn,
+        ),
+        "COST_MANIFEST": ScopeJob(
+            "COST_MANIFEST",
             settings.table("COST_MANIFEST"),
             "MANIFEST_NO",
-            f"""
-            SELECT DMANIFEST_NO AS MANIFEST_NO
-            FROM {src}.CMS_COST_DTRANSIT_AGEN
-            WHERE CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-            """,
-            {},
-        )
-        logger.info("Oracle scope COST_MANIFEST: %s rows", f"{counts['COST_MANIFEST']:,}")
-
-    if "HVI" in required_scopes:
-        logger.info("Creating Oracle scope HVI")
-        counts["HVI"] = _create_scope(
-            conn,
+            _scope_join_query(f"{src}.CMS_COST_DTRANSIT_AGEN", "src", "src.DMANIFEST_NO AS MANIFEST_NO", cnote_scope, "scope", "CNOTE_NO", "CNOTE_NO"),
+        ),
+        "HVI": ScopeJob(
+            "HVI",
             settings.table("HVI"),
             "HVI_NO",
-            f"""
-            SELECT DHICNOTE_NO AS HVI_NO
-            FROM {src}.CMS_DHICNOTE
-            WHERE DHICNOTE_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-            """,
-            {},
-        )
-        logger.info("Oracle scope HVI: %s rows", f"{counts['HVI']:,}")
-
-    if "HVO" in required_scopes:
-        logger.info("Creating Oracle scope HVO")
-        counts["HVO"] = _create_scope(
-            conn,
+            _scope_join_query(f"{src}.CMS_DHICNOTE", "src", "src.DHICNOTE_NO AS HVI_NO", cnote_scope, "scope", "DHICNOTE_CNOTE_NO", "CNOTE_NO"),
+        ),
+        "HVO": ScopeJob(
+            "HVO",
             settings.table("HVO"),
             "HVO_NO",
-            f"""
-            SELECT DHOCNOTE_NO AS HVO_NO
-            FROM {src}.CMS_DHOCNOTE
-            WHERE DHOCNOTE_CNOTE_NO IN (SELECT CNOTE_NO FROM {cnote_scope})
-            """,
-            {},
-        )
-        logger.info("Oracle scope HVO: %s rows", f"{counts['HVO']:,}")
-
-    if "RDSJ_HVO" in required_scopes:
-        logger.info("Creating Oracle scope RDSJ_HVO")
-        counts["RDSJ_HVO"] = _create_scope(
-            conn,
+            _scope_join_query(f"{src}.CMS_DHOCNOTE", "src", "src.DHOCNOTE_NO AS HVO_NO", cnote_scope, "scope", "DHOCNOTE_CNOTE_NO", "CNOTE_NO"),
+        ),
+        "RDSJ_HVO": ScopeJob(
+            "RDSJ_HVO",
             settings.table("RDSJ_HVO"),
             "HVO_NO",
-            f"""
-            SELECT RDSJ_HVO_NO AS HVO_NO
-            FROM {src}.CMS_RDSJ
-            WHERE RDSJ_HVI_NO IN (SELECT HVI_NO FROM {settings.table("HVI")})
-            """,
-            {},
-        )
-        logger.info("Oracle scope RDSJ_HVO: %s rows", f"{counts['RDSJ_HVO']:,}")
-
-    if "MSJ" in required_scopes:
-        logger.info("Creating Oracle scope MSJ")
-        counts["MSJ"] = _create_scope(
-            conn,
+            _scope_join_query(f"{src}.CMS_RDSJ", "src", "src.RDSJ_HVO_NO AS HVO_NO", settings.table("HVI"), "scope", "RDSJ_HVI_NO", "HVI_NO"),
+        ),
+        "MSJ": ScopeJob(
+            "MSJ",
             settings.table("MSJ"),
             "MSJ_NO",
-            f"""
-            SELECT DSJ_NO AS MSJ_NO
-            FROM {src}.CMS_DSJ
-            WHERE DSJ_HVO_NO IN (SELECT HVO_NO FROM {settings.table("RDSJ_HVO")})
-            """,
-            {},
-        )
-        logger.info("Oracle scope MSJ: %s rows", f"{counts['MSJ']:,}")
+            _scope_join_query(f"{src}.CMS_DSJ", "src", "src.DSJ_NO AS MSJ_NO", settings.table("RDSJ_HVO"), "scope", "DSJ_HVO_NO", "HVO_NO"),
+        ),
+    }
+    selected_jobs = {name: job for name, job in jobs.items() if name in required_scopes}
+    counts.update(_run_scope_jobs(selected_jobs, conn, oracle_settings, ctas_parallel_degree, scope_workers, counts))
     return counts
 
 
@@ -642,22 +726,7 @@ def _all_scope_names() -> set[str]:
 
 
 def _expand_required_scopes(scopes: set[str]) -> set[str]:
-    dependencies = {
-        "DRCNOTE": {"CNOTE"},
-        "DHI_HOC": {"CNOTE"},
-        "DHOUNDEL": {"CNOTE"},
-        "DRSHEET": {"CNOTE"},
-        "MANIFEST": {"CNOTE"},
-        "MFBAG": {"MANIFEST"},
-        "DMBAG": {"MFBAG"},
-        "SMU": {"DMBAG"},
-        "MMBAG": {"DMBAG"},
-        "COST_MANIFEST": {"CNOTE"},
-        "HVI": {"CNOTE"},
-        "HVO": {"CNOTE"},
-        "RDSJ_HVO": {"HVI"},
-        "MSJ": {"RDSJ_HVO"},
-    }
+    dependencies = _scope_dependencies()
     expanded = {scope.upper() for scope in scopes}
     changed = True
     while changed:
@@ -852,6 +921,8 @@ class TableResult:
     file_count: int
     size_bytes: int
     elapsed_seconds: float
+    reused: bool = False
+    source_prefix: str | None = None
 
 
 class RunManifest:
@@ -974,6 +1045,78 @@ def _existing_table_result(table_dir: Path, spec: TableSpec, start: float) -> Ta
     )
 
 
+def _minio_table_success_prefix(object_name: str, output_name: str) -> str | None:
+    marker = f"/{output_name}/_SUCCESS"
+    if object_name.endswith(marker):
+        return object_name[: -len("_SUCCESS")]
+    return None
+
+
+def _reuse_reference_from_minio(
+    config: dict,
+    window: Window,
+    run_id: str,
+    spec: TableSpec,
+    table_dir: Path,
+    extract_date: str | None,
+    start: float,
+) -> TableResult | None:
+    if spec.stage != Stage.REFERENCE:
+        return None
+    settings = MinioSettings.from_config(config)
+    if not settings.enabled:
+        return None
+
+    client = _minio_client(settings)
+    if not client.bucket_exists(settings.bucket):
+        return None
+
+    scan_prefix = settings.prefix.strip("/")
+    success_prefixes = []
+    for obj in client.list_objects(settings.bucket, prefix=scan_prefix, recursive=True):
+        table_prefix = _minio_table_success_prefix(obj.object_name, spec.output_name)
+        if table_prefix:
+            success_prefixes.append(table_prefix)
+    if not success_prefixes:
+        return None
+
+    current_prefix = f"{lake_prefix(settings, window, run_id, extract_date)}/{spec.output_name}/"
+    source_prefix = next((prefix for prefix in success_prefixes if prefix != current_prefix), success_prefixes[0])
+    logger.info("Reusing reference table %s from existing MinIO object prefix minio://%s/%s", spec.table, settings.bucket, source_prefix)
+
+    _prepare_table_output_dir(table_dir)
+    table_dir.mkdir(parents=True, exist_ok=True)
+    file_count = 0
+    size_bytes = 0
+    for obj in client.list_objects(settings.bucket, prefix=source_prefix, recursive=True):
+        relative = obj.object_name[len(source_prefix):]
+        if not relative:
+            continue
+        target = table_dir / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        client.fget_object(settings.bucket, obj.object_name, str(target))
+        if target.name == "_SUCCESS":
+            continue
+        if target.suffix == ".parquet":
+            file_count += 1
+            size_bytes += target.stat().st_size
+
+    existing_result = _existing_table_result(table_dir, spec, start)
+    if existing_result is None:
+        raise RuntimeError(f"Could not reuse {spec.table} from MinIO prefix {source_prefix}: downloaded table is incomplete")
+    return TableResult(
+        table=existing_result.table,
+        output_name=existing_result.output_name,
+        stage=existing_result.stage,
+        row_count=existing_result.row_count,
+        file_count=file_count,
+        size_bytes=size_bytes,
+        elapsed_seconds=time.monotonic() - start,
+        reused=True,
+        source_prefix=source_prefix,
+    )
+
+
 def _prepare_table_output_dir(table_dir: Path) -> None:
     if table_dir.exists():
         existing_parts = list(table_dir.glob("part-*.parquet"))
@@ -982,20 +1125,73 @@ def _prepare_table_output_dir(table_dir: Path) -> None:
             shutil.rmtree(table_dir)
 
 
-def _build_sql(config: dict, spec: TableSpec, columns: list[str], scope: ScopeSettings) -> tuple[str, dict]:
+def _date_guardrails_enabled(config: dict) -> bool:
+    return _as_bool(config.get("scoping", {}).get("date_guardrails_enabled", True))
+
+
+def _date_guardrail_days(config: dict, key: str, default: int) -> int:
+    value = int(config.get("scoping", {}).get(key, default))
+    if value < 0:
+        raise ValueError(f"scoping.{key} must be zero or greater")
+    return value
+
+
+def _date_guard_column(spec: TableSpec, source_columns: Sequence[str]) -> str | None:
+    if not spec.date_guard_column:
+        return None
+    available = {column.upper() for column in source_columns}
+    if spec.date_guard_column.upper() not in available:
+        logger.warning(
+            "Skipping date guardrail for %s because column %s is not present",
+            spec.table,
+            spec.date_guard_column,
+        )
+        return None
+    return spec.date_guard_column
+
+
+def _build_sql(
+    config: dict,
+    spec: TableSpec,
+    columns: list[str],
+    scope: ScopeSettings,
+    source_columns: Sequence[str] | None = None,
+) -> tuple[str, dict]:
     source_schema = config["oracle"].get("source_schema", "JNE").upper()
     alias = "src"
     column_sql = ", ".join(f"{alias}.{col}" for col in columns)
     sql = f"SELECT {column_sql} FROM {source_schema}.{spec.table} {alias}"
     binds = {}
+    predicates = []
 
     if spec.stage == Stage.ANCHOR:
         date_col = config["extraction"]["anchor_date_column"]
-        sql += f" WHERE {alias}.{date_col} >= :start_date AND {alias}.{date_col} < :end_date"
+        predicates.append(f"{alias}.{date_col} >= :start_date AND {alias}.{date_col} < :end_date")
+        if _cnote_limit(config) is not None:
+            predicates.append(scope_predicate(scope, alias, "CNOTE", "CNOTE_NO"))
     elif spec.stage != Stage.REFERENCE:
         if not spec.scope_name or not spec.scope_column:
             raise RuntimeError(f"Missing scope declaration for {spec.table}")
-        sql += " WHERE " + table_scope_predicate(source_schema, scope, spec, alias)
+        predicates.append(table_scope_predicate(source_schema, scope, spec, alias))
+        guard_column = None
+        if _date_guardrails_enabled(config):
+            guard_column = _date_guard_column(spec, source_columns or columns)
+        if guard_column:
+            lookback_days = _date_guardrail_days(config, "date_guardrail_lookback_days", 0)
+            lookahead_days = _date_guardrail_days(config, "date_guardrail_lookahead_days", 30)
+            predicates.append(
+                f"{alias}.{guard_column} >= :start_date - {lookback_days} "
+                f"AND {alias}.{guard_column} < :end_date + {lookahead_days}"
+            )
+            logger.info(
+                "Applying date guardrail for %s on %s: start-%s day(s), end+%s day(s)",
+                spec.table,
+                guard_column,
+                lookback_days,
+                lookahead_days,
+            )
+    if predicates:
+        sql += " WHERE " + " AND ".join(f"({predicate})" for predicate in predicates)
     return sql, binds
 
 
@@ -1024,18 +1220,24 @@ def extract_table(
     existing_result = _existing_table_result(table_dir, spec, start)
     if existing_result is not None:
         return existing_result
+    minio_reuse = _reuse_reference_from_minio(config, window, run_id, spec, table_dir, extract_date, start)
+    if minio_reuse is not None:
+        return minio_reuse
     _prepare_table_output_dir(table_dir)
 
     with connect(oracle_settings) as conn:
         source_schema = config["oracle"].get("source_schema", "JNE")
-        columns = _projection(table_columns(conn, source_schema, spec.table), spec, exclusions)
-        sql, binds = _build_sql(config, spec, columns, scope)
-        if spec.stage == Stage.ANCHOR:
+        source_columns = table_columns(conn, source_schema, spec.table)
+        columns = _projection(source_columns, spec, exclusions)
+        sql, binds = _build_sql(config, spec, columns, scope, source_columns)
+        if ":start_date" in sql or ":end_date" in sql:
             binds = {"start_date": window.start, "end_date": window.end}
 
         logger.info("Extracting %s to %s", spec.table, table_dir)
         with conn.cursor() as cursor:
             cursor.arraysize = oracle_settings.fetch_arraysize
+            if oracle_settings.prefetch_rows is not None:
+                cursor.prefetchrows = oracle_settings.prefetch_rows
             try:
                 cursor.execute(sql, binds)
             except Exception as exc:
@@ -1191,12 +1393,20 @@ def upload_run_to_minio(
         else _run_dir(Path(config["output"]["root"]), window, run_id)
     )
     prefix = lake_prefix(settings, window, run_id, extract_date)
+    reused_outputs = {
+        item["output_name"]
+        for item in manifest.data.get("tables", [])
+        if item.get("stage") == Stage.REFERENCE.value and item.get("reused") is True
+    }
     uploaded_files = 0
     uploaded_bytes = 0
     for path in sorted(run_dir.rglob("*")):
         if not path.is_file():
             continue
         relative = path.relative_to(run_dir).as_posix()
+        output_name = relative.split("/", 1)[0]
+        if output_name in reused_outputs:
+            continue
         object_name = f"{prefix}/{relative}"
         client.fput_object(settings.bucket, object_name, str(path))
         uploaded_files += 1
@@ -1287,26 +1497,44 @@ def run(config_path: str, run_id: str, keep_scope: bool = False, extract_date: s
     scope = ScopeSettings.from_config(config, safe_run_id)
     workers = int(os.getenv("BRONZE_WORKERS", "4"))
     manifest = RunManifest(_manifest_path(config, window, safe_run_id, extract_date), safe_run_id, window)
+    cnote_limit = _cnote_limit(config)
+    scoping_config = config.get("scoping", {})
+    scope_workers = int(os.getenv("BRONZE_SCOPE_WORKERS", scoping_config.get("scope_workers", 1)))
+    ctas_parallel_degree = int(os.getenv("BRONZE_SCOPE_PARALLEL_DEGREE", scoping_config.get("ctas_parallel_degree", 1)))
+    date_guard_lookback_days = _date_guardrail_days(config, "date_guardrail_lookback_days", 0)
+    date_guard_lookahead_days = _date_guardrail_days(config, "date_guardrail_lookahead_days", 30)
     started = time.monotonic()
 
     logger.info(
-        "Bronze run %s code_version=%s window=[%s, %s) workers=%s",
+        "Bronze run %s code_version=%s window=[%s, %s) workers=%s scope_workers=%s ctas_parallel_degree=%s cnote_limit=%s",
         safe_run_id,
         CODE_VERSION,
         window.start_label,
         window.end_label,
         workers,
+        scope_workers,
+        ctas_parallel_degree,
+        f"{cnote_limit:,}" if cnote_limit is not None else "none",
     )
     logger.info("Selected tables: %s", ", ".join(spec.table for spec in specs))
 
     with connect(oracle_settings) as conn:
+        required_scopes = required_scopes_for_specs(specs)
+        if cnote_limit is not None:
+            required_scopes.add("CNOTE")
         counts = materialize_scope_tables(
             conn,
             scope,
             window,
             config["extraction"]["anchor_table"],
             config["extraction"]["anchor_date_column"],
-            required_scopes_for_specs(specs),
+            cnote_limit,
+            required_scopes,
+            oracle_settings,
+            date_guard_lookback_days,
+            date_guard_lookahead_days,
+            ctas_parallel_degree,
+            scope_workers,
         )
         manifest.set_scope_counts(counts)
         logger.info("Scope counts: %s", counts)

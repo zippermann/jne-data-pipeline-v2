@@ -1,0 +1,375 @@
+"""Transform bronze CNOTE data into analysis-ready derived tables.
+
+This module is the seed of the future cnote_spine. Add future CNOTE-level
+derived columns here instead of creating parallel one-off transforms.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import tempfile
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from extractor.bronze import MinioSettings, load_config
+
+
+DERIVED_TABLE = "cms_cnote_transformed"
+DERIVED_SOURCE_TABLE = "CMS_CNOTE_TRANSFORMED"
+DERIVED_PREFIX = f"derived/{DERIVED_TABLE}/"
+
+
+@dataclass(frozen=True)
+class DerivedSource:
+    manifest: dict[str, Any]
+    run_prefix: str | None = None
+    run_path: Path | None = None
+    client: Any | None = None
+    bucket: str | None = None
+    settings: MinioSettings | None = None
+
+
+def _log(message: str) -> None:
+    print(message, flush=True)
+
+
+def _quote_sql(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def shipment_scope(origin: Any, destination: Any) -> str:
+    """Classify a CNOTE origin/destination pair without touching bronze."""
+    origin_text = str(origin or "").strip().upper()
+    destination_text = str(destination or "").strip().upper()
+    if len(origin_text) < 4 or len(destination_text) < 4:
+        return "Unknown"
+    o_code, d_code = origin_text[:3], destination_text[:3]
+    o_digit, d_digit = origin_text[3], destination_text[3]
+    if not (o_code.isalpha() and d_code.isalpha() and o_digit.isdigit() and d_digit.isdigit()):
+        return "Unknown"
+    if o_code == d_code and o_digit == d_digit:
+        return "Intracity"
+    if o_code == d_code:
+        return "Intercity"
+    return "Domestic"
+
+
+def _duckdb_connection(config: dict):
+    try:
+        import duckdb
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "duckdb is required to build derived tables. Install dependencies "
+            "with `pip install -r requirements.txt` or rebuild the Airflow image."
+        ) from exc
+
+    con = duckdb.connect(database=":memory:")
+    con.execute("PRAGMA threads=4")
+    return con
+
+
+def _configure_s3(con: Any, settings: MinioSettings) -> None:
+    con.execute("INSTALL httpfs")
+    con.execute("LOAD httpfs")
+    con.execute("SET s3_url_style='path'")
+    con.execute(f"SET s3_endpoint={_quote_sql(settings.endpoint)}")
+    con.execute(f"SET s3_access_key_id={_quote_sql(settings.access_key)}")
+    con.execute(f"SET s3_secret_access_key={_quote_sql(settings.secret_key)}")
+    con.execute(f"SET s3_use_ssl={'true' if _as_bool(settings.secure) else 'false'}")
+
+
+def _minio_client(settings: MinioSettings):
+    try:
+        from minio import Minio
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "minio is required for transform --source minio. Install dependencies "
+            "with `pip install -r requirements.txt` or rebuild the Airflow image."
+        ) from exc
+
+    return Minio(
+        settings.endpoint,
+        access_key=settings.access_key,
+        secret_key=settings.secret_key,
+        secure=settings.secure,
+    )
+
+
+def _read_json_response(response: Any) -> dict[str, Any]:
+    try:
+        return json.loads(response.read().decode("utf-8"))
+    finally:
+        response.close()
+        response.release_conn()
+
+
+def _source_from_minio(config_path: str, run_prefix: str | None) -> DerivedSource:
+    config = load_config(config_path)
+    settings = MinioSettings.from_config(config)
+    prefix = (run_prefix or os.getenv("BRONZE_RUN_PREFIX") or "").strip("/")
+    if not prefix:
+        raise ValueError("BRONZE_RUN_PREFIX or --bronze-run-prefix is required for transform --source minio")
+    client = _minio_client(settings)
+    response = client.get_object(settings.bucket, f"{prefix}/run_manifest.json")
+    manifest = _read_json_response(response)
+    return DerivedSource(
+        manifest=manifest,
+        run_prefix=prefix,
+        client=client,
+        bucket=settings.bucket,
+        settings=settings,
+    )
+
+
+def _source_from_local(run_path: str | Path) -> DerivedSource:
+    path = Path(run_path)
+    manifest = json.loads((path / "run_manifest.json").read_text(encoding="utf-8"))
+    return DerivedSource(manifest=manifest, run_path=path)
+
+
+def _manifest_table(manifest: dict[str, Any], table: str) -> dict[str, Any]:
+    table_upper = table.upper()
+    for item in manifest.get("tables", []):
+        if str(item.get("table", "")).upper() == table_upper:
+            return item
+    raise KeyError(f"run manifest does not include required table {table_upper}")
+
+
+def _source_prefix(source: DerivedSource, table_info: dict[str, Any]) -> str:
+    output_name = str(table_info["output_name"])
+    if table_info.get("source_prefix"):
+        return str(table_info["source_prefix"]).rstrip("/") + "/"
+    assert source.run_prefix is not None
+    return f"{source.run_prefix}/{output_name}/"
+
+
+def _parquet_glob(source: DerivedSource, table: str) -> str:
+    table_info = _manifest_table(source.manifest, table)
+    output_name = str(table_info["output_name"])
+    if source.run_path is not None:
+        return (source.run_path / output_name / "*.parquet").as_posix()
+    assert source.bucket is not None
+    return f"s3://{source.bucket}/{_source_prefix(source, table_info)}*.parquet"
+
+
+def _derived_prefix(source: DerivedSource) -> str:
+    if source.run_prefix is None:
+        return DERIVED_PREFIX
+    return f"{source.run_prefix}/{DERIVED_PREFIX}"
+
+
+def _build_cnote_transform_query(cnote_path: str, mfcnote_path: str, manifest_path: str) -> str:
+    return f"""
+        WITH transit_cnotes AS (
+            SELECT DISTINCT mf.MFCNOTE_NO AS cnote_no
+            FROM read_parquet({_quote_sql(mfcnote_path)}) mf
+            JOIN read_parquet({_quote_sql(manifest_path)}) m
+              ON mf.MFCNOTE_MAN_NO = m.MANIFEST_NO
+            WHERE TRY_CAST(m.MANIFEST_CODE AS INTEGER) = 3
+        ),
+        parts AS (
+            SELECT c.*,
+                regexp_extract(upper(trim(c.CNOTE_ORIGIN)), '^([A-Z]{{3}})', 1) AS o_code,
+                regexp_extract(upper(trim(c.CNOTE_DESTINATION)), '^([A-Z]{{3}})', 1) AS d_code,
+                regexp_extract(upper(trim(c.CNOTE_ORIGIN)), '^[A-Z]{{3}}([0-9])', 1) AS o_digit,
+                regexp_extract(upper(trim(c.CNOTE_DESTINATION)), '^[A-Z]{{3}}([0-9])', 1) AS d_digit,
+                (t.cnote_no IS NOT NULL) AS has_transit
+            FROM read_parquet({_quote_sql(cnote_path)}) c
+            LEFT JOIN transit_cnotes t ON c.CNOTE_NO = t.cnote_no
+        )
+        SELECT * EXCLUDE (o_code, d_code, o_digit, d_digit, has_transit),
+            CASE WHEN has_transit THEN 'Transit' ELSE 'Direct' END AS delivery_type,
+            CASE
+                WHEN o_code = '' OR d_code = '' OR o_digit = '' OR d_digit = '' THEN 'Unknown'
+                WHEN o_code = d_code AND o_digit = d_digit THEN 'Intracity'
+                WHEN o_code = d_code THEN 'Intercity'
+                ELSE 'Domestic'
+            END AS shipment_scope
+        FROM parts
+    """
+
+
+def _copy_to_parquet(con: Any, query: str, output_dir: Path) -> int:
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True)
+    part_path = output_dir / "part-00001.parquet"
+    con.execute(f"COPY ({query}) TO {_quote_sql(part_path.as_posix())} (FORMAT PARQUET, COMPRESSION ZSTD)")
+    row_count = int(con.execute(f"SELECT COUNT(*) FROM read_parquet({_quote_sql(part_path.as_posix())})").fetchone()[0])
+    (output_dir / "_SUCCESS").write_text(f"{row_count}\n", encoding="ascii")
+    return row_count
+
+
+def _classification_matrix(con: Any) -> list[tuple[str, str, int]]:
+    return [
+        (str(row[0]), str(row[1]), int(row[2]))
+        for row in con.execute(
+            """
+            SELECT delivery_type, shipment_scope, count(*) AS cnotes
+            FROM cms_cnote_transformed
+            GROUP BY 1, 2
+            ORDER BY 1, 2
+            """
+        ).fetchall()
+    ]
+
+
+def _log_quality_summary(con: Any, input_rows: int, output_rows: int) -> None:
+    _log(f"{DERIVED_TABLE} row count: input={input_rows:,}, output={output_rows:,}")
+    if input_rows != output_rows:
+        raise RuntimeError(f"{DERIVED_TABLE} row count mismatch: input={input_rows:,}, output={output_rows:,}")
+
+    _log(f"{DERIVED_TABLE} classification matrix:")
+    matrix = _classification_matrix(con)
+    counts = {(delivery, scope): count for delivery, scope, count in matrix}
+    for delivery, scope, count in matrix:
+        _log(f"  {delivery} / {scope}: {count:,}")
+
+    transit_intracity = counts.get(("Transit", "Intracity"), 0)
+    transit_intercity = counts.get(("Transit", "Intercity"), 0)
+    unknown = sum(count for _delivery, scope, count in matrix if scope == "Unknown")
+    _log(f"Transit Intracity anomaly count: {transit_intracity:,}")
+    _log(f"Transit Intercity anomaly count: {transit_intercity:,}")
+    _log(f"Unknown shipment_scope count: {unknown:,}")
+    if input_rows and unknown / input_rows > 0.01:
+        _log(f"WARNING: shipment_scope Unknown is above 1 percent ({unknown / input_rows:.2%})")
+
+
+def _derived_manifest_entry(row_count: int, output_dir: Path | None, source: DerivedSource) -> dict[str, Any]:
+    size_bytes = 0
+    file_count = 0
+    if output_dir is not None:
+        parts = list(output_dir.glob("part-*.parquet"))
+        file_count = len(parts)
+        size_bytes = sum(path.stat().st_size for path in parts)
+    return {
+        "table": DERIVED_SOURCE_TABLE,
+        "output_name": DERIVED_TABLE,
+        "stage": "derived",
+        "row_count": row_count,
+        "file_count": file_count,
+        "size_bytes": size_bytes,
+        "source_prefix": _derived_prefix(source),
+    }
+
+
+def _update_manifest(manifest: dict[str, Any], entry: dict[str, Any]) -> None:
+    derived = [
+        item
+        for item in manifest.get("derived", [])
+        if item.get("output_name") != entry["output_name"]
+    ]
+    derived.append(entry)
+    manifest["derived"] = derived
+
+
+def _write_local_manifest(source: DerivedSource) -> None:
+    assert source.run_path is not None
+    (source.run_path / "run_manifest.json").write_text(
+        json.dumps(source.manifest, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+def _upload_derived_to_minio(source: DerivedSource, output_dir: Path) -> None:
+    assert source.client is not None and source.bucket is not None
+    prefix = _derived_prefix(source)
+    for path in sorted(output_dir.iterdir()):
+        if path.is_file():
+            source.client.fput_object(source.bucket, f"{prefix}{path.name}", str(path))
+
+
+def _upload_manifest_to_minio(source: DerivedSource, tmpdir: Path) -> None:
+    assert source.client is not None and source.bucket is not None and source.run_prefix is not None
+    manifest_path = tmpdir / "run_manifest.json"
+    manifest_path.write_text(json.dumps(source.manifest, indent=2, sort_keys=True), encoding="utf-8")
+    source.client.fput_object(source.bucket, f"{source.run_prefix}/run_manifest.json", str(manifest_path))
+
+
+def transform_data(source: DerivedSource, config: dict, tmpdir: Path | None = None) -> dict[str, Any]:
+    started = time.monotonic()
+    con = _duckdb_connection(config)
+    if source.settings is not None:
+        _configure_s3(con, source.settings)
+
+    cnote_path = _parquet_glob(source, "CMS_CNOTE")
+    mfcnote_path = _parquet_glob(source, "CMS_MFCNOTE")
+    manifest_path = _parquet_glob(source, "CMS_MANIFEST")
+    query = _build_cnote_transform_query(cnote_path, mfcnote_path, manifest_path)
+
+    con.execute(f"CREATE TEMP VIEW {DERIVED_TABLE} AS {query}")
+    input_rows = int(con.execute(f"SELECT COUNT(*) FROM read_parquet({_quote_sql(cnote_path)})").fetchone()[0])
+    output_rows = int(con.execute(f"SELECT COUNT(*) FROM {DERIVED_TABLE}").fetchone()[0])
+    _log_quality_summary(con, input_rows, output_rows)
+
+    if source.run_path is not None:
+        output_dir = source.run_path / DERIVED_PREFIX
+        row_count = _copy_to_parquet(con, f"SELECT * FROM {DERIVED_TABLE}", output_dir)
+        entry = _derived_manifest_entry(row_count, output_dir, source)
+        _update_manifest(source.manifest, entry)
+        _write_local_manifest(source)
+    else:
+        if tmpdir is None:
+            raise ValueError("tmpdir is required for minio derived output")
+        output_dir = tmpdir / DERIVED_TABLE
+        row_count = _copy_to_parquet(con, f"SELECT * FROM {DERIVED_TABLE}", output_dir)
+        entry = _derived_manifest_entry(row_count, output_dir, source)
+        _update_manifest(source.manifest, entry)
+        _upload_derived_to_minio(source, output_dir)
+        _upload_manifest_to_minio(source, tmpdir)
+
+    _log(f"Transformed derived.{DERIVED_TABLE}: {row_count:,} rows in {time.monotonic() - started:.1f}s")
+    return entry
+
+
+def run(
+    config_path: str = "config/config.yaml",
+    source_name: str = "minio",
+    bronze_run_prefix: str | None = None,
+    bronze_run_path: str | Path | None = None,
+) -> None:
+    config = load_config(config_path)
+    if source_name == "local":
+        if bronze_run_path is None:
+            raise ValueError("--bronze-run-path is required for transform --source local")
+        source = _source_from_local(bronze_run_path)
+        transform_data(source, config)
+        return
+    if source_name == "minio":
+        source = _source_from_minio(config_path, bronze_run_prefix)
+        with tempfile.TemporaryDirectory() as tmp:
+            transform_data(source, config, Path(tmp))
+        return
+    raise ValueError(f"Unsupported transform source: {source_name}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Transform JNE bronze tables into derived outputs.")
+    parser.add_argument("--config", default="config/config.yaml")
+    parser.add_argument("--source", choices=["minio", "local"], default="minio")
+    parser.add_argument("--bronze-run-prefix")
+    parser.add_argument("--bronze-run-path")
+    args = parser.parse_args()
+    run(
+        config_path=args.config,
+        source_name=args.source,
+        bronze_run_prefix=args.bronze_run_prefix,
+        bronze_run_path=args.bronze_run_path,
+    )
+
+
+if __name__ == "__main__":
+    main()

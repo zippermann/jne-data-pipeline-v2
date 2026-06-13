@@ -1,27 +1,28 @@
-import time
+from datetime import datetime
+from pathlib import Path
 
 import pyarrow as pa
 
-import src.mart_load as mart_load
-from src.mart_load import (
-    BronzeConfig,
-    ClickHouseConfig,
-    GovernanceConfig,
+from loader.mart_load import (
     MartConfig,
     MinioConfig,
+    PostgresConfig,
+    BronzeConfig,
+    GovernanceConfig,
     SchemaConfig,
-    _format_bytes,
-    _insert_batch,
+    _batch_to_copy_buffer,
+    _can_skip_reused_reference,
     _list_parquet_objects,
-    _progress,
-    clickhouse_type,
     load_config,
+    run,
+    postgres_type,
 )
 
 
 def test_load_config_expands_environment(tmp_path, monkeypatch):
     monkeypatch.setenv("BRONZE_RUN_PREFIX", "bronze/jne/run_id=R_TEST")
-    monkeypatch.setenv("MART_CLICKHOUSE_PASSWORD", "secret")
+    monkeypatch.setenv("RUN_ID", "R_TEST")
+    monkeypatch.setenv("MART_POSTGRES_PASSWORD", "secret")
     config_path = tmp_path / "mart.yaml"
     config_path.write_text(
         """
@@ -33,25 +34,25 @@ minio:
 bronze:
   bucket: "${MINIO_BUCKET:-jne-bronze}"
   run_prefix: "${BRONZE_RUN_PREFIX}"
-governance:
-  output_bucket: "${GOVERNANCE_OUTPUT_BUCKET:-jne-bronze}"
-  output_prefix: "${GOVERNANCE_OUTPUT_PREFIX:-governance/jne/run_id=local}"
-clickhouse:
-  host: "${MART_CLICKHOUSE_HOST:-clickhouse}"
-  port: "${MART_CLICKHOUSE_PORT:-8123}"
-  database: "${MART_CLICKHOUSE_DB:-jne_mart}"
-  user: "${MART_CLICKHOUSE_USER:-default}"
-  password: "${MART_CLICKHOUSE_PASSWORD:-jne_mart}"
-  secure: "${MART_CLICKHOUSE_SECURE:-false}"
+postgres:
+  host: "${MART_POSTGRES_HOST:-mart-postgres}"
+  port: "${MART_POSTGRES_PORT:-5432}"
+  database: "${MART_POSTGRES_DB:-jne_mart}"
+  user: "${MART_POSTGRES_USER:-jne_mart}"
+  password: "${MART_POSTGRES_PASSWORD:-jne_mart}"
 schemas:
   bronze: "bronze"
   bronze_staging: "bronze_staging"
+  derived: "derived"
+  derived_staging: "derived_staging"
   governance: "governance"
-  governance_staging: "governance_staging"
+governance:
+  enabled: true
+  results_path: "governance/outputs/${RUN_ID}/governance_results.csv"
 mart:
   load_mode: "latest_snapshot"
+  skip_stages: ["reference"]
   parquet_batch_rows: 123
-  load_governance: "${MART_LOAD_GOVERNANCE:-true}"
 """,
         encoding="utf-8",
     )
@@ -59,32 +60,23 @@ mart:
     config = load_config(config_path)
 
     assert config.bronze.run_prefix == "bronze/jne/run_id=R_TEST"
-    assert config.clickhouse.password == "secret"
-    assert config.clickhouse.host == "clickhouse"
-    assert config.clickhouse.port == 8123
+    assert config.postgres.password == "secret"
+    assert config.governance.results_path.as_posix() == "governance/outputs/R_TEST/governance_results.csv"
+    assert config.schemas.derived == "derived"
+    assert config.skip_stages == ("reference",)
     assert config.parquet_batch_rows == 123
-    assert config.load_governance is True
 
 
-def test_clickhouse_type_maps_arrow_types():
-    assert clickhouse_type(pa.bool_()) == "Nullable(Bool)"
-    assert clickhouse_type(pa.int8()) == "Nullable(Int8)"
-    assert clickhouse_type(pa.int16()) == "Nullable(Int16)"
-    assert clickhouse_type(pa.int32()) == "Nullable(Int32)"
-    assert clickhouse_type(pa.int64()) == "Nullable(Int64)"
-    assert clickhouse_type(pa.uint8()) == "Nullable(UInt8)"
-    assert clickhouse_type(pa.uint16()) == "Nullable(UInt16)"
-    assert clickhouse_type(pa.uint32()) == "Nullable(UInt32)"
-    assert clickhouse_type(pa.uint64()) == "Nullable(UInt64)"
-    assert clickhouse_type(pa.float32()) == "Nullable(Float32)"
-    assert clickhouse_type(pa.float64()) == "Nullable(Float64)"
-    assert clickhouse_type(pa.decimal128(10, 2)) == "Nullable(Decimal(10, 2))"
-    assert clickhouse_type(pa.timestamp("us")) == "Nullable(DateTime64(6))"
-    assert clickhouse_type(pa.timestamp("ns")) == "Nullable(DateTime64(9))"
-    assert clickhouse_type(pa.date32()) == "Nullable(Date)"
-    assert clickhouse_type(pa.string()) == "Nullable(String)"
-    assert clickhouse_type(pa.binary()) == "Nullable(String)"
-    assert clickhouse_type(pa.int32(), nullable=False) == "Int32"
+def test_postgres_type_maps_arrow_types():
+    assert postgres_type(pa.bool_()) == "BOOLEAN"
+    assert postgres_type(pa.int32()) == "INTEGER"
+    assert postgres_type(pa.int64()) == "BIGINT"
+    assert postgres_type(pa.uint64()) == "NUMERIC(20,0)"
+    assert postgres_type(pa.float64()) == "DOUBLE PRECISION"
+    assert postgres_type(pa.decimal128(10, 2)) == "NUMERIC(10,2)"
+    assert postgres_type(pa.timestamp("us")) == "TIMESTAMP"
+    assert postgres_type(pa.date32()) == "DATE"
+    assert postgres_type(pa.string()) == "TEXT"
 
 
 def test_list_parquet_objects_filters_and_sorts():
@@ -109,175 +101,147 @@ def test_list_parquet_objects_filters_and_sorts():
     ]
 
 
-def test_insert_batch_uses_clickhouse_arrow_insert():
-    batch = pa.record_batch([pa.array([1, 2])], names=["id"])
+def test_reused_reference_table_can_be_skipped_when_target_exists():
+    class Cursor:
+        def __init__(self, exists):
+            self.exists = exists
 
-    class Client:
+        def execute(self, sql, params=None):
+            self.sql = sql
+            self.params = params
+
+        def fetchone(self):
+            return (1,) if self.exists else None
+
+    config = _mart_config()
+    table_info = {"output_name": "ora_zone", "stage": "reference", "reused": True}
+
+    assert _can_skip_reused_reference(Cursor(True), config, table_info) is True
+    assert _can_skip_reused_reference(Cursor(False), config, table_info) is False
+    assert _can_skip_reused_reference(Cursor(True), config, {**table_info, "reused": False}) is False
+    assert _can_skip_reused_reference(Cursor(True), config, {**table_info, "stage": "cnote"}) is False
+
+
+def test_batch_to_copy_buffer_escapes_text_and_nulls():
+    batch = pa.record_batch(
+        [
+            pa.array(["plain", "line\nbreak", None]),
+            pa.array([datetime(2026, 6, 5, 1, 2, 3), None, datetime(2026, 6, 6)]),
+        ],
+        names=["text_col", "ts_col"],
+    )
+
+    assert _batch_to_copy_buffer(batch).read() == (
+        "plain\t2026-06-05T01:02:03\n"
+        "line\\nbreak\t\\N\n"
+        "\\N\t2026-06-06T00:00:00\n"
+    )
+
+
+def _mart_config() -> MartConfig:
+    return MartConfig(
+        minio=MinioConfig("localhost:9000", "minioadmin", "minioadmin", False),
+        bronze=BronzeConfig("jne-bronze", "bronze/jne/run_id=R_TEST"),
+        postgres=PostgresConfig("localhost", 5432, "jne_mart", "jne_mart", "jne_mart"),
+        schemas=SchemaConfig(
+            bronze="bronze",
+            bronze_staging="bronze_staging",
+            derived="derived",
+            derived_staging="derived_staging",
+            governance="governance",
+        ),
+        governance=GovernanceConfig(True, Path("governance/outputs/R_TEST/governance_results.csv")),
+    )
+
+
+def test_run_loads_bronze_and_governance_results(monkeypatch, tmp_path):
+    governance_path = tmp_path / "governance_results.csv"
+    governance_path.write_text(
+        "cnote_no,index_code,main_indicator,column_name,table_name,status,variable_1,variable_2,impact_billing,impact_operational\n"
+        "CNOTE1,COMP1,Timestamp,COL,TABLE,PASS,1,2,Y,\n",
+        encoding="utf-8",
+    )
+    config = MartConfig(
+        minio=MinioConfig("localhost:9000", "minioadmin", "minioadmin", False),
+        bronze=BronzeConfig("jne-bronze", "bronze/jne/run_id=R_TEST"),
+        postgres=PostgresConfig("localhost", 5432, "jne_mart", "jne_mart", "jne_mart"),
+        schemas=SchemaConfig(
+            bronze="bronze",
+            bronze_staging="bronze_staging",
+            derived="derived",
+            derived_staging="derived_staging",
+            governance="governance",
+        ),
+        governance=GovernanceConfig(True, governance_path),
+    )
+    statements = []
+
+    class Cursor:
         def __init__(self):
-            self.calls = []
+            self._last_sql = ""
 
-        def insert_arrow(self, table, arrow_table, database):
-            self.calls.append((table, arrow_table, database))
+        def __enter__(self):
+            return self
 
-    client = Client()
+        def __exit__(self, exc_type, exc, tb):
+            return False
 
-    assert _insert_batch(client, "bronze_staging", "shipments", batch) == 2
-    assert client.calls[0][0] == "shipments"
-    assert client.calls[0][1].num_rows == 2
-    assert client.calls[0][2] == "bronze_staging"
+        def execute(self, sql, params=None):
+            self._last_sql = sql
+            statements.append(sql)
 
+        def copy_expert(self, sql, handle):
+            self._last_sql = sql
+            statements.append(sql)
+            handle.read()
 
-def test_progress_formatting_for_known_and_unknown_totals():
-    started_at = time.monotonic() - 1
+        def fetchone(self):
+            return (1,)
 
-    assert "50/100 rows (50.0%)" in _progress(50, 100, started_at)
-    assert "50 rows" in _progress(50, None, started_at)
-    assert _format_bytes(1536) == "1.5 KB"
+        def fetchall(self):
+            if "information_schema.tables" in self._last_sql:
+                return [("cms_cnote",)]
+            return []
 
+    class Connection:
+        autocommit = True
 
-def test_load_governance_outputs_uses_top_index_examples(monkeypatch, tmp_path):
-    loaded = {}
-    config = MartConfig(
-        minio=MinioConfig("minio:9000", "minioadmin", "minioadmin123", False),
-        bronze=BronzeConfig("jne-bronze", "bronze/jne/run_id=R_TEST"),
-        governance=GovernanceConfig("jne-bronze", "governance/jne/run_id=R_TEST"),
-        clickhouse=ClickHouseConfig("clickhouse", 8123, "jne_mart", "default", "", False),
-        schemas=SchemaConfig("bronze", "bronze_staging", "governance", "governance_staging"),
-        parquet_batch_rows=100,
-        load_mode="latest_snapshot",
-        load_governance=True,
-    )
+        def cursor(self):
+            return Cursor()
 
-    def fake_load(ch, client, bucket, objects, database, table, batch_rows, tmpdir, expected_rows=None):
-        loaded[table] = objects
-        return 1
+        def commit(self):
+            pass
 
-    monkeypatch.setattr(mart_load, "_load_parquet_table", fake_load)
+        def rollback(self):
+            pass
 
-    result = mart_load._load_governance_outputs(object(), object(), config, tmp_path)
+    class TemporaryDirectory:
+        def __enter__(self):
+            return str(tmp_path)
 
-    assert result == {"scorecard": 1, "failures": 1, "top_index_cnote_examples": 1}
-    assert loaded["top_index_cnote_examples"] == [
-        "governance/jne/run_id=R_TEST/top_index_cnote_examples.parquet"
-    ]
-    assert "cnote_index_status" not in loaded
+        def __exit__(self, exc_type, exc, tb):
+            return False
 
-
-def test_run_loads_governance_before_bronze(monkeypatch):
-    events = []
-    config = MartConfig(
-        minio=MinioConfig("minio:9000", "minioadmin", "minioadmin123", False),
-        bronze=BronzeConfig("jne-bronze", "bronze/jne/run_id=R_TEST"),
-        governance=GovernanceConfig("jne-bronze", "governance/jne/run_id=R_TEST"),
-        clickhouse=ClickHouseConfig("clickhouse", 8123, "jne_mart", "default", "", False),
-        schemas=SchemaConfig("bronze", "bronze_staging", "governance", "governance_staging"),
-        parquet_batch_rows=100,
-        load_mode="latest_snapshot",
-        load_governance=True,
-    )
-
-    class ClickHouse:
-        def close(self):
-            events.append("close")
-
-    monkeypatch.setattr(mart_load, "load_config", lambda path: config)
-    monkeypatch.setattr(mart_load, "_minio_client", lambda cfg: object())
+    monkeypatch.setattr("loader.mart_load.load_config", lambda path: config)
+    monkeypatch.setattr("loader.mart_load._minio_client", lambda loaded_config: object())
     monkeypatch.setattr(
-        mart_load,
-        "_read_manifest",
-        lambda client, cfg: {"run_id": "R_TEST", "tables": [{"output_name": "shipments", "row_count": 2}]},
+        "loader.mart_load._read_manifest",
+        lambda client, loaded_config: {
+            "run_id": "R_TEST",
+            "tables": [],
+            "derived": [{"output_name": "cms_cnote_transformed", "row_count": 10}],
+        },
     )
-    monkeypatch.setattr(mart_load, "_connect_clickhouse", lambda cfg: ClickHouse())
-    monkeypatch.setattr(mart_load, "_ensure_metadata_table", lambda ch, cfg: events.append("metadata"))
-    monkeypatch.setattr(mart_load, "_drop_database", lambda ch, db: events.append(f"drop:{db}"))
-    monkeypatch.setattr(mart_load, "_create_database", lambda ch, db: events.append(f"create:{db}"))
-    monkeypatch.setattr(
-        mart_load,
-        "_load_governance_outputs",
-        lambda ch, client, cfg, tmpdir: events.append("load_governance") or {"scorecard": 1},
-    )
-    monkeypatch.setattr(
-        mart_load,
-        "_load_manifest_tables",
-        lambda ch, client, cfg, manifest, tmpdir: events.append("load_bronze") or {"shipments": 2},
-    )
-    monkeypatch.setattr(
-        mart_load,
-        "_publish_database",
-        lambda ch, staging, target: events.append(f"publish:{staging}->{target}"),
-    )
-    monkeypatch.setattr(
-        mart_load,
-        "_insert_load_run",
-        lambda ch, cfg, manifest, table_count, row_count, status, error_message=None: events.append(
-            f"status:{status}:{table_count}:{row_count}"
-        ),
-    )
+    monkeypatch.setattr("loader.mart_load._connect_postgres", lambda loaded_config: Connection())
+    monkeypatch.setattr("loader.mart_load.tempfile.TemporaryDirectory", TemporaryDirectory)
+    monkeypatch.setattr("loader.mart_load._load_manifest_tables", lambda *args, **kwargs: {"cms_cnote": 10})
+    monkeypatch.setattr("loader.mart_load._load_derived_tables", lambda *args, **kwargs: {"cms_cnote": 10})
 
-    mart_load.run("unused.yaml")
+    run("config/mart.yaml")
 
-    assert events.index("load_governance") < events.index("load_bronze")
-    assert events.index("publish:governance_staging->governance") < events.index("publish:bronze_staging->bronze")
-    assert "status:SUCCESS:2:3" in events
-
-
-def test_run_can_skip_governance_outputs(monkeypatch):
-    events = []
-    config = MartConfig(
-        minio=MinioConfig("minio:9000", "minioadmin", "minioadmin123", False),
-        bronze=BronzeConfig("jne-bronze", "bronze/jne/run_id=R_TEST"),
-        governance=GovernanceConfig("jne-bronze", "governance/jne/run_id=R_TEST"),
-        clickhouse=ClickHouseConfig("clickhouse", 8123, "jne_mart", "default", "", False),
-        schemas=SchemaConfig("bronze", "bronze_staging", "governance", "governance_staging"),
-        parquet_batch_rows=100,
-        load_mode="latest_snapshot",
-        load_governance=False,
-    )
-
-    class ClickHouse:
-        def close(self):
-            events.append("close")
-
-    monkeypatch.setattr(mart_load, "load_config", lambda path: config)
-    monkeypatch.setattr(mart_load, "_minio_client", lambda cfg: object())
-    monkeypatch.setattr(
-        mart_load,
-        "_read_manifest",
-        lambda client, cfg: {"run_id": "R_TEST", "tables": [{"output_name": "shipments", "row_count": 2}]},
-    )
-    monkeypatch.setattr(mart_load, "_connect_clickhouse", lambda cfg: ClickHouse())
-    monkeypatch.setattr(mart_load, "_ensure_metadata_table", lambda ch, cfg: events.append("metadata"))
-    monkeypatch.setattr(mart_load, "_drop_database", lambda ch, db: events.append(f"drop:{db}"))
-    monkeypatch.setattr(mart_load, "_create_database", lambda ch, db: events.append(f"create:{db}"))
-    monkeypatch.setattr(
-        mart_load,
-        "_load_governance_outputs",
-        lambda ch, client, cfg, tmpdir: events.append("load_governance") or {"scorecard": 1},
-    )
-    monkeypatch.setattr(
-        mart_load,
-        "_load_manifest_tables",
-        lambda ch, client, cfg, manifest, tmpdir: events.append("load_bronze") or {"shipments": 2},
-    )
-    monkeypatch.setattr(
-        mart_load,
-        "_publish_database",
-        lambda ch, staging, target: events.append(f"publish:{staging}->{target}"),
-    )
-    monkeypatch.setattr(
-        mart_load,
-        "_insert_load_run",
-        lambda ch, cfg, manifest, table_count, row_count, status, error_message=None: events.append(
-            f"status:{status}:{table_count}:{row_count}"
-        ),
-    )
-
-    mart_load.run("unused.yaml")
-
-    assert "load_governance" not in events
-    assert "drop:governance_staging" not in events
-    assert "create:governance_staging" not in events
-    assert "publish:governance_staging->governance" not in events
-    assert "load_bronze" in events
-    assert "publish:bronze_staging->bronze" in events
-    assert "status:SUCCESS:1:2" in events
+    joined = "\n".join(statements)
+    assert '"bronze_staging"' in joined
+    assert '"derived"' in joined
+    assert '"governance"."governance_results"' in joined
+    assert '"governance"."failures"' not in joined
+    assert '"governance"."scorecard"' not in joined

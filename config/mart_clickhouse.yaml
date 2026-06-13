@@ -1,5 +1,5 @@
 minio:
-  endpoint: "${MINIO_ENDPOINT:-localhost:9000}"
+  endpoint: "${MINIO_ENDPOINT:-minio:9000}"
   access_key: "${MINIO_ACCESS_KEY:-minioadmin}"
   secret_key: "${MINIO_SECRET_KEY:-minioadmin123}"
   secure: "${MINIO_SECURE:-false}"
@@ -8,12 +8,13 @@ bronze:
   bucket: "${MINIO_BUCKET:-jne-bronze}"
   run_prefix: "${BRONZE_RUN_PREFIX}"
 
-postgres:
-  host: "${MART_POSTGRES_HOST:-mart-postgres}"
-  port: "${MART_POSTGRES_PORT:-5432}"
-  database: "${MART_POSTGRES_DB:-jne_mart}"
-  user: "${MART_POSTGRES_USER:-jne_mart}"
-  password: "${MART_POSTGRES_PASSWORD:-jne_mart}"
+clickhouse:
+  host: "${MART_CLICKHOUSE_HOST:-mart-clickhouse}"
+  port: "${MART_CLICKHOUSE_PORT:-8123}"
+  database: "${MART_CLICKHOUSE_DB:-jne_mart}"
+  user: "${MART_CLICKHOUSE_USER:-default}"
+  password: "${MART_CLICKHOUSE_PASSWORD:-jne_mart}"
+  secure: "${MART_CLICKHOUSE_SECURE:-false}"
 
 schemas:
   bronze: "bronze"
@@ -29,4 +30,3 @@ governance:
 mart:
   load_mode: "latest_snapshot"
   skip_stages: ["reference"]
-  parquet_batch_rows: 10000

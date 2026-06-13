@@ -17,12 +17,10 @@ x-airflow-env: &airflow-env
   # running under LocalExecutor without being marked unhealthy.
   AIRFLOW__SCHEDULER__SCHEDULER_HEARTBEAT_SEC: '30'
   AIRFLOW__SCHEDULER__SCHEDULER_HEALTH_CHECK_THRESHOLD: '120'
-  # Give long-running local tasks room during CPU-heavy governance work. This is
-  # intentionally high so transient metadata DB/DNS blips do not kill a run.
-  AIRFLOW__SCHEDULER__JOB_HEARTBEAT_SEC: '15'
-  AIRFLOW__SCHEDULER__LOCAL_TASK_JOB_HEARTBEAT_SEC: '15'
-  AIRFLOW__SCHEDULER__TASK_INSTANCE_HEARTBEAT_TIMEOUT: '86400'
-  AIRFLOW__SCHEDULER__TASK_INSTANCE_HEARTBEAT_TIMEOUT_DETECTION_INTERVAL: '60'
+  # Give long-running tasks more time before the job runner kills them
+  # for missed heartbeats (default is 5 × heartbeat = 150 s with 30 s beat).
+  AIRFLOW__SCHEDULER__JOB_HEARTBEAT_SEC: '30'
+  AIRFLOW__SCHEDULER__LOCAL_TASK_JOB_HEARTBEAT_SEC: '30'
 
 # Oracle env vars shared across Airflow services
 x-oracle-env: &oracle-env
@@ -42,8 +40,15 @@ x-minio-env: &minio-env
   MINIO_BUCKET: ${MINIO_BUCKET:-jne-bronze}
   MINIO_SECURE: "false"
 
+x-mart-postgres-env: &mart-postgres-env
+  MART_POSTGRES_HOST: mart-postgres
+  MART_POSTGRES_PORT: "5432"
+  MART_POSTGRES_DB: ${MART_POSTGRES_DB:-jne_mart}
+  MART_POSTGRES_USER: ${MART_POSTGRES_USER:-jne_mart}
+  MART_POSTGRES_PASSWORD: ${MART_POSTGRES_PASSWORD:-jne_mart}
+
 x-mart-clickhouse-env: &mart-clickhouse-env
-  MART_CLICKHOUSE_HOST: clickhouse
+  MART_CLICKHOUSE_HOST: mart-clickhouse
   MART_CLICKHOUSE_PORT: "8123"
   MART_CLICKHOUSE_DB: ${MART_CLICKHOUSE_DB:-jne_mart}
   MART_CLICKHOUSE_USER: ${MART_CLICKHOUSE_USER:-default}
@@ -104,28 +109,46 @@ services:
       - jne-network
 
   # ============================================================
-  # Mart ClickHouse (JNE serving copy for BI/Tableau)
+  # Mart PostgreSQL (JNE serving copy for BI/Tableau)
   # ============================================================
-  clickhouse:
-    container_name: jne-clickhouse
-    image: clickhouse/clickhouse-server:24.12-alpine
+  mart-postgres:
+    container_name: jne-mart-postgres
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${MART_POSTGRES_USER:-jne_mart}
+      POSTGRES_PASSWORD: ${MART_POSTGRES_PASSWORD:-jne_mart}
+      POSTGRES_DB: ${MART_POSTGRES_DB:-jne_mart}
+    ports:
+      - "${MART_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - mart_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MART_POSTGRES_USER:-jne_mart} -d ${MART_POSTGRES_DB:-jne_mart}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jne-network
+
+  # ============================================================
+  # Mart ClickHouse (columnar serving copy for BI/Tableau testing)
+  # ============================================================
+  mart-clickhouse:
+    container_name: jne-mart-clickhouse
+    image: clickhouse/clickhouse-server:25.3
     restart: unless-stopped
     environment:
       CLICKHOUSE_DB: ${MART_CLICKHOUSE_DB:-jne_mart}
       CLICKHOUSE_USER: ${MART_CLICKHOUSE_USER:-default}
       CLICKHOUSE_PASSWORD: ${MART_CLICKHOUSE_PASSWORD:-jne_mart}
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
     ports:
       - "${MART_CLICKHOUSE_HTTP_PORT:-8123}:8123"
       - "${MART_CLICKHOUSE_NATIVE_PORT:-9002}:9000"
     volumes:
       - mart_clickhouse_data:/var/lib/clickhouse
-    ulimits:
-      nofile:
-        soft: 262144
-        hard: 262144
     healthcheck:
-      test: ["CMD-SHELL", "clickhouse-client --host localhost --user \"$${CLICKHOUSE_USER}\" --password \"$${CLICKHOUSE_PASSWORD}\" --query 'SELECT 1'"]
+      test: ["CMD-SHELL", "clickhouse-client --user ${MART_CLICKHOUSE_USER:-default} --password ${MART_CLICKHOUSE_PASSWORD:-jne_mart} --query 'SELECT 1'"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -142,8 +165,6 @@ services:
       dockerfile: Dockerfile.airflow
     depends_on:
       airflow-postgres:
-        condition: service_healthy
-      clickhouse:
         condition: service_healthy
       minio:
         condition: service_healthy
@@ -172,15 +193,13 @@ services:
     depends_on:
       airflow-postgres:
         condition: service_healthy
-      clickhouse:
-        condition: service_healthy
       minio:
         condition: service_healthy
     environment:
-      <<: [*oracle-env, *minio-env, *mart-clickhouse-env]
+      <<: [*oracle-env, *minio-env, *mart-postgres-env, *mart-clickhouse-env]
     volumes: *airflow-volumes
     command: >-
-      bash -c "cd /opt/airflow/project && python -m src.bronze --config config/config.yaml --run-id bronze_init_$$(date -u +%Y%m%dT%H%M%S)"
+      bash -c "cd /opt/airflow/project && python -m extractor.bronze --config config/config.yaml --run-id bronze_init_$$(date -u +%Y%m%dT%H%M%S)"
     restart: "no"
     networks:
       - jne-network
@@ -199,10 +218,10 @@ services:
         condition: service_completed_successfully
       minio:
         condition: service_healthy
-      clickhouse:
+      mart-clickhouse:
         condition: service_healthy
     environment:
-      <<: [*airflow-env, *oracle-env, *minio-env, *mart-clickhouse-env]
+      <<: [*airflow-env, *oracle-env, *minio-env, *mart-postgres-env, *mart-clickhouse-env]
       AIRFLOW__WEBSERVER__RBAC: "True"
     volumes: *airflow-volumes
     ports:
@@ -225,7 +244,7 @@ services:
         condition: service_completed_successfully
       minio:
         condition: service_healthy
-      clickhouse:
+      mart-clickhouse:
         condition: service_healthy
     deploy:
       resources:
@@ -236,7 +255,7 @@ services:
           cpus: '2'
           memory: 4G
     environment:
-      <<: [*airflow-env, *oracle-env, *minio-env, *mart-clickhouse-env]
+      <<: [*airflow-env, *oracle-env, *minio-env, *mart-postgres-env, *mart-clickhouse-env]
     volumes: *airflow-volumes
     command: scheduler
     networks:
@@ -247,6 +266,7 @@ volumes:
   minio_data:
     name: jne-minio-data
   airflow_postgres_data:
+  mart_postgres_data:
   mart_clickhouse_data:
 
 # Docker network for service communication

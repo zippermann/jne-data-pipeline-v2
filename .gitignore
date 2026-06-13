@@ -3,13 +3,16 @@
 
 # Markdown context/handoff docs
 *.md
-!README.md
-!reference/**/*.md
+!AGENTS.md
 
 # Data files — may contain PII
 data/
 *.csv
+!governance/catalog_skipped_rows.csv
 *.parquet
+*.xlsx
+*.xls
+integrity.txt
 
 # Python
 __pycache__/

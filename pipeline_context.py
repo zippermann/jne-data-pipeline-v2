@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from src.bronze import MinioSettings, lake_prefix, load_config, resolve_window, sanitize_run_id
+from extractor.bronze import MinioSettings, lake_prefix, load_config, resolve_window, sanitize_run_id
 
 
 def bronze_prefix(config_path: str, run_id: str, extract_date: str) -> str:
@@ -12,10 +12,6 @@ def bronze_prefix(config_path: str, run_id: str, extract_date: str) -> str:
     window = resolve_window(config)
     settings = MinioSettings.from_config(config)
     return lake_prefix(settings, window, sanitize_run_id(run_id), extract_date)
-
-
-def governance_prefix(run_id: str) -> str:
-    return f"governance/jne/run_id={sanitize_run_id(run_id)}"
 
 
 def window_label(config_path: str, label: str) -> str:
@@ -36,9 +32,6 @@ def main() -> None:
     bronze_parser.add_argument("--run-id", required=True)
     bronze_parser.add_argument("--extract-date", required=True)
 
-    governance_parser = subparsers.add_parser("governance-prefix")
-    governance_parser.add_argument("--run-id", required=True)
-
     window_parser = subparsers.add_parser("window")
     window_parser.add_argument("--config", default="config/config.yaml")
     window_parser.add_argument("label", choices=["start", "end"])
@@ -46,8 +39,6 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "bronze-prefix":
         print(bronze_prefix(args.config, args.run_id, args.extract_date))
-    elif args.command == "governance-prefix":
-        print(governance_prefix(args.run_id))
     elif args.command == "window":
         print(window_label(args.config, args.label))
 

@@ -7,6 +7,7 @@ oracle:
   password: "${ORACLE_PASSWORD}"
   source_schema: "${ORACLE_SCHEMA}"
   fetch_arraysize: 10000
+  prefetch_rows: 10001
 
 extraction:
   anchor_table: "CMS_CNOTE"
@@ -14,12 +15,13 @@ extraction:
   # Empty list means extract every table in the inventory.
   # For smoke tests, use e.g. ["CMS_CNOTE"] or ["cms_cnote"].
   tables: []
+  cnote_limit: 100000
   window:
-    mode: "relative"
-    anchor_month: "2026-04"
+    mode: "explicit"
+    anchor_month: "2026-05"
     num_months: 1
-    start_date: "2026-04-01"
-    end_date: "2026-05-01"
+    start_date: "2026-05-01"
+    end_date: "2026-06-01"
 
 output:
   root: "data/bronze"
@@ -44,6 +46,11 @@ scoping:
   scope_schema: "HOA"
   scope_table_prefix: "BRONZE_SCOPE_"
   reference_tables_mode: "full"
+  date_guardrails_enabled: true
+  date_guardrail_lookback_days: 0
+  date_guardrail_lookahead_days: 30
+  ctas_parallel_degree: 4
+  scope_workers: 2
 
 columns:
   mode: "all"
