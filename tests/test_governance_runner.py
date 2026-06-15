@@ -260,3 +260,39 @@ def test_rule_summary_records_skipped_and_no_row_rules(monkeypatch, tmp_path):
     assert by_code.loc["TIME_TEST_SKIP", "skip_reason"] == "missing bronze table(s): MISSING_TABLE"
     assert by_code.loc["CONS_TEST_EMPTY", "status"] == "NO_ROWS"
     assert by_code.loc["CONS_TEST_EMPTY", "result_rows"] == 0
+
+
+def test_skipped_rules_only_fail_when_requested(monkeypatch, tmp_path):
+    skipped_entry = {
+        "index_code": "TIME_TEST_SKIP",
+        "element": "Timeliness",
+        "indicator": "Timestamp",
+        "rule_family": "fake_rule",
+        "table": "MISSING_TABLE",
+        "params": {},
+        "impact_billing": "N",
+        "impact_operational": "Y",
+    }
+    monkeypatch.setattr(runner, "CATALOG", [skipped_entry])
+
+    _run_entries(
+        entries=[],
+        data={},
+        skipped={"TIME_TEST_SKIP": "missing bronze table(s): MISSING_TABLE"},
+        output_dir=tmp_path,
+        strict=True,
+    )
+
+    try:
+        _run_entries(
+            entries=[],
+            data={},
+            skipped={"TIME_TEST_SKIP": "missing bronze table(s): MISSING_TABLE"},
+            output_dir=tmp_path,
+            strict=True,
+            fail_on_skipped=True,
+        )
+    except RuntimeError as exc:
+        assert "Governance skipped 1 active rule" in str(exc)
+    else:
+        raise AssertionError("fail_on_skipped=True should fail skipped active rules")

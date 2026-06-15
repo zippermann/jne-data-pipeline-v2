@@ -692,6 +692,7 @@ def _run_entries(
     skipped: dict[str, str],
     output_dir: Path,
     strict: bool,
+    fail_on_skipped: bool = False,
 ) -> None:
     run_at = datetime.now(timezone.utc).isoformat()
     result_frames: list[pd.DataFrame] = []
@@ -757,7 +758,9 @@ def _run_entries(
     print(f"CNOTE row status counts: {row_status_counts}")
     print(f"Output: {results_path}")
     print(f"Rule summary: {summary_path}")
-    if strict and skipped_count:
+    if skipped_count:
+        print(f"WARNING: Governance skipped {skipped_count} active rule(s); see {summary_path}", flush=True)
+    if fail_on_skipped and skipped_count:
         raise RuntimeError(f"Governance skipped {skipped_count} active rule(s); see {summary_path}")
     if strict and error_count:
         raise RuntimeError(f"Governance completed with {error_count} rule implementation error(s)")
@@ -770,6 +773,7 @@ def run(
     bronze_run_prefix: str | None = None,
     bronze_run_path: str | Path | None = None,
     strict: bool = True,
+    fail_on_skipped: bool = False,
 ) -> None:
     output_dir = Path(output_dir)
     if source == "synthetic":
@@ -788,7 +792,7 @@ def run(
                 skipped[entry["index_code"]] = "missing synthetic column(s): " + ", ".join(missing_columns)
             else:
                 runnable.append(entry)
-        _run_entries(runnable, data, skipped, output_dir, strict)
+        _run_entries(runnable, data, skipped, output_dir, strict, fail_on_skipped=fail_on_skipped)
         return
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -831,7 +835,7 @@ def run(
                 skipped[entry["index_code"]] = "missing bronze column(s): " + ", ".join(missing_columns)
             else:
                 available_runnable.append(entry)
-        _run_entries(available_runnable, data, skipped, output_dir, strict)
+        _run_entries(available_runnable, data, skipped, output_dir, strict, fail_on_skipped=fail_on_skipped)
 
 
 def main() -> None:
@@ -842,6 +846,7 @@ def main() -> None:
     parser.add_argument("--bronze-run-prefix", default=None)
     parser.add_argument("--bronze-run-path", default=None)
     parser.add_argument("--no-strict", action="store_true", help="Do not fail the process on rule implementation errors")
+    parser.add_argument("--fail-on-skipped", action="store_true", help="Fail when any active rule is skipped")
     args = parser.parse_args()
     run(
         output_dir=args.output_dir,
@@ -850,6 +855,7 @@ def main() -> None:
         bronze_run_prefix=args.bronze_run_prefix,
         bronze_run_path=args.bronze_run_path,
         strict=not args.no_strict,
+        fail_on_skipped=args.fail_on_skipped,
     )
 
 

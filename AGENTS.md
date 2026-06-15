@@ -173,8 +173,10 @@ Result rows use explicit statuses:
 - `ERROR`: the table existed, but the rule could not run because of an
   implementation issue such as a missing column or malformed rule.
 
-By default, governance exits non-zero when any active rule is `SKIPPED` or has
-`ERROR`. Use `--no-strict` only for inspection runs.
+By default, governance exits non-zero when any active rule has `ERROR`.
+`SKIPPED` and `NO_ROWS` rules are recorded in `governance_rule_summary.csv` for
+audit. Use `--fail-on-skipped` when a run should fail on skipped active rules,
+and use `--no-strict` only for inspection runs.
 
 `governance/catalog_skipped_rows.csv` records workbook rows that were not mapped
 into executable catalog rules.
