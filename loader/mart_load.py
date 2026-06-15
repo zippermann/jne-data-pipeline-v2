@@ -80,6 +80,7 @@ class SchemaConfig:
 class GovernanceConfig:
     enabled: bool
     results_path: Path
+    summary_path: Path
 
 
 @dataclass(frozen=True)
@@ -114,6 +115,7 @@ def load_config(path: str | Path = "config/mart.yaml") -> MartConfig:
     governance = raw.get("governance", {})
     run_id = os.getenv("RUN_ID", "")
     default_governance_path = Path("governance/outputs") / run_id / "governance_results.csv"
+    default_summary_path = Path("governance/outputs") / run_id / "governance_rule_summary.csv"
 
     config = MartConfig(
         minio=MinioConfig(
@@ -143,6 +145,7 @@ def load_config(path: str | Path = "config/mart.yaml") -> MartConfig:
         governance=GovernanceConfig(
             enabled=_as_bool(governance.get("enabled", True)),
             results_path=Path(governance.get("results_path") or default_governance_path),
+            summary_path=Path(governance.get("summary_path") or default_summary_path),
         ),
         skip_stages=tuple(str(stage).lower() for stage in mart.get("skip_stages", [])),
         parquet_batch_rows=int(mart.get("parquet_batch_rows", 10000)),
@@ -585,6 +588,23 @@ def _read_csv_header(path: Path) -> list[str]:
     return columns
 
 
+def _load_governance_csv(cursor: Any, schema: str, table: str, path: Path) -> int:
+    columns = _read_csv_header(path)
+    column_defs = ", ".join(f"{_quote_ident(column)} TEXT" for column in columns)
+    cursor.execute(f"CREATE TABLE {_qualified(schema, table)} ({column_defs})")
+    column_sql = ", ".join(_quote_ident(column) for column in columns)
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        cursor.copy_expert(
+            f"COPY {_qualified(schema, table)} ({column_sql}) "
+            "FROM STDIN WITH (FORMAT csv, HEADER true)",
+            handle,
+        )
+    cursor.execute(f"SELECT COUNT(*) FROM {_qualified(schema, table)}")
+    row_count = int(cursor.fetchone()[0])
+    _log(f"Loaded {schema}.{table}: {row_count:,} rows from {path}")
+    return row_count
+
+
 def _load_governance_results(cursor: Any, config: MartConfig) -> int:
     if not config.governance.enabled:
         _log("Skipping governance results load because governance.enabled=false")
@@ -596,22 +616,16 @@ def _load_governance_results(cursor: Any, config: MartConfig) -> int:
 
     _drop_schema(cursor, config.schemas.governance)
     _create_schema(cursor, config.schemas.governance)
-    columns = _read_csv_header(path)
-    column_defs = ", ".join(f"{_quote_ident(column)} TEXT" for column in columns)
-    cursor.execute(
-        f"CREATE TABLE {_qualified(config.schemas.governance, 'governance_results')} "
-        f"({column_defs})"
-    )
-    column_sql = ", ".join(_quote_ident(column) for column in columns)
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        cursor.copy_expert(
-            f"COPY {_qualified(config.schemas.governance, 'governance_results')} ({column_sql}) "
-            "FROM STDIN WITH (FORMAT csv, HEADER true)",
-            handle,
+    row_count = _load_governance_csv(cursor, config.schemas.governance, "governance_results", path)
+    if config.governance.summary_path.exists():
+        row_count += _load_governance_csv(
+            cursor,
+            config.schemas.governance,
+            "governance_rule_summary",
+            config.governance.summary_path,
         )
-    cursor.execute(f"SELECT COUNT(*) FROM {_qualified(config.schemas.governance, 'governance_results')}")
-    row_count = int(cursor.fetchone()[0])
-    _log(f"Loaded {config.schemas.governance}.governance_results: {row_count:,} rows from {path}")
+    else:
+        _log(f"Governance rule summary file not found, skipping: {config.governance.summary_path}")
     return row_count
 
 

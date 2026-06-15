@@ -26,7 +26,11 @@ def _config() -> MartClickHouseConfig:
             derived_staging="derived_staging",
             governance="governance",
         ),
-        governance=GovernanceConfig(True, Path("governance/outputs/R_TEST/governance_results.csv")),
+        governance=GovernanceConfig(
+            True,
+            Path("governance/outputs/R_TEST/governance_results.csv"),
+            Path("governance/outputs/R_TEST/governance_rule_summary.csv"),
+        ),
         skip_stages=("reference",),
     )
 
@@ -61,6 +65,7 @@ schemas:
 governance:
   enabled: true
   results_path: "governance/outputs/${RUN_ID}/governance_results.csv"
+  summary_path: "governance/outputs/${RUN_ID}/governance_rule_summary.csv"
 mart:
   load_mode: "latest_snapshot"
   skip_stages: ["reference"]
@@ -74,6 +79,7 @@ mart:
     assert config.clickhouse.password == "secret"
     assert config.skip_stages == ("reference",)
     assert config.governance.results_path.as_posix() == "governance/outputs/R_TEST/governance_results.csv"
+    assert config.governance.summary_path.as_posix() == "governance/outputs/R_TEST/governance_rule_summary.csv"
 
 
 def test_clickhouse_s3_url_uses_source_prefix_for_reused_tables():

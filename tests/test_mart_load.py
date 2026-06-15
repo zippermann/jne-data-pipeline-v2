@@ -49,6 +49,7 @@ schemas:
 governance:
   enabled: true
   results_path: "governance/outputs/${RUN_ID}/governance_results.csv"
+  summary_path: "governance/outputs/${RUN_ID}/governance_rule_summary.csv"
 mart:
   load_mode: "latest_snapshot"
   skip_stages: ["reference"]
@@ -62,6 +63,7 @@ mart:
     assert config.bronze.run_prefix == "bronze/jne/run_id=R_TEST"
     assert config.postgres.password == "secret"
     assert config.governance.results_path.as_posix() == "governance/outputs/R_TEST/governance_results.csv"
+    assert config.governance.summary_path.as_posix() == "governance/outputs/R_TEST/governance_rule_summary.csv"
     assert config.schemas.derived == "derived"
     assert config.skip_stages == ("reference",)
     assert config.parquet_batch_rows == 123
@@ -150,7 +152,11 @@ def _mart_config() -> MartConfig:
             derived_staging="derived_staging",
             governance="governance",
         ),
-        governance=GovernanceConfig(True, Path("governance/outputs/R_TEST/governance_results.csv")),
+        governance=GovernanceConfig(
+            True,
+            Path("governance/outputs/R_TEST/governance_results.csv"),
+            Path("governance/outputs/R_TEST/governance_rule_summary.csv"),
+        ),
     )
 
 
@@ -172,7 +178,7 @@ def test_run_loads_bronze_and_governance_results(monkeypatch, tmp_path):
             derived_staging="derived_staging",
             governance="governance",
         ),
-        governance=GovernanceConfig(True, governance_path),
+        governance=GovernanceConfig(True, governance_path, tmp_path / "governance_rule_summary.csv"),
     )
     statements = []
 

@@ -260,6 +260,7 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
     TableSpec("ORA_BRANCH", "ora_branch", Stage.REFERENCE),
     TableSpec("ORA_ZONE", "ora_zone", Stage.REFERENCE),
     TableSpec("ORA_USER", "ora_user", Stage.REFERENCE),
+    TableSpec("T_CORRECT_AWB", "t_correct_awb", Stage.REFERENCE),
     TableSpec("T_MDT_CITY_ORIGIN", "t_mdt_city_origin", Stage.REFERENCE),
     TableSpec("LASTMILE_COURIER", "lastmile_courier", Stage.REFERENCE),
 )

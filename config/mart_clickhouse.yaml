@@ -26,6 +26,7 @@ schemas:
 governance:
   enabled: true
   results_path: "governance/outputs/${RUN_ID}/governance_results.csv"
+  summary_path: "governance/outputs/${RUN_ID}/governance_rule_summary.csv"
 
 mart:
   load_mode: "latest_snapshot"

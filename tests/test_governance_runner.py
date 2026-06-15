@@ -3,7 +3,10 @@ from pathlib import Path
 
 import pandas as pd
 
+import extractor.bronze as bronze
 from governance.catalog import CATALOG
+import governance.runner as runner
+from governance.rules import RuleOutcome
 from governance.runner import (
     GovernanceSource,
     BronzeTable,
@@ -12,6 +15,7 @@ from governance.runner import (
     _list_minio_parquet_objects,
     _read_parquet_files,
     _required_tables,
+    _run_entries,
     _scan_drourate_path,
 )
 
@@ -23,6 +27,12 @@ def test_required_tables_include_reference_and_master_tables():
     assert "T_CORRECT_AWB" in required
     assert "CMS_MSMU" in required
     assert "CMS_DSMU" in required
+
+
+def test_extractor_inventory_covers_governance_required_tables():
+    inventory = {spec.table.upper() for spec in bronze.TABLE_SPECS}
+
+    assert _required_tables() <= inventory
 
 
 def test_entry_tables_collect_all_param_table_roles():
@@ -200,3 +210,53 @@ def test_drourate_catalog_components_and_branch_reference_are_configured():
     assert by_code["VALD1B12"]["rule_family"] == "reference_format"
     assert by_code["VALD1B12"]["params"]["reference_component"] == "origin"
     assert "pattern" not in by_code["VALD1B12"]["params"]
+
+
+def test_rule_summary_records_skipped_and_no_row_rules(monkeypatch, tmp_path):
+    skipped_entry = {
+        "index_code": "TIME_TEST_SKIP",
+        "element": "Timeliness",
+        "indicator": "Timestamp",
+        "rule_family": "fake_rule",
+        "table": "MISSING_TABLE",
+        "params": {},
+        "impact_billing": "N",
+        "impact_operational": "Y",
+    }
+    no_rows_entry = {
+        "index_code": "CONS_TEST_EMPTY",
+        "element": "Consistency",
+        "indicator": "Weight",
+        "rule_family": "fake_rule",
+        "table": "BASE_TABLE",
+        "params": {},
+        "impact_billing": "Y",
+        "impact_operational": "Y",
+    }
+
+    def fake_rule(data, params):
+        return RuleOutcome(
+            total_checked=0,
+            total_failed=0,
+            failures=pd.DataFrame(columns=["cnote_no", "failed_value", "failure_reason"]),
+            checks=pd.DataFrame(columns=["cnote_no", "status", "variable_1", "variable_2"]),
+        )
+
+    monkeypatch.setattr(runner, "CATALOG", [skipped_entry, no_rows_entry])
+    monkeypatch.setitem(runner.RULE_FUNCTIONS, "fake_rule", fake_rule)
+
+    _run_entries(
+        entries=[no_rows_entry],
+        data={"BASE_TABLE": pd.DataFrame({"CNOTE_NO": []})},
+        skipped={"TIME_TEST_SKIP": "missing bronze table(s): MISSING_TABLE"},
+        output_dir=tmp_path,
+        strict=False,
+    )
+
+    summary = pd.read_csv(tmp_path / "governance_rule_summary.csv")
+
+    by_code = summary.set_index("index_code")
+    assert by_code.loc["TIME_TEST_SKIP", "status"] == "SKIPPED"
+    assert by_code.loc["TIME_TEST_SKIP", "skip_reason"] == "missing bronze table(s): MISSING_TABLE"
+    assert by_code.loc["CONS_TEST_EMPTY", "status"] == "NO_ROWS"
+    assert by_code.loc["CONS_TEST_EMPTY", "result_rows"] == 0

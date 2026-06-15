@@ -161,6 +161,10 @@ Parquet columns for active catalog rules, and writes one long CNOTE-level file:
 
 - `governance_results.csv`
 
+It also writes one rule-level audit file:
+
+- `governance_rule_summary.csv`
+
 Result rows use explicit statuses:
 
 - `PASS`: rule ran and found no failed rows.
@@ -169,8 +173,8 @@ Result rows use explicit statuses:
 - `ERROR`: the table existed, but the rule could not run because of an
   implementation issue such as a missing column or malformed rule.
 
-By default, governance exits non-zero when any rule has `ERROR`. Use
-`--no-strict` only for inspection runs.
+By default, governance exits non-zero when any active rule is `SKIPPED` or has
+`ERROR`. Use `--no-strict` only for inspection runs.
 
 `governance/catalog_skipped_rows.csv` records workbook rows that were not mapped
 into executable catalog rules.

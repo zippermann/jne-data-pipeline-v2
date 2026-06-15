@@ -24,7 +24,7 @@ import pandas as pd
 
 from extractor.bronze import MinioSettings, load_config
 from governance.catalog import CATALOG
-from governance.output import write_governance_results
+from governance.output import write_governance_results, write_rule_summary
 from governance.rules import FAILURE_COLUMNS, RULE_FUNCTIONS, RuleOutcome
 
 
@@ -660,6 +660,32 @@ def _add_check_rows(
     result_frames.append(rows)
 
 
+def _rule_summary_row(
+    entry: dict,
+    status: str,
+    total_checked: int = 0,
+    total_failed: int = 0,
+    result_rows: int = 0,
+    skip_reason: str = "",
+    error_message: str = "",
+) -> dict:
+    return {
+        "index_code": entry["index_code"],
+        "element": entry.get("element", ""),
+        "main_indicator": entry.get("indicator", ""),
+        "rule_family": entry.get("rule_family", ""),
+        "table_name": entry.get("table", ""),
+        "status": status,
+        "total_checked": total_checked,
+        "total_failed": total_failed,
+        "result_rows": result_rows,
+        "skip_reason": skip_reason,
+        "error_message": error_message,
+        "impact_billing": entry.get("impact_billing", ""),
+        "impact_operational": entry.get("impact_operational", ""),
+    }
+
+
 def _run_entries(
     entries: list[dict],
     data: dict[str, pd.DataFrame],
@@ -669,6 +695,7 @@ def _run_entries(
 ) -> None:
     run_at = datetime.now(timezone.utc).isoformat()
     result_frames: list[pd.DataFrame] = []
+    summary_rows: list[dict] = []
     status_counts: dict[str, int] = {}
     error_count = 0
     disabled_count = 0
@@ -680,6 +707,7 @@ def _run_entries(
             continue
         if entry["index_code"] in skipped:
             skipped_count += 1
+            summary_rows.append(_rule_summary_row(entry, "SKIPPED", skip_reason=skipped[entry["index_code"]]))
             continue
         if entry not in entries:
             continue
@@ -688,7 +716,11 @@ def _run_entries(
         params.setdefault("table", entry["table"])
         try:
             outcome = RULE_FUNCTIONS[entry["rule_family"]](data, params)
-            status = "FAIL" if outcome.total_failed else "PASS"
+            result_rows = 0 if outcome.checks is None else len(outcome.checks)
+            if result_rows == 0:
+                status = "NO_ROWS"
+            else:
+                status = "FAIL" if outcome.total_failed else "PASS"
             error_message = ""
         except Exception as exc:
             error_count += 1
@@ -696,12 +728,25 @@ def _run_entries(
             error_message = str(exc)
             print(f"ERROR: {entry['index_code']} failed: {exc}", flush=True)
             outcome = _error_outcome(error_message)
+            result_rows = 0
 
         status_counts[status] = status_counts.get(status, 0) + 1
         _add_check_rows(result_frames, entry, outcome)
+        summary_rows.append(
+            _rule_summary_row(
+                entry,
+                status,
+                total_checked=outcome.total_checked,
+                total_failed=outcome.total_failed,
+                result_rows=result_rows,
+                error_message=error_message,
+            )
+        )
 
     result_frame = pd.concat(result_frames, ignore_index=True) if result_frames else pd.DataFrame()
     results_path = write_governance_results(result_frame, output_dir / "governance_results.csv")
+    summary_frame = pd.DataFrame(summary_rows)
+    summary_path = write_rule_summary(summary_frame, output_dir / "governance_rule_summary.csv")
     row_status_counts = result_frame["status"].value_counts().to_dict() if not result_frame.empty else {}
 
     print(f"Catalog entries evaluated: {sum(status_counts.values())}")
@@ -711,6 +756,9 @@ def _run_entries(
     print(f"CNOTE result rows: {len(result_frame):,}")
     print(f"CNOTE row status counts: {row_status_counts}")
     print(f"Output: {results_path}")
+    print(f"Rule summary: {summary_path}")
+    if strict and skipped_count:
+        raise RuntimeError(f"Governance skipped {skipped_count} active rule(s); see {summary_path}")
     if strict and error_count:
         raise RuntimeError(f"Governance completed with {error_count} rule implementation error(s)")
 

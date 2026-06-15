@@ -76,6 +76,7 @@ class SchemaConfig:
 class GovernanceConfig:
     enabled: bool
     results_path: Path
+    summary_path: Path
 
 
 @dataclass(frozen=True)
@@ -109,6 +110,7 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
     mart = raw.get("mart", {})
     run_id = os.getenv("RUN_ID", "")
     default_governance_path = Path("governance/outputs") / run_id / "governance_results.csv"
+    default_summary_path = Path("governance/outputs") / run_id / "governance_rule_summary.csv"
 
     config = MartClickHouseConfig(
         minio=MinioConfig(
@@ -139,6 +141,7 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
         governance=GovernanceConfig(
             enabled=_as_bool(governance.get("enabled", True)),
             results_path=Path(governance.get("results_path") or default_governance_path),
+            summary_path=Path(governance.get("summary_path") or default_summary_path),
         ),
         skip_stages=tuple(str(stage).lower() for stage in mart.get("skip_stages", [])),
         load_mode=mart.get("load_mode", "latest_snapshot"),
@@ -359,22 +362,18 @@ def _read_csv_header(path: Path) -> list[str]:
     return columns
 
 
-def _load_governance_results(client: Any, config: MartClickHouseConfig, batch_size: int = 100_000) -> int:
-    if not config.governance.enabled:
-        _log("Skipping ClickHouse governance results load because governance.enabled=false")
-        return 0
-
-    path = config.governance.results_path
-    if not path.exists():
-        raise FileNotFoundError(f"Governance results file not found: {path}")
-
-    _drop_database(client, config.schemas.governance)
-    _create_database(client, config.schemas.governance)
+def _load_governance_csv(
+    client: Any,
+    schema: str,
+    table: str,
+    path: Path,
+    batch_size: int = 100_000,
+) -> int:
     columns = _read_csv_header(path)
     column_defs = ", ".join(f"{_quote_ident(column)} Nullable(String)" for column in columns)
     _command(
         client,
-        f"CREATE TABLE {_qualified(config.schemas.governance, 'governance_results')} "
+        f"CREATE TABLE {_qualified(schema, table)} "
         f"({column_defs}) ENGINE = MergeTree ORDER BY tuple()",
     )
 
@@ -387,24 +386,55 @@ def _load_governance_results(client: Any, config: MartClickHouseConfig, batch_si
             batch.append([value if value != "" else None for value in row])
             if len(batch) >= batch_size:
                 client.insert(
-                    "governance_results",
+                    table,
                     batch,
                     column_names=columns,
-                    database=config.schemas.governance,
+                    database=schema,
                 )
                 row_count += len(batch)
-                _log(f"Loaded ClickHouse governance.governance_results: {row_count:,} rows")
+                _log(f"Loaded ClickHouse {schema}.{table}: {row_count:,} rows")
                 batch = []
     if batch:
         client.insert(
-            "governance_results",
+            table,
             batch,
             column_names=columns,
-            database=config.schemas.governance,
+            database=schema,
         )
         row_count += len(batch)
 
-    _log(f"Loaded ClickHouse {config.schemas.governance}.governance_results: {row_count:,} rows from {path}")
+    _log(f"Loaded ClickHouse {schema}.{table}: {row_count:,} rows from {path}")
+    return row_count
+
+
+def _load_governance_results(client: Any, config: MartClickHouseConfig, batch_size: int = 100_000) -> int:
+    if not config.governance.enabled:
+        _log("Skipping ClickHouse governance results load because governance.enabled=false")
+        return 0
+
+    path = config.governance.results_path
+    if not path.exists():
+        raise FileNotFoundError(f"Governance results file not found: {path}")
+
+    _drop_database(client, config.schemas.governance)
+    _create_database(client, config.schemas.governance)
+    row_count = _load_governance_csv(
+        client,
+        config.schemas.governance,
+        "governance_results",
+        path,
+        batch_size=batch_size,
+    )
+    if config.governance.summary_path.exists():
+        row_count += _load_governance_csv(
+            client,
+            config.schemas.governance,
+            "governance_rule_summary",
+            config.governance.summary_path,
+            batch_size=batch_size,
+        )
+    else:
+        _log(f"Governance rule summary file not found, skipping: {config.governance.summary_path}")
     return row_count
 
 
