@@ -78,6 +78,8 @@ def _duckdb_connection(config: dict):
 
     con = duckdb.connect(database=":memory:")
     con.execute("PRAGMA threads=4")
+    con.execute("INSTALL json")
+    con.execute("LOAD json")
     return con
 
 
@@ -171,14 +173,68 @@ def _derived_prefix(source: DerivedSource) -> str:
     return f"{source.run_prefix}/{DERIVED_PREFIX}"
 
 
-def _build_cnote_transform_query(cnote_path: str, mfcnote_path: str, manifest_path: str) -> str:
+def _build_cnote_transform_query(
+    cnote_path: str,
+    mfcnote_path: str,
+    manifest_path: str,
+    drcnote_path: str,
+    mrcnote_path: str,
+    dhicnote_path: str,
+    dhocnote_path: str,
+    drsheet_path: str,
+    cnote_pod_path: str,
+) -> str:
     return f"""
         WITH transit_cnotes AS (
-            SELECT DISTINCT mf.MFCNOTE_NO AS cnote_no
+            SELECT mf.MFCNOTE_NO AS cnote_no,
+                COUNT(*) AS transit_leg_count,
+                MIN(TRY_CAST(mf.MFCNOTE_CRDATE AS TIMESTAMP)) AS first_manifest_ts
             FROM read_parquet({_quote_sql(mfcnote_path)}) mf
             JOIN read_parquet({_quote_sql(manifest_path)}) m
               ON mf.MFCNOTE_MAN_NO = m.MANIFEST_NO
             WHERE TRY_CAST(m.MANIFEST_CODE AS INTEGER) = 3
+            GROUP BY mf.MFCNOTE_NO
+        ),
+        -- Pickup timestamp: CMS_MRCNOTE has no direct CNOTE column, so join via
+        -- CMS_DRCNOTE.DRCNOTE_NO = CMS_MRCNOTE.MRCNOTE_NO to reach DRCNOTE_CNOTE_NO.
+        pickup_events AS (
+            SELECT d.DRCNOTE_CNOTE_NO AS cnote_no,
+                MIN(TRY_CAST(r.MRCNOTE_DATE AS TIMESTAMP)) AS pickup_ts
+            FROM read_parquet({_quote_sql(drcnote_path)}) d
+            JOIN read_parquet({_quote_sql(mrcnote_path)}) r ON d.DRCNOTE_NO = r.MRCNOTE_NO
+            WHERE d.DRCNOTE_CNOTE_NO IS NOT NULL
+            GROUP BY d.DRCNOTE_CNOTE_NO
+        ),
+        handover_in_events AS (
+            SELECT DHICNOTE_CNOTE_NO AS cnote_no,
+                MIN(TRY_CAST(DHICNOTE_TDATE AS TIMESTAMP)) AS handover_in_ts
+            FROM read_parquet({_quote_sql(dhicnote_path)})
+            WHERE DHICNOTE_CNOTE_NO IS NOT NULL
+            GROUP BY DHICNOTE_CNOTE_NO
+        ),
+        handover_out_events AS (
+            SELECT DHOCNOTE_CNOTE_NO AS cnote_no,
+                MIN(TRY_CAST(DHOCNOTE_TDATE AS TIMESTAMP)) AS handover_out_ts
+            FROM read_parquet({_quote_sql(dhocnote_path)})
+            WHERE DHOCNOTE_CNOTE_NO IS NOT NULL
+            GROUP BY DHOCNOTE_CNOTE_NO
+        ),
+        runsheet_events AS (
+            SELECT DRSHEET_CNOTE_NO AS cnote_no,
+                MIN(TRY_CAST(DRSHEET_DATE AS TIMESTAMP)) AS runsheet_ts
+            FROM read_parquet({_quote_sql(drsheet_path)})
+            WHERE DRSHEET_CNOTE_NO IS NOT NULL
+            GROUP BY DRSHEET_CNOTE_NO
+        ),
+        -- CMS_CNOTE_POD.CNOTE_POD_NO is joined directly to CMS_DRSHEET.DRSHEET_CNOTE_NO
+        -- elsewhere in the governance catalog (rule TIME1C9), confirming it holds
+        -- cnote_no values rather than a separate POD record id.
+        pod_events AS (
+            SELECT CNOTE_POD_NO AS cnote_no,
+                MIN(TRY_CAST(CNOTE_POD_DATE AS TIMESTAMP)) AS pod_ts
+            FROM read_parquet({_quote_sql(cnote_pod_path)})
+            WHERE CNOTE_POD_NO IS NOT NULL
+            GROUP BY CNOTE_POD_NO
         ),
         parts AS (
             SELECT c.*,
@@ -186,18 +242,53 @@ def _build_cnote_transform_query(cnote_path: str, mfcnote_path: str, manifest_pa
                 regexp_extract(upper(trim(c.CNOTE_DESTINATION)), '^([A-Z]{{3}})', 1) AS d_code,
                 regexp_extract(upper(trim(c.CNOTE_ORIGIN)), '^[A-Z]{{3}}([0-9])', 1) AS o_digit,
                 regexp_extract(upper(trim(c.CNOTE_DESTINATION)), '^[A-Z]{{3}}([0-9])', 1) AS d_digit,
-                (t.cnote_no IS NOT NULL) AS has_transit
+                (t.cnote_no IS NOT NULL) AS has_transit,
+                COALESCE(t.transit_leg_count, 0) AS transit_leg_count,
+                t.first_manifest_ts,
+                p.pickup_ts,
+                hi.handover_in_ts,
+                ho.handover_out_ts,
+                rs.runsheet_ts,
+                pod.pod_ts
             FROM read_parquet({_quote_sql(cnote_path)}) c
             LEFT JOIN transit_cnotes t ON c.CNOTE_NO = t.cnote_no
+            LEFT JOIN pickup_events p ON c.CNOTE_NO = p.cnote_no
+            LEFT JOIN handover_in_events hi ON c.CNOTE_NO = hi.cnote_no
+            LEFT JOIN handover_out_events ho ON c.CNOTE_NO = ho.cnote_no
+            LEFT JOIN runsheet_events rs ON c.CNOTE_NO = rs.cnote_no
+            LEFT JOIN pod_events pod ON c.CNOTE_NO = pod.cnote_no
         )
-        SELECT * EXCLUDE (o_code, d_code, o_digit, d_digit, has_transit),
+        SELECT * EXCLUDE (
+                o_code, d_code, o_digit, d_digit, has_transit, transit_leg_count,
+                first_manifest_ts, pickup_ts, handover_in_ts, handover_out_ts, runsheet_ts, pod_ts
+            ),
             CASE WHEN has_transit THEN 'Transit' ELSE 'Direct' END AS delivery_type,
             CASE
                 WHEN o_code = '' OR d_code = '' OR o_digit = '' OR d_digit = '' THEN 'Unknown'
                 WHEN o_code = d_code AND o_digit = d_digit THEN 'Intracity'
                 WHEN o_code = d_code THEN 'Intercity'
                 ELSE 'Domestic'
-            END AS shipment_scope
+            END AS shipment_scope,
+            transit_leg_count AS transit_manifest_count,
+            transit_leg_count
+                + CASE WHEN pickup_ts IS NOT NULL THEN 1 ELSE 0 END
+                + CASE WHEN handover_in_ts IS NOT NULL THEN 1 ELSE 0 END
+                + CASE WHEN handover_out_ts IS NOT NULL THEN 1 ELSE 0 END
+                + CASE WHEN runsheet_ts IS NOT NULL THEN 1 ELSE 0 END AS handover_count,
+            CASE WHEN pickup_ts IS NOT NULL AND pod_ts IS NOT NULL
+                 THEN (epoch(pod_ts) - epoch(pickup_ts)) / 3600.0
+            END AS sla_total_hours,
+            CASE WHEN pickup_ts IS NOT NULL AND first_manifest_ts IS NOT NULL
+                 THEN (epoch(first_manifest_ts) - epoch(pickup_ts)) / 3600.0
+            END AS sla_pickup_to_firstmanifest_hours,
+            to_json(struct_pack(
+                pickup := pickup_ts,
+                first_manifest := first_manifest_ts,
+                handover_in := handover_in_ts,
+                handover_out := handover_out_ts,
+                delivery := runsheet_ts,
+                pod := pod_ts
+            )) AS sla_per_step
         FROM parts
     """
 
@@ -308,7 +399,23 @@ def transform_data(source: DerivedSource, config: dict, tmpdir: Path | None = No
     cnote_path = _parquet_glob(source, "CMS_CNOTE")
     mfcnote_path = _parquet_glob(source, "CMS_MFCNOTE")
     manifest_path = _parquet_glob(source, "CMS_MANIFEST")
-    query = _build_cnote_transform_query(cnote_path, mfcnote_path, manifest_path)
+    drcnote_path = _parquet_glob(source, "CMS_DRCNOTE")
+    mrcnote_path = _parquet_glob(source, "CMS_MRCNOTE")
+    dhicnote_path = _parquet_glob(source, "CMS_DHICNOTE")
+    dhocnote_path = _parquet_glob(source, "CMS_DHOCNOTE")
+    drsheet_path = _parquet_glob(source, "CMS_DRSHEET")
+    cnote_pod_path = _parquet_glob(source, "CMS_CNOTE_POD")
+    query = _build_cnote_transform_query(
+        cnote_path,
+        mfcnote_path,
+        manifest_path,
+        drcnote_path,
+        mrcnote_path,
+        dhicnote_path,
+        dhocnote_path,
+        drsheet_path,
+        cnote_pod_path,
+    )
 
     con.execute(f"CREATE TEMP VIEW {DERIVED_TABLE} AS {query}")
     input_rows = int(con.execute(f"SELECT COUNT(*) FROM read_parquet({_quote_sql(cnote_path)})").fetchone()[0])
