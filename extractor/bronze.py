@@ -243,6 +243,7 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
     TableSpec("CMS_COST_DTRANSIT_AGEN", "cms_cost_dtransit_agen", Stage.CNOTE, "CNOTE_NO", "CNOTE", "ESB_TIME"),
     TableSpec("CMS_MFCNOTE", "cms_mfcnote", Stage.CNOTE, "MFCNOTE_NO", "CNOTE", "MFCNOTE_CRDATE"),
     TableSpec("CMS_DCORRECT_DEST", "cms_dcorrect_dest", Stage.CNOTE, "DCORRECT_CNOTE_NO", "CNOTE", "DCORRECT_CDATE"),
+    TableSpec("T_CORRECT_AWB", "t_correct_awb", Stage.CNOTE, "C_CNOTE_NO", "CNOTE"),
     TableSpec("CMS_MANIFEST", "cms_manifest", Stage.BAG_MANIFEST, "MANIFEST_NO", "MANIFEST", "MANIFEST_DATE"),
     TableSpec("CMS_MFBAG", "cms_mfbag", Stage.BAG_MANIFEST, "MFBAG_MAN_NO", "MANIFEST", "MFBAG_CRDATE"),
     TableSpec("CMS_DMBAG", "cms_dmbag", Stage.BAG_MANIFEST, "DMBAG_BAG_NO", "MFBAG", "ESB_TIME"),
@@ -260,7 +261,6 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
     TableSpec("ORA_BRANCH", "ora_branch", Stage.REFERENCE),
     TableSpec("ORA_ZONE", "ora_zone", Stage.REFERENCE),
     TableSpec("ORA_USER", "ora_user", Stage.REFERENCE),
-    TableSpec("T_CORRECT_AWB", "t_correct_awb", Stage.REFERENCE),
     TableSpec("T_MDT_CITY_ORIGIN", "t_mdt_city_origin", Stage.REFERENCE),
     TableSpec("LASTMILE_COURIER", "lastmile_courier", Stage.REFERENCE),
 )

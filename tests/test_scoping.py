@@ -78,6 +78,14 @@ def test_ora_branch_is_extracted_as_reference_table():
     assert spec.stage == Stage.REFERENCE
 
 
+def test_t_correct_awb_is_run_scoped_cnote_table():
+    spec = _spec("T_CORRECT_AWB")
+
+    assert spec.stage == Stage.CNOTE
+    assert spec.scope_name == "CNOTE"
+    assert spec.scope_column == "C_CNOTE_NO"
+
+
 def test_scope_dependencies_cover_parent_chains():
     scopes = _expand_required_scopes({"MMBAG", "SMU", "MSJ", "COST_MANIFEST"})
 

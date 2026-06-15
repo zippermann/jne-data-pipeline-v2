@@ -232,7 +232,6 @@ def _entry_columns(entry: dict) -> dict[str, set[str]]:
             columns.setdefault(table_name.upper(), set()).add(column)
 
     add(table, params.get("column"))
-    add(table, params.get("cnote_column"))
     add(table, params.get("condition_column"))
     for column in params.get("columns", []):
         add(table, column)
@@ -243,16 +242,16 @@ def _entry_columns(entry: dict) -> dict[str, set[str]]:
 
     add(params.get("left_table"), params.get("left_column"))
     add(params.get("left_table"), params.get("start_column"))
-    add(params.get("left_table"), params.get("cnote_column"))
     add(params.get("right_table"), params.get("right_column"))
     current_table = params.get("left_table") or params.get("detail_table")
     for step in params.get("joins", []):
         add(current_table, step.get("left_on"))
         add(step.get("table"), step.get("right_on"))
         current_table = step.get("table")
-    add(current_table, params.get("right_column"))
-    add(current_table, params.get("end_column"))
-    add(current_table, params.get("detail_key"))
+    if params.get("joins") or params.get("detail_table"):
+        add(current_table, params.get("right_column"))
+        add(current_table, params.get("end_column"))
+        add(current_table, params.get("detail_key"))
 
     add(params.get("child_table"), params.get("child_column"))
     add(params.get("child_table"), params.get("child_key"))
@@ -272,7 +271,8 @@ def _entry_columns(entry: dict) -> dict[str, set[str]]:
     add(params.get("master_table"), params.get("master_value_column"))
     add(params.get("master_table"), params.get("master_count_column"))
     add(params.get("master_table"), params.get("cnote_column"))
-    add(params.get("detail_table"), params.get("detail_key"))
+    if not params.get("joins"):
+        add(params.get("detail_table"), params.get("detail_key"))
     add(params.get("detail_table"), params.get("detail_value_column"))
     add(params.get("detail_table"), params.get("detail_count_column"))
     rule_family = entry.get("rule_family")

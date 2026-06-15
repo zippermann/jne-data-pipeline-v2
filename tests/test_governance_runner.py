@@ -63,6 +63,34 @@ def test_entry_tables_collect_all_param_table_roles():
     }
 
 
+def test_pair_consistency_does_not_require_right_cnote_column_on_left_table():
+    entry = {
+        "index_code": "CONS_TEST",
+        "table": "CMS_APICUST",
+        "params": {
+            "left_table": "CMS_APICUST",
+            "left_column": "APICUST_WEIGHT",
+            "right_table": "CMS_CNOTE",
+            "right_column": "CNOTE_WEIGHT",
+            "left_join_key": "APICUST_CNOTE_NO",
+            "right_join_key": "CNOTE_NO",
+            "cnote_column": "CNOTE_NO",
+        },
+    }
+    data = {
+        "CMS_APICUST": pd.DataFrame({
+            "APICUST_CNOTE_NO": ["C1"],
+            "APICUST_WEIGHT": [1.0],
+        }),
+        "CMS_CNOTE": pd.DataFrame({
+            "CNOTE_NO": ["C1"],
+            "CNOTE_WEIGHT": [1.0],
+        }),
+    }
+
+    assert _missing_entry_columns(entry, data) == []
+
+
 def test_minio_listing_uses_manifest_source_prefix_for_reused_tables():
     class Item:
         def __init__(self, object_name):
