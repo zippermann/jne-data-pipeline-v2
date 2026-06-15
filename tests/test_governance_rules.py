@@ -7,6 +7,7 @@ from governance.rules import (
     check_bridged_timeliness,
     check_cnote_im_manifest_before_msj,
     check_manifest_code_sequence,
+    check_pair_consistency,
     check_reference_conditional_completeness,
     check_uniqueness,
     check_conditional_completeness,
@@ -66,6 +67,33 @@ def test_suffix_after_prefix_match_compares_remaining_characters():
         "right_join_key": "DCORRECT_CNOTE_NO",
         "cnote_column": "CNOTE_NO",
         "prefix_length": 3,
+    })
+
+    assert outcome.total_checked == 2
+    assert outcome.total_failed == 1
+    assert outcome.failures.iloc[0]["cnote_no"] == "C2"
+
+
+def test_pair_consistency_handles_same_named_columns_after_merge():
+    data = {
+        "CMS_COST_DTRANSIT_AGEN": pd.DataFrame({
+            "CNOTE_NO": ["C1", "C2"],
+            "CNOTE_QTY": [1, 2],
+        }),
+        "CMS_CNOTE": pd.DataFrame({
+            "CNOTE_NO": ["C1", "C2"],
+            "CNOTE_QTY": [1, 3],
+        }),
+    }
+
+    outcome = check_pair_consistency(data, {
+        "left_table": "CMS_COST_DTRANSIT_AGEN",
+        "left_column": "CNOTE_QTY",
+        "right_table": "CMS_CNOTE",
+        "right_column": "CNOTE_QTY",
+        "left_join_key": "CNOTE_NO",
+        "right_join_key": "CNOTE_NO",
+        "cnote_column": "CNOTE_NO",
     })
 
     assert outcome.total_checked == 2

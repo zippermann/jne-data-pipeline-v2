@@ -107,6 +107,15 @@ def _merged_cnote_values(merged: pd.DataFrame, params: dict) -> pd.Series:
     return pd.Series([""] * len(merged), index=merged.index)
 
 
+def _merged_pair_column(merged: pd.DataFrame, column: str, side: str) -> pd.Series:
+    if column in merged.columns:
+        return merged[column]
+    suffixed = f"{column}_{side}"
+    if suffixed in merged.columns:
+        return merged[suffixed]
+    raise KeyError(column)
+
+
 def check_completeness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     table = data[params["table"]]
     column = params["column"]
@@ -197,8 +206,8 @@ def check_uniqueness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome
 
 def check_pair_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     merged = _merge_pair(data, params)
-    left_value = merged[params["left_column"]]
-    right_value = merged[params["right_column"]]
+    left_value = _merged_pair_column(merged, params["left_column"], "left")
+    right_value = _merged_pair_column(merged, params["right_column"], "right")
     comparable = left_value.notna() & right_value.notna()
     failed = comparable & left_value.ne(right_value)
     # Null comparisons are skipped because some child rows are optional by business path.
@@ -211,8 +220,8 @@ def check_pair_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleO
 def check_prefix_match(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     merged = _merge_pair(data, params)
     prefix_length = int(params.get("prefix_length", 3))
-    left_value = _string_values(merged[params["left_column"]])
-    right_value = _string_values(merged[params["right_column"]])
+    left_value = _string_values(_merged_pair_column(merged, params["left_column"], "left"))
+    right_value = _string_values(_merged_pair_column(merged, params["right_column"], "right"))
     comparable = left_value.ne("") & right_value.ne("")
     failed = comparable & left_value.str[:prefix_length].ne(right_value.str[:prefix_length])
     failed_value = left_value.loc[failed] + " != " + right_value.loc[failed]
@@ -228,8 +237,8 @@ def check_prefix_match(data: dict[str, pd.DataFrame], params: dict) -> RuleOutco
 def check_suffix_after_prefix_match(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     merged = _merge_pair(data, params)
     prefix_length = int(params.get("prefix_length", 3))
-    left_value = _string_values(merged[params["left_column"]])
-    right_value = _string_values(merged[params["right_column"]])
+    left_value = _string_values(_merged_pair_column(merged, params["left_column"], "left"))
+    right_value = _string_values(_merged_pair_column(merged, params["right_column"], "right"))
     comparable = left_value.ne("") & right_value.ne("")
     failed = comparable & left_value.str[prefix_length:].ne(right_value.str[prefix_length:])
     failed_value = left_value.loc[failed] + " != " + right_value.loc[failed]
@@ -245,8 +254,8 @@ def check_suffix_after_prefix_match(data: dict[str, pd.DataFrame], params: dict)
 def check_rounded_pair_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     merged = _merge_pair(data, params)
     decimals = int(params.get("decimals", 0))
-    left_raw = pd.to_numeric(merged[params["left_column"]], errors="coerce")
-    right_raw = pd.to_numeric(merged[params["right_column"]], errors="coerce")
+    left_raw = pd.to_numeric(_merged_pair_column(merged, params["left_column"], "left"), errors="coerce")
+    right_raw = pd.to_numeric(_merged_pair_column(merged, params["right_column"], "right"), errors="coerce")
     comparable = left_raw.notna() & right_raw.notna()
     left_value = left_raw.round(decimals)
     right_value = right_raw.round(decimals)
