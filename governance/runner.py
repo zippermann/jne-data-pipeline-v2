@@ -24,7 +24,12 @@ import pandas as pd
 
 from extractor.bronze import MinioSettings, load_config
 from governance.catalog import CATALOG
-from governance.output import write_governance_results, write_rule_summary
+from governance.output import (
+    write_governance_results,
+    write_governance_results_parquet,
+    write_rule_summary,
+    write_rule_summary_parquet,
+)
 from governance.rules import FAILURE_COLUMNS, RULE_FUNCTIONS, RuleOutcome
 
 
@@ -382,6 +387,16 @@ def _source_from_local(run_path: str | Path) -> GovernanceSource:
     return GovernanceSource(manifest=manifest, tables=_manifest_tables(manifest), run_path=path)
 
 
+def _upload_governance_outputs_to_minio(source: GovernanceSource, paths: Iterable[Path]) -> list[str]:
+    assert source.client is not None and source.bucket is not None and source.prefix is not None
+    uploaded = []
+    for path in paths:
+        object_name = f"{source.prefix}/governance/{path.name}"
+        source.client.fput_object(source.bucket, object_name, str(path))
+        uploaded.append(f"s3://{source.bucket}/{object_name}")
+    return uploaded
+
+
 def _list_minio_parquet_objects(source: GovernanceSource, table: BronzeTable) -> list[str]:
     assert source.client is not None and source.bucket is not None and source.prefix is not None
     prefix = table.source_prefix or f"{source.prefix}/{table.output_name}/"
@@ -693,6 +708,7 @@ def _run_entries(
     output_dir: Path,
     strict: bool,
     fail_on_skipped: bool = False,
+    upload_source: GovernanceSource | None = None,
 ) -> None:
     run_at = datetime.now(timezone.utc).isoformat()
     result_frames: list[pd.DataFrame] = []
@@ -746,9 +762,19 @@ def _run_entries(
 
     result_frame = pd.concat(result_frames, ignore_index=True) if result_frames else pd.DataFrame()
     results_path = write_governance_results(result_frame, output_dir / "governance_results.csv")
+    results_parquet_path = write_governance_results_parquet(result_frame, output_dir / "governance_results.parquet")
     summary_frame = pd.DataFrame(summary_rows)
     summary_path = write_rule_summary(summary_frame, output_dir / "governance_rule_summary.csv")
+    summary_parquet_path = write_rule_summary_parquet(summary_frame, output_dir / "governance_rule_summary.parquet")
     row_status_counts = result_frame["status"].value_counts().to_dict() if not result_frame.empty else {}
+    uploaded_paths = (
+        _upload_governance_outputs_to_minio(
+            upload_source,
+            [results_path, results_parquet_path, summary_path, summary_parquet_path],
+        )
+        if upload_source is not None
+        else []
+    )
 
     print(f"Catalog entries evaluated: {sum(status_counts.values())}")
     print(f"Rule status counts: {status_counts}")
@@ -757,7 +783,11 @@ def _run_entries(
     print(f"CNOTE result rows: {len(result_frame):,}")
     print(f"CNOTE row status counts: {row_status_counts}")
     print(f"Output: {results_path}")
+    print(f"Output parquet: {results_parquet_path}")
     print(f"Rule summary: {summary_path}")
+    print(f"Rule summary parquet: {summary_parquet_path}")
+    for uploaded_path in uploaded_paths:
+        print(f"Uploaded governance output: {uploaded_path}")
     if skipped_count:
         print(f"WARNING: Governance skipped {skipped_count} active rule(s); see {summary_path}", flush=True)
     if fail_on_skipped and skipped_count:
@@ -835,7 +865,15 @@ def run(
                 skipped[entry["index_code"]] = "missing bronze column(s): " + ", ".join(missing_columns)
             else:
                 available_runnable.append(entry)
-        _run_entries(available_runnable, data, skipped, output_dir, strict, fail_on_skipped=fail_on_skipped)
+        _run_entries(
+            available_runnable,
+            data,
+            skipped,
+            output_dir,
+            strict,
+            fail_on_skipped=fail_on_skipped,
+            upload_source=bronze_source if source == "minio" else None,
+        )
 
 
 def main() -> None:

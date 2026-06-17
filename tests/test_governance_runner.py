@@ -17,6 +17,7 @@ from governance.runner import (
     _required_tables,
     _run_entries,
     _scan_drourate_path,
+    _upload_governance_outputs_to_minio,
 )
 
 
@@ -116,6 +117,33 @@ def test_minio_listing_uses_manifest_source_prefix_for_reused_tables():
     table = BronzeTable("ORA_ZONE", "ora_zone", source_prefix="bronze/jne/old_run/ora_zone/")
 
     assert _list_minio_parquet_objects(source, table) == ["bronze/jne/old_run/ora_zone/part-00001.parquet"]
+
+
+def test_governance_output_uploads_under_run_prefix(tmp_path):
+    class Client:
+        def __init__(self):
+            self.uploads = []
+
+        def fput_object(self, bucket, object_name, file_path):
+            self.uploads.append((bucket, object_name, Path(file_path).name))
+
+    client = Client()
+    source = GovernanceSource(
+        manifest={},
+        tables={},
+        client=client,
+        bucket="jne-bronze",
+        prefix="bronze/jne/run_id=R_TEST",
+    )
+    output = tmp_path / "governance_results.parquet"
+    output.write_bytes(b"parquet")
+
+    uploaded = _upload_governance_outputs_to_minio(source, [output])
+
+    assert client.uploads == [
+        ("jne-bronze", "bronze/jne/run_id=R_TEST/governance/governance_results.parquet", "governance_results.parquet")
+    ]
+    assert uploaded == ["s3://jne-bronze/bronze/jne/run_id=R_TEST/governance/governance_results.parquet"]
 
 
 def test_catalog_entries_include_analysis_metadata():
