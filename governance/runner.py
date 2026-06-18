@@ -224,6 +224,8 @@ def _entry_tables(entry: dict) -> set[str]:
         tables.update({"CMS_MFCNOTE", "CMS_MANIFEST"})
     if rule_family == "cnote_im_manifest_before_msj":
         tables.update({"CMS_MFCNOTE", "CMS_MANIFEST", "CMS_DHICNOTE", "CMS_RDSJ", "CMS_DSJ", "CMS_MSJ"})
+    if rule_family == "transit_manifest_required_for_origin_mismatch":
+        tables.update({"CMS_DSMU", "CMS_MSMU", "CMS_MFBAG"})
     return {table.upper() for table in tables if table}
 
 
@@ -286,7 +288,7 @@ def _entry_columns(entry: dict) -> dict[str, set[str]]:
         add("CMS_MFCNOTE", "MFCNOTE_MAN_NO")
         add("CMS_MANIFEST", "MANIFEST_NO")
         add("CMS_MANIFEST", params.get("manifest_code_column", "MANIFEST_CODE"))
-        add("CMS_MANIFEST", params.get("date_column", "MANIFEST_CRDATE"))
+        add(params.get("date_table", "CMS_MANIFEST"), params.get("date_column", "MANIFEST_CRDATE"))
     if rule_family == "cnote_im_manifest_before_msj":
         add("CMS_MFCNOTE", "MFCNOTE_NO")
         add("CMS_MFCNOTE", "MFCNOTE_MAN_NO")
@@ -301,6 +303,14 @@ def _entry_columns(entry: dict) -> dict[str, set[str]]:
         add("CMS_DSJ", "DSJ_NO")
         add("CMS_MSJ", "MSJ_NO")
         add("CMS_MSJ", params.get("msj_date_column", "MSJ_SIGNDATE"))
+    if rule_family == "transit_manifest_required_for_origin_mismatch":
+        add("CMS_DSMU", "DSMU_NO")
+        add("CMS_DSMU", "DSMU_BAG_NO")
+        add("CMS_DSMU", "DSMU_BAG_ORIGIN")
+        add("CMS_MSMU", "MSMU_NO")
+        add("CMS_MSMU", "MSMU_ORIGIN")
+        add("CMS_MFBAG", "MFBAG_NO")
+        add("CMS_MFBAG", "MFBAG_MAN_NO")
     return columns
 
 

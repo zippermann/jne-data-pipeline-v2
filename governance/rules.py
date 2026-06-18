@@ -270,6 +270,77 @@ def check_rounded_pair_consistency(data: dict[str, pd.DataFrame], params: dict) 
     return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
+def check_duplicate_aware_weight_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    merged = _merge_pair(data, params)
+    group_key = params["duplicate_key"]
+    decimals = int(params.get("decimals", 0))
+    duplicate_threshold = float(params.get("duplicate_threshold", 50))
+    left_raw = pd.to_numeric(_merged_pair_column(merged, params["left_column"], "left"), errors="coerce")
+    right_raw = pd.to_numeric(_merged_pair_column(merged, params["right_column"], "right"), errors="coerce")
+    comparable = left_raw.notna() & right_raw.notna() & _present(merged[group_key])
+    work = merged.loc[comparable].copy()
+    if work.empty:
+        return RuleOutcome(0, 0, _empty_failures(), _empty_checks())
+
+    work["_left_raw"] = left_raw.loc[comparable]
+    work["_right_raw"] = right_raw.loc[comparable]
+    work["_left_compare"] = work["_left_raw"].round(decimals)
+    work["_right_compare"] = work["_right_raw"].round(decimals)
+    grouped = work.groupby(group_key, dropna=False)
+    group_size = grouped["_left_compare"].transform("size")
+    group_same_weight = grouped["_left_compare"].transform("nunique").eq(1)
+    group_weight_above_threshold = grouped["_left_compare"].transform("first").gt(duplicate_threshold)
+    aggregate_row = group_size.gt(1) & group_same_weight & group_weight_above_threshold
+
+    direct = work.loc[~aggregate_row].copy()
+    direct_failed = direct["_left_compare"].ne(direct["_right_compare"])
+    direct_failed_value = direct.loc[direct_failed, "_left_raw"].astype(str) + " != " + direct.loc[direct_failed, "_right_raw"].astype(str)
+    direct_failures = _as_failure_frame(
+        _merged_cnote_values(direct.loc[direct_failed], params),
+        direct_failed_value,
+        "paired weights do not match",
+    )
+    direct_checks = _as_check_frame(
+        _merged_cnote_values(direct, params),
+        direct_failed,
+        direct["_left_raw"],
+        direct["_right_raw"],
+    )
+
+    aggregate = work.loc[aggregate_row].copy()
+    if aggregate.empty:
+        aggregate_failures = _empty_failures()
+        aggregate_checks = _empty_checks()
+        aggregate_checked = 0
+    else:
+        aggregate_values = aggregate.groupby(group_key, dropna=False).agg(
+            left_total=("_left_raw", "sum"),
+            right_total=("_right_raw", "sum"),
+        )
+        aggregate_failed = aggregate_values["left_total"].round(decimals).ne(aggregate_values["right_total"].round(decimals))
+        aggregate_failed_value = (
+            aggregate_values.loc[aggregate_failed, "left_total"].astype(str)
+            + " != "
+            + aggregate_values.loc[aggregate_failed, "right_total"].astype(str)
+        )
+        aggregate_failures = _as_failure_frame(
+            pd.Series(aggregate_values.loc[aggregate_failed].index, index=aggregate_values.loc[aggregate_failed].index),
+            aggregate_failed_value,
+            "duplicate-group weight total does not match",
+        )
+        aggregate_checks = _as_check_frame(
+            pd.Series(aggregate_values.index, index=aggregate_values.index),
+            aggregate_failed,
+            aggregate_values["left_total"],
+            aggregate_values["right_total"],
+        )
+        aggregate_checked = len(aggregate_values)
+
+    failures = pd.concat([direct_failures, aggregate_failures], ignore_index=True)
+    checks = pd.concat([direct_checks, aggregate_checks], ignore_index=True)
+    return RuleOutcome(len(direct) + aggregate_checked, len(failures), failures, checks)
+
+
 def check_bridged_pair_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     merged = _merge_bridge(data, params)
     left_value = merged[params["left_column"]]
@@ -513,6 +584,39 @@ def check_count_consistency(data: dict[str, pd.DataFrame], params: dict) -> Rule
     return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
+def check_transit_manifest_required_for_origin_mismatch(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    merged = (
+        data["CMS_DSMU"]
+        .merge(data["CMS_MSMU"], left_on="DSMU_NO", right_on="MSMU_NO")
+        .merge(data["CMS_MFBAG"], left_on="DSMU_BAG_NO", right_on="MFBAG_NO")
+    )
+    dsmu_origin = _string_values(merged["DSMU_BAG_ORIGIN"])
+    msmu_origin = _string_values(merged["MSMU_ORIGIN"])
+    manifest_no = _string_values(merged["MFBAG_MAN_NO"])
+    comparable = dsmu_origin.ne("") & msmu_origin.ne("")
+    origin_mismatch = comparable & dsmu_origin.str[:3].ne(msmu_origin.str[:3])
+    failed = origin_mismatch & ~manifest_no.str.contains("TM", case=False, regex=False, na=False)
+    failed_value = (
+        dsmu_origin.loc[failed]
+        + " != "
+        + msmu_origin.loc[failed]
+        + "; MFBAG_MAN_NO="
+        + manifest_no.loc[failed]
+    )
+    failures = _as_failure_frame(
+        merged.loc[failed, "MFBAG_NO"],
+        failed_value,
+        "TM manifest is required when DSMU and MSMU origin prefixes differ",
+    )
+    checks = _as_check_frame(
+        merged.loc[origin_mismatch, "MFBAG_NO"],
+        failed.loc[origin_mismatch],
+        dsmu_origin.loc[origin_mismatch] + " / " + msmu_origin.loc[origin_mismatch],
+        manifest_no.loc[origin_mismatch],
+    )
+    return RuleOutcome(int(origin_mismatch.sum()), int(failed.sum()), failures, checks)
+
+
 def check_timeliness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     start = data[params["start_table"]]
     end = data[params["end_table"]]
@@ -705,11 +809,13 @@ RULE_FUNCTIONS = {
     "non_negative": check_non_negative,
     "non_negative_not_in_reference": check_non_negative_not_in_reference,
     "count_consistency": check_count_consistency,
+    "transit_manifest_required_for_origin_mismatch": check_transit_manifest_required_for_origin_mismatch,
     "uniqueness": check_uniqueness,
     "pair_consistency": check_pair_consistency,
     "prefix_match": check_prefix_match,
     "suffix_after_prefix_match": check_suffix_after_prefix_match,
     "rounded_pair_consistency": check_rounded_pair_consistency,
+    "duplicate_aware_weight_consistency": check_duplicate_aware_weight_consistency,
     "bridged_pair_consistency": check_bridged_pair_consistency,
     "bridged_substring_match": check_bridged_substring_match,
     "aggregate_sum_consistency": check_aggregate_sum_consistency,

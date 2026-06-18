@@ -6,6 +6,7 @@ from governance.rules import (
     check_bridged_pair_consistency,
     check_bridged_timeliness,
     check_cnote_im_manifest_before_msj,
+    check_duplicate_aware_weight_consistency,
     check_manifest_code_sequence,
     check_pair_consistency,
     check_reference_conditional_completeness,
@@ -15,6 +16,7 @@ from governance.rules import (
     check_rounded_pair_consistency,
     check_suffix_after_prefix_match,
     check_timeliness,
+    check_transit_manifest_required_for_origin_mismatch,
 )
 
 
@@ -225,6 +227,93 @@ def test_rounded_pair_consistency_compares_rounded_values():
     assert outcome.total_checked == 2
     assert outcome.total_failed == 1
     assert outcome.failures.iloc[0]["cnote_no"] == "C2"
+
+
+def test_transit_manifest_required_for_origin_mismatch_requires_tm_manifest():
+    data = {
+        "CMS_DSMU": pd.DataFrame({
+            "DSMU_NO": ["S1", "S2", "S3"],
+            "DSMU_BAG_NO": ["B1", "B2", "B3"],
+            "DSMU_BAG_ORIGIN": ["CGK001", "SUB001", "BDO001"],
+        }),
+        "CMS_MSMU": pd.DataFrame({
+            "MSMU_NO": ["S1", "S2", "S3"],
+            "MSMU_ORIGIN": ["CGK999", "CGK001", "SUB001"],
+        }),
+        "CMS_MFBAG": pd.DataFrame({
+            "MFBAG_NO": ["B1", "B2", "B3"],
+            "MFBAG_MAN_NO": ["OM001", "TM001", "OM003"],
+        }),
+    }
+
+    outcome = check_transit_manifest_required_for_origin_mismatch(data, {})
+
+    assert outcome.total_checked == 2
+    assert outcome.total_failed == 1
+    assert outcome.failures.iloc[0]["cnote_no"] == "B3"
+
+
+def test_duplicate_aware_weight_consistency_uses_direct_check_for_single_dmbag_no():
+    data = {
+        "CMS_DMBAG": pd.DataFrame({
+            "DMBAG_NO": ["D1", "D2"],
+            "DMBAG_BAG_NO": ["B1", "B2"],
+            "DMBAG_WEIGHT": [25, 30],
+        }),
+        "CMS_MFBAG": pd.DataFrame({
+            "MFBAG_NO": ["B1", "B2"],
+            "MFBAG_CTC_WEIGHT": [25, 28],
+        }),
+    }
+
+    outcome = check_duplicate_aware_weight_consistency(data, {
+        "left_table": "CMS_DMBAG",
+        "left_column": "DMBAG_WEIGHT",
+        "right_table": "CMS_MFBAG",
+        "right_column": "MFBAG_CTC_WEIGHT",
+        "left_join_key": "DMBAG_BAG_NO",
+        "right_join_key": "MFBAG_NO",
+        "duplicate_key": "DMBAG_NO",
+        "cnote_column": "DMBAG_NO",
+        "duplicate_threshold": 50,
+        "decimals": 0,
+    })
+
+    assert outcome.total_checked == 2
+    assert outcome.total_failed == 1
+    assert outcome.failures.iloc[0]["cnote_no"] == "D2"
+
+
+def test_duplicate_aware_weight_consistency_aggregates_same_duplicate_weights_above_threshold():
+    data = {
+        "CMS_DMBAG": pd.DataFrame({
+            "DMBAG_NO": ["D1", "D1", "D2", "D2"],
+            "DMBAG_BAG_NO": ["B1", "B2", "B3", "B4"],
+            "DMBAG_WEIGHT": [60, 60, 70, 70],
+        }),
+        "CMS_MFBAG": pd.DataFrame({
+            "MFBAG_NO": ["B1", "B2", "B3", "B4"],
+            "MFBAG_CTC_WEIGHT": [100, 20, 70, 60],
+        }),
+    }
+
+    outcome = check_duplicate_aware_weight_consistency(data, {
+        "left_table": "CMS_DMBAG",
+        "left_column": "DMBAG_WEIGHT",
+        "right_table": "CMS_MFBAG",
+        "right_column": "MFBAG_CTC_WEIGHT",
+        "left_join_key": "DMBAG_BAG_NO",
+        "right_join_key": "MFBAG_NO",
+        "duplicate_key": "DMBAG_NO",
+        "cnote_column": "DMBAG_NO",
+        "duplicate_threshold": 50,
+        "decimals": 0,
+    })
+
+    assert outcome.total_checked == 2
+    assert outcome.total_failed == 1
+    assert outcome.checks.loc[outcome.checks["cnote_no"].eq("D1"), "status"].iloc[0] == "PASS"
+    assert outcome.failures.iloc[0]["cnote_no"] == "D2"
 
 
 def test_timeliness_uses_explicit_join_keys_and_direction():
