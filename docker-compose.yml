@@ -126,6 +126,29 @@ services:
       - jne-network
 
   # ============================================================
+  # CH-UI (optional browser UI for inspecting the ClickHouse mart)
+  # Run with:
+  #   docker compose --profile ui up -d ch-ui
+  # ============================================================
+  ch-ui:
+    container_name: jne-ch-ui
+    image: ghcr.io/caioricciuti/ch-ui:latest
+    profiles: [ui]
+    restart: unless-stopped
+    depends_on:
+      mart-clickhouse:
+        condition: service_healthy
+    environment:
+      CLICKHOUSE_URL: http://mart-clickhouse:8123
+      CONNECTION_NAME: JNE Mart ClickHouse
+    ports:
+      - "${CH_UI_PORT:-3488}:3488"
+    volumes:
+      - ch_ui_data:/app/data
+    networks:
+      - jne-network
+
+  # ============================================================
   # Airflow Init (one-shot: db migrate + create admin user)
   # ============================================================
   airflow-init:
@@ -237,6 +260,7 @@ volumes:
     name: jne-minio-data
   airflow_postgres_data:
   mart_clickhouse_data:
+  ch_ui_data:
 
 # Docker network for service communication
 networks:
