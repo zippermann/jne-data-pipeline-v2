@@ -261,6 +261,56 @@ def test_unmapped_bag_entity_does_not_masquerade_as_cnote():
     assert rows.loc[0, "entity_type"] == "MFBAG"
 
 
+def test_non_cnote_entity_only_populates_cnote_when_in_sample():
+    entry = {
+        "index_code": "COMP_TEST",
+        "indicator": "Completeness",
+        "table": "CMS_MANIFEST",
+        "params": {"column": "MANIFEST_NO", "cnote_column": "MANIFEST_NO"},
+    }
+    outcome = RuleOutcome(
+        total_checked=2,
+        total_failed=0,
+        failures=pd.DataFrame(columns=["cnote_no", "failed_value", "failure_reason"]),
+        checks=pd.DataFrame({
+            "cnote_no": ["MANIFEST1", "CNOTE1"],
+            "status": ["PASS", "PASS"],
+            "variable_1": ["MANIFEST1", "CNOTE1"],
+            "variable_2": ["", ""],
+        }),
+    )
+
+    rows = _check_rows_frame(entry, outcome, {}, {"CNOTE1"})
+
+    assert rows["entity_id"].tolist() == ["MANIFEST1", "CNOTE1"]
+    assert rows["cnote_no"].tolist() == ["", "CNOTE1"]
+
+
+def test_bridge_cnote_outside_sample_keeps_entity_but_blanks_cnote():
+    entry = {
+        "index_code": "COMP_TEST",
+        "indicator": "Completeness",
+        "table": "CMS_MFBAG",
+        "params": {"column": "MFBAG_NO", "cnote_column": "MFBAG_NO"},
+    }
+    outcome = RuleOutcome(
+        total_checked=1,
+        total_failed=0,
+        failures=pd.DataFrame(columns=["cnote_no", "failed_value", "failure_reason"]),
+        checks=pd.DataFrame({
+            "cnote_no": ["BAG1"],
+            "status": ["PASS"],
+            "variable_1": ["BAG1"],
+            "variable_2": [""],
+        }),
+    )
+
+    rows = _check_rows_frame(entry, outcome, {"CMS_MFBAG": {"BAG1": ["OUTSIDE_SAMPLE"]}}, {"CNOTE1"})
+
+    assert rows.loc[0, "entity_id"] == "BAG1"
+    assert rows.loc[0, "cnote_no"] == ""
+
+
 def test_deleted_and_disabled_index_checks_are_not_active():
     by_code = {entry["index_code"]: entry for entry in CATALOG}
 

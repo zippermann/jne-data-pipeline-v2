@@ -733,6 +733,14 @@ def _entity_bridges(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, list[s
     }
 
 
+def _cnote_universe(data: dict[str, pd.DataFrame]) -> set[str]:
+    cnote = data.get("CMS_CNOTE")
+    if cnote is None or "CNOTE_NO" not in cnote.columns:
+        return set()
+    values = _string_key_values(cnote["CNOTE_NO"])
+    return set(values[values.ne("")].drop_duplicates())
+
+
 def _entity_type(entry: dict) -> str:
     table = str(entry.get("table", "")).upper()
     if table.startswith("CMS_"):
@@ -744,6 +752,7 @@ def _check_rows_frame(
     entry: dict,
     outcome: RuleOutcome,
     entity_bridges: dict[str, dict[str, list[str]]] | None = None,
+    cnote_universe: set[str] | None = None,
 ) -> pd.DataFrame:
     checks = outcome.checks
     if checks is None or checks.empty:
@@ -753,6 +762,7 @@ def _check_rows_frame(
     rows["entity_id"] = _string_key_values(rows["entity_id"])
     table_name = str(entry["table"]).upper()
     rows["entity_type"] = _entity_type(entry)
+    cnotes = cnote_universe or set()
 
     bridge_map = entity_bridges or {}
     bridge = bridge_map.get(table_name, {})
@@ -763,11 +773,15 @@ def _check_rows_frame(
         if not mapped.empty:
             mapped = mapped.explode("_cnote_no", ignore_index=True)
             mapped["cnote_no"] = _string_key_values(mapped["_cnote_no"])
+            if cnotes:
+                mapped["cnote_no"] = mapped["cnote_no"].where(mapped["cnote_no"].isin(cnotes), "")
         if not unmapped.empty:
             unmapped["cnote_no"] = ""
         rows = pd.concat([mapped, unmapped], ignore_index=True).drop(columns=["_cnote_no"])
-    else:
+    elif table_name == "CMS_CNOTE":
         rows["cnote_no"] = rows["entity_id"]
+    else:
+        rows["cnote_no"] = rows["entity_id"].where(rows["entity_id"].isin(cnotes), "")
 
     rows["index_code"] = entry["index_code"]
     rows["main_indicator"] = entry.get("indicator", "")
@@ -824,6 +838,7 @@ def _run_entries(
     results_path = output_dir / "governance_results.csv"
     results_parquet_path = output_dir / "governance_results.parquet"
     bridges = _entity_bridges(data)
+    cnotes = _cnote_universe(data)
 
     with GovernanceResultWriter(results_path, results_parquet_path) as result_writer:
         for entry in CATALOG:
@@ -854,7 +869,7 @@ def _run_entries(
                 outcome = _error_outcome(error_message)
 
             status_counts[status] = status_counts.get(status, 0) + 1
-            check_rows = _check_rows_frame(entry, outcome, bridges)
+            check_rows = _check_rows_frame(entry, outcome, bridges, cnotes)
             result_rows = len(check_rows)
             if not check_rows.empty:
                 for row_status, count in check_rows["status"].value_counts().items():
