@@ -8,6 +8,7 @@ from loader.mart_load_clickhouse import (
     GovernanceConfig,
     SchemaConfig,
     _load_table_entries,
+    _load_governance_csv,
     _s3_url,
     _table_object_prefix,
     load_config,
@@ -156,3 +157,30 @@ def test_clickhouse_loader_reuses_existing_reference_tables(monkeypatch):
 
     assert result == {"cms_manifest": 12}
     assert loaded == ["cms_manifest"]
+
+
+def test_clickhouse_governance_csv_rejects_mixed_column_counts(tmp_path):
+    class Client:
+        def __init__(self):
+            self.inserts = []
+
+        def command(self, sql):
+            return None
+
+        def insert(self, table, batch, column_names, database):
+            self.inserts.append((table, batch, column_names, database))
+
+    csv_path = tmp_path / "governance_results.csv"
+    csv_path.write_text("cnote_no,index_code\nC1,COMP1\nC2,COMP2,extra\n", encoding="utf-8")
+    client = Client()
+
+    try:
+        _load_governance_csv(client, "governance", "governance_results", csv_path, batch_size=100)
+    except ValueError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("Expected ValueError for mixed governance CSV row width")
+
+    assert "header has 2" in message
+    assert f"{csv_path}:3" in message
+    assert client.inserts == []

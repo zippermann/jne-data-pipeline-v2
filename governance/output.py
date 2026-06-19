@@ -56,6 +56,8 @@ class GovernanceResultWriter:
         self.parquet_path = Path(parquet_path)
         self.csv_path.parent.mkdir(parents=True, exist_ok=True)
         self.parquet_path.parent.mkdir(parents=True, exist_ok=True)
+        self.csv_path.unlink(missing_ok=True)
+        self.parquet_path.unlink(missing_ok=True)
         self._csv_started = False
         self._parquet_writer: Any | None = None
         self._rows_written = 0

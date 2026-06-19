@@ -5,6 +5,7 @@ import pandas as pd
 
 import extractor.bronze as bronze
 from governance.catalog import CATALOG
+from governance.output import GovernanceResultWriter, RESULT_COLUMNS
 import governance.runner as runner
 from governance.rules import RuleOutcome
 from governance.runner import (
@@ -146,6 +147,39 @@ def test_governance_output_uploads_under_run_prefix(tmp_path):
         ("jne-bronze", "bronze/jne/run_id=R_TEST/governance/governance_results.parquet", "governance_results.parquet")
     ]
     assert uploaded == ["s3://jne-bronze/bronze/jne/run_id=R_TEST/governance/governance_results.parquet"]
+
+
+def test_governance_writer_replaces_existing_output_files(tmp_path):
+    try:
+        import pyarrow  # noqa: F401
+    except ModuleNotFoundError:
+        return
+
+    csv_path = tmp_path / "governance_results.csv"
+    parquet_path = tmp_path / "governance_results.parquet"
+    csv_path.write_text("old_header\nold_row\n", encoding="utf-8")
+    parquet_path.write_bytes(b"old parquet")
+
+    with GovernanceResultWriter(csv_path, parquet_path) as writer:
+        writer.write(pd.DataFrame({
+            "cnote_no": ["C1"],
+            "entity_type": ["CNOTE"],
+            "entity_id": ["C1"],
+            "index_code": ["COMP_TEST"],
+            "main_indicator": ["Completeness"],
+            "column_name": ["CNOTE_NO"],
+            "table_name": ["CMS_CNOTE"],
+            "status": ["PASS"],
+            "variable_1": ["C1"],
+            "variable_2": [""],
+            "impact_billing": ["Y"],
+            "impact_operational": ["Y"],
+        }))
+
+    lines = csv_path.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == ",".join(RESULT_COLUMNS)
+    assert "old_header" not in lines
+    assert "old_row" not in lines
 
 
 def test_catalog_entries_include_analysis_metadata():

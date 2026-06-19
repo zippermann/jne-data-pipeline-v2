@@ -407,7 +407,13 @@ def _load_governance_csv(
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.reader(handle)
         next(reader, None)
-        for row in reader:
+        for line_number, row in enumerate(reader, start=2):
+            if len(row) != len(columns):
+                preview = ",".join(row[: min(len(row), 5)])
+                raise ValueError(
+                    f"Governance CSV row has {len(row)} columns but header has {len(columns)} "
+                    f"at {path}:{line_number}. First values: {preview!r}"
+                )
             batch.append([value if value != "" else None for value in row])
             if len(batch) >= batch_size:
                 client.insert(
