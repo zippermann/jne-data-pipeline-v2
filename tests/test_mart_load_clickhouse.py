@@ -31,7 +31,7 @@ def _config() -> MartClickHouseConfig:
             Path("governance/outputs/R_TEST/governance_results.csv"),
             Path("governance/outputs/R_TEST/governance_rule_summary.csv"),
         ),
-        skip_stages=("reference",),
+        reuse_existing_stages=("reference",),
     )
 
 
@@ -68,7 +68,8 @@ governance:
   summary_path: "governance/outputs/${RUN_ID}/governance_rule_summary.csv"
 mart:
   load_mode: "latest_snapshot"
-  skip_stages: ["reference"]
+  skip_stages: []
+  reuse_existing_stages: ["reference"]
 """,
         encoding="utf-8",
     )
@@ -77,7 +78,8 @@ mart:
 
     assert config.bronze.run_prefix == "bronze/jne/run_id=R_TEST"
     assert config.clickhouse.password == "secret"
-    assert config.skip_stages == ("reference",)
+    assert config.skip_stages == ()
+    assert config.reuse_existing_stages == ("reference",)
     assert config.governance.results_path.as_posix() == "governance/outputs/R_TEST/governance_results.csv"
     assert config.governance.summary_path.as_posix() == "governance/outputs/R_TEST/governance_rule_summary.csv"
 
@@ -104,7 +106,7 @@ def test_clickhouse_derived_prefix_defaults_under_derived_folder():
     assert prefix == "bronze/jne/run_id=R_TEST/derived/cms_cnote_transformed/"
 
 
-def test_clickhouse_loader_replaces_raw_cnote_with_transformed_cnote(monkeypatch):
+def test_clickhouse_loader_replaces_raw_cnote_and_loads_missing_reference(monkeypatch):
     loaded = []
 
     def fake_load(client, config, schema, table_info, label, default_parent=None):
@@ -112,13 +114,45 @@ def test_clickhouse_loader_replaces_raw_cnote_with_transformed_cnote(monkeypatch
         return 12
 
     monkeypatch.setattr("loader.mart_load_clickhouse._load_s3_table", fake_load)
+    monkeypatch.setattr("loader.mart_load_clickhouse._table_exists", lambda client, schema, table: False)
     entries = [
         {"output_name": "cms_cnote", "stage": "anchor", "row_count": 12},
         {"output_name": "cms_cnote_transformed", "stage": "derived", "row_count": 12},
         {"output_name": "cms_drourate", "stage": "reference", "row_count": 78_000_000},
     ]
 
-    result = _load_table_entries(object(), _config(), entries, "bronze_staging", "bronze", default_parent="derived")
+    result = _load_table_entries(
+        object(),
+        _config(),
+        entries,
+        "bronze_staging",
+        "bronze",
+        default_parent="derived",
+        target_schema="bronze",
+    )
 
-    assert result == {"cms_cnote": 12}
-    assert loaded == [("cms_cnote_transformed", "derived")]
+    assert result == {"cms_cnote": 12, "cms_drourate": 12}
+    assert loaded == [("cms_cnote_transformed", "derived"), ("cms_drourate", "derived")]
+
+
+def test_clickhouse_loader_reuses_existing_reference_tables(monkeypatch):
+    loaded = []
+
+    def fake_load(client, config, schema, table_info, label, default_parent=None):
+        loaded.append(table_info["output_name"])
+        return 12
+
+    def fake_exists(client, schema, table):
+        return table == "cms_drourate"
+
+    monkeypatch.setattr("loader.mart_load_clickhouse._load_s3_table", fake_load)
+    monkeypatch.setattr("loader.mart_load_clickhouse._table_exists", fake_exists)
+    entries = [
+        {"output_name": "cms_drourate", "stage": "reference", "row_count": 78_000_000},
+        {"output_name": "cms_manifest", "stage": "bag_manifest", "row_count": 12},
+    ]
+
+    result = _load_table_entries(object(), _config(), entries, "bronze_staging", "bronze", target_schema="bronze")
+
+    assert result == {"cms_manifest": 12}
+    assert loaded == ["cms_manifest"]

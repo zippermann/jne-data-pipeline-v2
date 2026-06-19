@@ -87,6 +87,7 @@ class MartClickHouseConfig:
     schemas: SchemaConfig
     governance: GovernanceConfig
     skip_stages: tuple[str, ...] = ()
+    reuse_existing_stages: tuple[str, ...] = ()
     load_mode: str = "latest_snapshot"
 
 
@@ -144,6 +145,7 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
             summary_path=Path(governance.get("summary_path") or default_summary_path),
         ),
         skip_stages=tuple(str(stage).lower() for stage in mart.get("skip_stages", [])),
+        reuse_existing_stages=tuple(str(stage).lower() for stage in mart.get("reuse_existing_stages", [])),
         load_mode=mart.get("load_mode", "latest_snapshot"),
     )
     if config.load_mode != "latest_snapshot":
@@ -281,6 +283,19 @@ def _staging_tables(client: Any, schema: str) -> list[str]:
     return [row[0] for row in result.result_rows]
 
 
+def _table_exists(client: Any, schema: str, table: str) -> bool:
+    result = client.query(
+        """
+        SELECT count()
+        FROM system.tables
+        WHERE database = {database:String}
+          AND name = {table:String}
+        """,
+        parameters={"database": schema, "table": table},
+    )
+    return bool(result.result_rows and int(result.result_rows[0][0]) > 0)
+
+
 def _create_empty_table_from_s3(client: Any, schema: str, table: str, s3_expr: str) -> None:
     _command(
         client,
@@ -321,13 +336,23 @@ def _load_table_entries(
     staging_schema: str,
     label: str,
     default_parent: str | None = None,
+    target_schema: str | None = None,
 ) -> dict[str, int]:
     loaded = {}
     for table_info in entries:
         source_name = table_info["output_name"]
         table_name = _mart_table_name(table_info)
+        stage = str(table_info.get("stage", "")).lower()
         if label == "bronze" and _should_skip_bronze_table(table_info, config):
             _log(f"Skipping ClickHouse bronze.{source_name}; mart uses transformed cms_cnote and skips configured stages")
+            continue
+        if (
+            label == "bronze"
+            and target_schema
+            and stage in config.reuse_existing_stages
+            and _table_exists(client, target_schema, table_name)
+        ):
+            _log(f"Reusing existing ClickHouse {target_schema}.{table_name}; stage={stage} is configured for reuse")
             continue
         loaded[table_name] = _load_s3_table(
             client,
@@ -515,7 +540,8 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
     _log(
         "Starting ClickHouse mart load: "
         f"bronze=s3://{config.bronze.bucket}/{config.bronze.run_prefix}, "
-        f"skip_stages={list(config.skip_stages)}"
+        f"skip_stages={list(config.skip_stages)}, "
+        f"reuse_existing_stages={list(config.reuse_existing_stages)}"
     )
     minio_client = _minio_client(config)
     manifest = _read_manifest(minio_client, config)
@@ -538,6 +564,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
             manifest.get("tables", []),
             config.schemas.bronze_staging,
             "bronze",
+            target_schema=config.schemas.bronze,
         )
         if manifest.get("derived"):
             _log("Loading transformed CNOTE into ClickHouse bronze staging")

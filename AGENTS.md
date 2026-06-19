@@ -131,9 +131,9 @@ Use `config/mart_clickhouse.yaml` for the ClickHouse mart. The mart loader
 publishes tables into the `bronze` database and replaces raw `bronze.cms_cnote`
 with the transformed
 `derived/cms_cnote_transformed` data. Governance output lands in
-`governance.governance_results`. It skips configured stages such as `reference`
-by default so large reference tables like `cms_drourate` are not loaded into the
-mart.
+`governance.governance_results`. Reference tables such as `cms_drourate` are
+loaded into the mart when missing, then reused on later mart loads instead of
+being reloaded every run.
 
 Environment placeholders like `${ORACLE_USER}` are expanded at runtime.
 
@@ -196,5 +196,5 @@ python -m governance.runner --source synthetic --no-strict --output-dir /tmp/jne
 - Preserve relational bronze semantics: no dedupe, no joins, no pivoting during
   extraction.
 - Treat MinIO bronze Parquet as the durable data lake artifact.
-- Keep mart loaders manifest-driven and avoid loading bulky reference tables by
-  default unless the user explicitly asks for them.
+- Keep mart loaders manifest-driven and reuse bulky reference tables by default
+  once they already exist in ClickHouse.

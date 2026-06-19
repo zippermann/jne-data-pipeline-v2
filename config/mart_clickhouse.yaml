@@ -30,4 +30,5 @@ governance:
 
 mart:
   load_mode: "latest_snapshot"
-  skip_stages: ["reference"]
+  skip_stages: []
+  reuse_existing_stages: ["reference"]
