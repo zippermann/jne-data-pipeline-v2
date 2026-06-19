@@ -10,6 +10,8 @@ import pandas as pd
 
 RESULT_COLUMNS = [
     "cnote_no",
+    "entity_type",
+    "entity_id",
     "index_code",
     "main_indicator",
     "column_name",
@@ -41,6 +43,10 @@ RULE_SUMMARY_COLUMNS = [
 def _result_columns(results: pd.DataFrame) -> pd.DataFrame:
     if results.empty:
         return pd.DataFrame(columns=RESULT_COLUMNS)
+    results = results.copy()
+    for column in RESULT_COLUMNS:
+        if column not in results.columns:
+            results[column] = ""
     return results.loc[:, RESULT_COLUMNS].astype("string").fillna("")
 
 

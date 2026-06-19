@@ -11,6 +11,8 @@ from governance.runner import (
     GovernanceSource,
     BronzeTable,
     _entry_tables,
+    _check_rows_frame,
+    _entity_bridges,
     _missing_entry_columns,
     _list_minio_parquet_objects,
     _read_parquet_files,
@@ -161,6 +163,68 @@ def test_catalog_entries_include_analysis_metadata():
     assert by_code["COMP1V19"]["impact_operational"] == "Y"
     assert by_code["ACCU1A25"]["impact_billing"] == "Y"
     assert by_code["ACCU1A25"]["impact_operational"] == "Y"
+
+
+def test_bag_governance_rows_keep_entity_id_and_expand_to_cnotes():
+    data = {
+        "CMS_MFCNOTE": pd.DataFrame({
+            "MFCNOTE_NO": ["CNOTE1", "CNOTE2"],
+            "MFCNOTE_BAG_NO": ["BAG1", "BAG1"],
+        }),
+        "CMS_DMBAG": pd.DataFrame({
+            "DMBAG_NO": ["DMBAG1"],
+            "DMBAG_BAG_NO": ["BAG1"],
+        }),
+    }
+    entry = {
+        "index_code": "COMP_TEST",
+        "indicator": "Unique Identifier",
+        "table": "CMS_DMBAG",
+        "params": {"column": "DMBAG_BAG_NO", "cnote_column": "DMBAG_BAG_NO"},
+    }
+    outcome = RuleOutcome(
+        total_checked=1,
+        total_failed=0,
+        failures=pd.DataFrame(columns=["cnote_no", "failed_value", "failure_reason"]),
+        checks=pd.DataFrame({
+            "cnote_no": ["BAG1"],
+            "status": ["PASS"],
+            "variable_1": ["BAG1"],
+            "variable_2": [""],
+        }),
+    )
+
+    rows = _check_rows_frame(entry, outcome, _entity_bridges(data))
+
+    assert rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
+    assert rows["entity_id"].tolist() == ["BAG1", "BAG1"]
+    assert rows["entity_type"].tolist() == ["DMBAG", "DMBAG"]
+
+
+def test_unmapped_bag_entity_does_not_masquerade_as_cnote():
+    entry = {
+        "index_code": "COMP_TEST",
+        "indicator": "Unique Identifier",
+        "table": "CMS_MFBAG",
+        "params": {"column": "MFBAG_NO", "cnote_column": "MFBAG_NO"},
+    }
+    outcome = RuleOutcome(
+        total_checked=1,
+        total_failed=0,
+        failures=pd.DataFrame(columns=["cnote_no", "failed_value", "failure_reason"]),
+        checks=pd.DataFrame({
+            "cnote_no": ["BAG_ONLY"],
+            "status": ["PASS"],
+            "variable_1": ["BAG_ONLY"],
+            "variable_2": [""],
+        }),
+    )
+
+    rows = _check_rows_frame(entry, outcome, {"CMS_MFBAG": {}})
+
+    assert rows.loc[0, "cnote_no"] == ""
+    assert rows.loc[0, "entity_id"] == "BAG_ONLY"
+    assert rows.loc[0, "entity_type"] == "MFBAG"
 
 
 def test_deleted_and_disabled_index_checks_are_not_active():

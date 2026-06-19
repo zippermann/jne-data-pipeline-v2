@@ -666,14 +666,109 @@ def _entry_column_name(entry: dict) -> str:
     return ", ".join(candidates)
 
 
+def _string_key_values(values: pd.Series) -> pd.Series:
+    return values.fillna("").astype("string").str.strip()
+
+
+def _group_unique_strings(frame: pd.DataFrame, key_column: str, value_column: str) -> dict[str, list[str]]:
+    if frame.empty or key_column not in frame.columns or value_column not in frame.columns:
+        return {}
+    work = pd.DataFrame({
+        "key": _string_key_values(frame[key_column]),
+        "value": _string_key_values(frame[value_column]),
+    })
+    work = work.loc[work["key"].ne("") & work["value"].ne("")].drop_duplicates()
+    if work.empty:
+        return {}
+    grouped = work.groupby("key", sort=False)["value"].agg(list)
+    return {str(key): [str(value) for value in values] for key, values in grouped.items()}
+
+
+def _bag_to_cnotes(data: dict[str, pd.DataFrame]) -> dict[str, list[str]]:
+    mfcnote = data.get("CMS_MFCNOTE")
+    if mfcnote is None:
+        return {}
+    return _group_unique_strings(mfcnote, "MFCNOTE_BAG_NO", "MFCNOTE_NO")
+
+
+def _dmbag_to_cnotes(data: dict[str, pd.DataFrame], bag_to_cnotes: dict[str, list[str]]) -> dict[str, list[str]]:
+    dmbag = data.get("CMS_DMBAG")
+    if dmbag is None or not bag_to_cnotes:
+        return {}
+
+    bridge = dict(bag_to_cnotes)
+    if "DMBAG_NO" not in dmbag.columns or "DMBAG_BAG_NO" not in dmbag.columns:
+        return bridge
+
+    bag_rows = pd.DataFrame({
+        "dmbag_no": _string_key_values(dmbag["DMBAG_NO"]),
+        "bag_no": _string_key_values(dmbag["DMBAG_BAG_NO"]),
+    })
+    bag_rows = bag_rows.loc[bag_rows["dmbag_no"].ne("") & bag_rows["bag_no"].ne("")].drop_duplicates()
+    for dmbag_no, group in bag_rows.groupby("dmbag_no", sort=False):
+        cnotes: list[str] = []
+        seen: set[str] = set()
+        for bag_no in group["bag_no"]:
+            for cnote_no in bag_to_cnotes.get(str(bag_no), []):
+                if cnote_no not in seen:
+                    seen.add(cnote_no)
+                    cnotes.append(cnote_no)
+        if cnotes:
+            bridge[str(dmbag_no)] = cnotes
+    return bridge
+
+
+def _entity_bridges(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, list[str]]]:
+    bag_to_cnotes = _bag_to_cnotes(data)
+    dmbag_to_cnotes = _dmbag_to_cnotes(data, bag_to_cnotes)
+    mfcnote_to_cnote: dict[str, list[str]] = {}
+    mfcnote = data.get("CMS_MFCNOTE")
+    if mfcnote is not None and "MFCNOTE_NO" in mfcnote.columns:
+        values = _string_key_values(mfcnote["MFCNOTE_NO"])
+        mfcnote_to_cnote = {str(value): [str(value)] for value in values[values.ne("")].drop_duplicates()}
+    return {
+        "CMS_MFCNOTE": mfcnote_to_cnote,
+        "CMS_MFBAG": bag_to_cnotes,
+        "CMS_DMBAG": dmbag_to_cnotes,
+    }
+
+
+def _entity_type(entry: dict) -> str:
+    table = str(entry.get("table", "")).upper()
+    if table.startswith("CMS_"):
+        return table.removeprefix("CMS_")
+    return table
+
+
 def _check_rows_frame(
     entry: dict,
     outcome: RuleOutcome,
+    entity_bridges: dict[str, dict[str, list[str]]] | None = None,
 ) -> pd.DataFrame:
     checks = outcome.checks
     if checks is None or checks.empty:
         return pd.DataFrame()
     rows = checks.copy()
+    rows = rows.rename(columns={"cnote_no": "entity_id"})
+    rows["entity_id"] = _string_key_values(rows["entity_id"])
+    table_name = str(entry["table"]).upper()
+    rows["entity_type"] = _entity_type(entry)
+
+    bridge_map = entity_bridges or {}
+    bridge = bridge_map.get(table_name, {})
+    if table_name in bridge_map:
+        rows["_cnote_no"] = rows["entity_id"].map(bridge)
+        mapped = rows.loc[rows["_cnote_no"].map(lambda value: isinstance(value, list) and len(value) > 0)].copy()
+        unmapped = rows.loc[~rows.index.isin(mapped.index)].copy()
+        if not mapped.empty:
+            mapped = mapped.explode("_cnote_no", ignore_index=True)
+            mapped["cnote_no"] = _string_key_values(mapped["_cnote_no"])
+        if not unmapped.empty:
+            unmapped["cnote_no"] = ""
+        rows = pd.concat([mapped, unmapped], ignore_index=True).drop(columns=["_cnote_no"])
+    else:
+        rows["cnote_no"] = rows["entity_id"]
+
     rows["index_code"] = entry["index_code"]
     rows["main_indicator"] = entry.get("indicator", "")
     rows["column_name"] = _entry_column_name(entry)
@@ -728,6 +823,7 @@ def _run_entries(
     skipped_count = 0
     results_path = output_dir / "governance_results.csv"
     results_parquet_path = output_dir / "governance_results.parquet"
+    bridges = _entity_bridges(data)
 
     with GovernanceResultWriter(results_path, results_parquet_path) as result_writer:
         for entry in CATALOG:
@@ -745,8 +841,7 @@ def _run_entries(
             params.setdefault("table", entry["table"])
             try:
                 outcome = RULE_FUNCTIONS[entry["rule_family"]](data, params)
-                result_rows = 0 if outcome.checks is None else len(outcome.checks)
-                if result_rows == 0:
+                if outcome.checks is None or len(outcome.checks) == 0:
                     status = "NO_ROWS"
                 else:
                     status = "FAIL" if outcome.total_failed else "PASS"
@@ -757,10 +852,10 @@ def _run_entries(
                 error_message = str(exc)
                 print(f"ERROR: {entry['index_code']} failed: {exc}", flush=True)
                 outcome = _error_outcome(error_message)
-                result_rows = 0
 
             status_counts[status] = status_counts.get(status, 0) + 1
-            check_rows = _check_rows_frame(entry, outcome)
+            check_rows = _check_rows_frame(entry, outcome, bridges)
+            result_rows = len(check_rows)
             if not check_rows.empty:
                 for row_status, count in check_rows["status"].value_counts().items():
                     row_status_counts[str(row_status)] = row_status_counts.get(str(row_status), 0) + int(count)
