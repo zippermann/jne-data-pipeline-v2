@@ -40,13 +40,6 @@ x-minio-env: &minio-env
   MINIO_BUCKET: ${MINIO_BUCKET:-jne-bronze}
   MINIO_SECURE: "false"
 
-x-mart-postgres-env: &mart-postgres-env
-  MART_POSTGRES_HOST: mart-postgres
-  MART_POSTGRES_PORT: "5432"
-  MART_POSTGRES_DB: ${MART_POSTGRES_DB:-jne_mart}
-  MART_POSTGRES_USER: ${MART_POSTGRES_USER:-jne_mart}
-  MART_POSTGRES_PASSWORD: ${MART_POSTGRES_PASSWORD:-jne_mart}
-
 x-mart-clickhouse-env: &mart-clickhouse-env
   MART_CLICKHOUSE_HOST: mart-clickhouse
   MART_CLICKHOUSE_PORT: "8123"
@@ -102,29 +95,6 @@ services:
       - airflow_postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - jne-network
-
-  # ============================================================
-  # Mart PostgreSQL (JNE serving copy for BI/Tableau)
-  # ============================================================
-  mart-postgres:
-    container_name: jne-mart-postgres
-    image: postgres:15-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${MART_POSTGRES_USER:-jne_mart}
-      POSTGRES_PASSWORD: ${MART_POSTGRES_PASSWORD:-jne_mart}
-      POSTGRES_DB: ${MART_POSTGRES_DB:-jne_mart}
-    ports:
-      - "${MART_POSTGRES_PORT:-5433}:5432"
-    volumes:
-      - mart_postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${MART_POSTGRES_USER:-jne_mart} -d ${MART_POSTGRES_DB:-jne_mart}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -196,7 +166,7 @@ services:
       minio:
         condition: service_healthy
     environment:
-      <<: [*oracle-env, *minio-env, *mart-postgres-env, *mart-clickhouse-env]
+      <<: [*oracle-env, *minio-env, *mart-clickhouse-env]
     volumes: *airflow-volumes
     command: >-
       bash -c "cd /opt/airflow/project && python -m extractor.bronze --config config/config.yaml --run-id bronze_init_$$(date -u +%Y%m%dT%H%M%S)"
@@ -221,7 +191,7 @@ services:
       mart-clickhouse:
         condition: service_healthy
     environment:
-      <<: [*airflow-env, *oracle-env, *minio-env, *mart-postgres-env, *mart-clickhouse-env]
+      <<: [*airflow-env, *oracle-env, *minio-env, *mart-clickhouse-env]
       AIRFLOW__WEBSERVER__RBAC: "True"
     volumes: *airflow-volumes
     ports:
@@ -255,7 +225,7 @@ services:
           cpus: '2'
           memory: 4G
     environment:
-      <<: [*airflow-env, *oracle-env, *minio-env, *mart-postgres-env, *mart-clickhouse-env]
+      <<: [*airflow-env, *oracle-env, *minio-env, *mart-clickhouse-env]
     volumes: *airflow-volumes
     command: scheduler
     networks:
@@ -266,7 +236,6 @@ volumes:
   minio_data:
     name: jne-minio-data
   airflow_postgres_data:
-  mart_postgres_data:
   mart_clickhouse_data:
 
 # Docker network for service communication

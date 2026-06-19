@@ -2,6 +2,7 @@ oracledb>=2.0
 pyarrow>=15.0
 pyyaml>=6.0
 minio>=7.2
-psycopg2-binary>=2.9
 duckdb>=1.0
 clickhouse-connect>=0.8
+# Airflow metadata DB driver only; the JNE mart target is ClickHouse.
+psycopg2-binary>=2.9

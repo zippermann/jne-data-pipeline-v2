@@ -84,17 +84,6 @@ with DAG(
         ),
     )
 
-    load_data_mart_postgres = BashOperator(
-        task_id="load_data_mart_postgres",
-        bash_command=(
-            "cd /opt/airflow/project && "
-            f"{run_context}"
-            '{{ "python -m loader.mart_load --config config/mart.yaml" '
-            'if dag_run.conf.get("load_postgres", True) else '
-            '"echo Postgres mart load disabled by dag_run.conf" }}'
-        ),
-    )
-
     load_data_mart_clickhouse = BashOperator(
         task_id="load_data_mart_clickhouse",
         bash_command=(
@@ -107,4 +96,4 @@ with DAG(
     )
 
     extract_oracle >> run_governance >> transform_data
-    transform_data >> [load_data_mart_postgres, load_data_mart_clickhouse]
+    transform_data >> load_data_mart_clickhouse
