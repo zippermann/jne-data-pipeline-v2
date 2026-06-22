@@ -62,11 +62,13 @@ BRIDGE_COLUMNS: dict[str, set[str]] = {
     "CMS_MHI_HOC": {"MHI_NO"},
     "CMS_DHOCNOTE": {"DHOCNOTE_NO", "DHOCNOTE_CNOTE_NO"},
     "CMS_MHOCNOTE": {"MHOCNOTE_NO"},
+    "CMS_DHOUNDEL_POD": {"DHOUNDEL_NO", "DHOUNDEL_CNOTE_NO"},
+    "CMS_MHOUNDEL_POD": {"MHOUNDEL_NO"},
     "CMS_DSMU": {"DSMU_NO", "DSMU_BAG_NO"},
     "CMS_MSMU": {"MSMU_NO"},
     "CMS_DSJ": {"DSJ_NO", "DSJ_HVO_NO"},
     "CMS_MSJ": {"MSJ_NO"},
-    "CMS_RDSJ": {"RDSJ_HVO_NO", "RDSJ_HVI_NO"},
+    "CMS_RDSJ": {"RDSJ_NO", "RDSJ_HVO_NO", "RDSJ_HVI_NO"},
 }
 
 
@@ -804,6 +806,10 @@ def _mhocnote_to_cnotes(data: dict[str, pd.DataFrame]) -> dict[str, list[str]]:
     return _group_unique_strings(data.get("CMS_DHOCNOTE", pd.DataFrame()), "DHOCNOTE_NO", "DHOCNOTE_CNOTE_NO")
 
 
+def _mhoundel_pod_to_cnotes(data: dict[str, pd.DataFrame]) -> dict[str, list[str]]:
+    return _group_unique_strings(data.get("CMS_DHOUNDEL_POD", pd.DataFrame()), "DHOUNDEL_NO", "DHOUNDEL_CNOTE_NO")
+
+
 def _dsmu_to_cnotes(data: dict[str, pd.DataFrame], dmbag_to_cnotes: dict[str, list[str]]) -> dict[str, list[str]]:
     return _map_through_bridge(data.get("CMS_DSMU"), "DSMU_NO", "DSMU_BAG_NO", dmbag_to_cnotes)
 
@@ -839,6 +845,18 @@ def _dsj_to_cnotes(data: dict[str, pd.DataFrame], mhicnote_to_cnotes: dict[str, 
     return _map_through_bridge(data.get("CMS_DSJ"), "DSJ_NO", "DSJ_HVO_NO", hvo_to_cnotes)
 
 
+def _rdsj_to_cnotes(data: dict[str, pd.DataFrame], dsj_to_cnotes: dict[str, list[str]]) -> dict[str, list[str]]:
+    rdsj = data.get("CMS_RDSJ")
+    if rdsj is None or "RDSJ_NO" not in rdsj.columns:
+        return {}
+    bridge: dict[str, list[str]] = {}
+    for rdsj_no in _string_key_values(rdsj["RDSJ_NO"])[lambda values: values.ne("")].drop_duplicates():
+        cnotes = dsj_to_cnotes.get(str(rdsj_no), [])
+        if cnotes:
+            bridge[str(rdsj_no)] = cnotes
+    return bridge
+
+
 def _msj_to_cnotes(data: dict[str, pd.DataFrame], dsj_to_cnotes: dict[str, list[str]]) -> dict[str, list[str]]:
     msj = data.get("CMS_MSJ")
     if msj is None or "MSJ_NO" not in msj.columns:
@@ -860,9 +878,11 @@ def _entity_bridges(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, list[s
     mhicnote_to_cnotes = _mhicnote_to_cnotes(data)
     mhi_hoc_to_cnotes = _mhi_hoc_to_cnotes(data)
     mhocnote_to_cnotes = _mhocnote_to_cnotes(data)
+    mhoundel_pod_to_cnotes = _mhoundel_pod_to_cnotes(data)
     dsmu_to_cnotes = _dsmu_to_cnotes(data, dmbag_to_cnotes)
     msmu_to_cnotes = _msmu_to_cnotes(data, dsmu_to_cnotes)
     dsj_to_cnotes = _dsj_to_cnotes(data, mhicnote_to_cnotes)
+    rdsj_to_cnotes = _rdsj_to_cnotes(data, dsj_to_cnotes)
     msj_to_cnotes = _msj_to_cnotes(data, dsj_to_cnotes)
     mfcnote_to_cnote: dict[str, list[str]] = {}
     mfcnote = data.get("CMS_MFCNOTE")
@@ -879,9 +899,11 @@ def _entity_bridges(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, list[s
         "CMS_MHICNOTE": mhicnote_to_cnotes,
         "CMS_MHI_HOC": mhi_hoc_to_cnotes,
         "CMS_MHOCNOTE": mhocnote_to_cnotes,
+        "CMS_MHOUNDEL_POD": mhoundel_pod_to_cnotes,
         "CMS_DSMU": dsmu_to_cnotes,
         "CMS_MSMU": msmu_to_cnotes,
         "CMS_DSJ": dsj_to_cnotes,
+        "CMS_RDSJ": rdsj_to_cnotes,
         "CMS_MSJ": msj_to_cnotes,
     }
 

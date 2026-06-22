@@ -206,6 +206,12 @@ def test_drsheet_pra_uses_existing_cnote_column_as_entity_key():
             assert entry["params"].get("cnote_column") == "DRSHEET_CNOTE_NO"
 
 
+def test_mhi_hoc_uses_mhi_no_as_entity_key():
+    for entry in CATALOG:
+        if entry.get("table") == "CMS_MHI_HOC" and entry.get("rule_family") != "bridged_timeliness":
+            assert entry["params"].get("cnote_column") == "MHI_NO"
+
+
 def test_bag_governance_rows_keep_entity_id_and_links_cnotes_separately():
     data = {
         "CMS_MFCNOTE": pd.DataFrame({
@@ -310,6 +316,10 @@ def test_confirmed_operational_entities_bridge_to_cnotes():
             "DHOCNOTE_NO": ["HOC1"],
             "DHOCNOTE_CNOTE_NO": ["CNOTE5"],
         }),
+        "CMS_DHOUNDEL_POD": pd.DataFrame({
+            "DHOUNDEL_NO": ["UND1"],
+            "DHOUNDEL_CNOTE_NO": ["CNOTE6"],
+        }),
         "CMS_DMBAG": pd.DataFrame({
             "DMBAG_NO": ["MMBAG1"],
             "DMBAG_BAG_NO": ["BAG1"],
@@ -322,12 +332,13 @@ def test_confirmed_operational_entities_bridge_to_cnotes():
             "MSMU_NO": ["SMU1"],
         }),
         "CMS_RDSJ": pd.DataFrame({
+            "RDSJ_NO": ["RDSJ1"],
             "RDSJ_HVO_NO": ["HVO1"],
             "RDSJ_HVI_NO": ["HIC1"],
         }),
         "CMS_DSJ": pd.DataFrame({
-            "DSJ_NO": ["MSJ1"],
-            "DSJ_HVO_NO": ["HVO1"],
+            "DSJ_NO": ["MSJ1", "RDSJ1"],
+            "DSJ_HVO_NO": ["HVO1", "HVO1"],
         }),
         "CMS_MSJ": pd.DataFrame({
             "MSJ_NO": ["MSJ1"],
@@ -341,9 +352,11 @@ def test_confirmed_operational_entities_bridge_to_cnotes():
     assert bridges["CMS_MHICNOTE"]["HIC1"] == ["CNOTE3"]
     assert bridges["CMS_MHI_HOC"]["MHI1"] == ["CNOTE4"]
     assert bridges["CMS_MHOCNOTE"]["HOC1"] == ["CNOTE5"]
+    assert bridges["CMS_MHOUNDEL_POD"]["UND1"] == ["CNOTE6"]
     assert bridges["CMS_DSMU"]["SMU1"] == ["CNOTE1"]
     assert bridges["CMS_MSMU"]["SMU1"] == ["CNOTE1"]
     assert bridges["CMS_DSJ"]["MSJ1"] == ["CNOTE3"]
+    assert bridges["CMS_RDSJ"]["RDSJ1"] == ["CNOTE3"]
     assert bridges["CMS_MSJ"]["MSJ1"] == ["CNOTE3"]
 
 
