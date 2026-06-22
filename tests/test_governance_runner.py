@@ -200,6 +200,12 @@ def test_catalog_entries_include_analysis_metadata():
     assert by_code["ACCU1A25"]["impact_operational"] == "Y"
 
 
+def test_drsheet_pra_uses_existing_cnote_column_as_entity_key():
+    for entry in CATALOG:
+        if entry.get("table") == "CMS_DRSHEET_PRA":
+            assert entry["params"].get("cnote_column") == "DRSHEET_CNOTE_NO"
+
+
 def test_bag_governance_rows_keep_entity_id_and_links_cnotes_separately():
     data = {
         "CMS_MFCNOTE": pd.DataFrame({
@@ -238,6 +244,107 @@ def test_bag_governance_rows_keep_entity_id_and_links_cnotes_separately():
     assert rows["entity_type"].tolist() == ["DMBAG"]
     assert link_rows["result_id"].tolist() == ["R000000000001", "R000000000001"]
     assert link_rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
+
+
+def test_mmbag_links_to_cnotes_through_dmbag():
+    data = {
+        "CMS_MFCNOTE": pd.DataFrame({
+            "MFCNOTE_NO": ["CNOTE1", "CNOTE2"],
+            "MFCNOTE_BAG_NO": ["BAG1", "BAG1"],
+        }),
+        "CMS_DMBAG": pd.DataFrame({
+            "DMBAG_NO": ["MMBAG1"],
+            "DMBAG_BAG_NO": ["BAG1"],
+        }),
+        "CMS_MMBAG": pd.DataFrame({
+            "MMBAG_NO": ["MMBAG1"],
+        }),
+    }
+    entry = {
+        "index_code": "COMP_TEST",
+        "indicator": "Unique Identifier",
+        "table": "CMS_MMBAG",
+        "params": {"column": "MMBAG_NO", "cnote_column": "MMBAG_NO"},
+    }
+    outcome = RuleOutcome(
+        total_checked=1,
+        total_failed=0,
+        failures=pd.DataFrame(columns=["cnote_no", "failed_value", "failure_reason"]),
+        checks=pd.DataFrame({
+            "cnote_no": ["MMBAG1"],
+            "status": ["PASS"],
+            "variable_1": ["MMBAG1"],
+            "variable_2": [""],
+        }),
+    )
+
+    rows = _check_rows_frame(entry, outcome, _entity_bridges(data), {"CNOTE1", "CNOTE2"})
+    rows.insert(0, "result_id", ["R000000000001"])
+    link_rows = _result_cnote_rows(rows)
+
+    assert rows.loc[0, "entity_id"] == "MMBAG1"
+    assert rows.loc[0, "cnote_no"] == ""
+    assert link_rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
+
+
+def test_confirmed_operational_entities_bridge_to_cnotes():
+    data = {
+        "CMS_MFCNOTE": pd.DataFrame({
+            "MFCNOTE_NO": ["CNOTE1"],
+            "MFCNOTE_BAG_NO": ["BAG1"],
+            "MFCNOTE_MAN_NO": ["MAN1"],
+        }),
+        "CMS_DRSHEET": pd.DataFrame({
+            "DRSHEET_NO": ["RS1"],
+            "DRSHEET_CNOTE_NO": ["CNOTE2"],
+        }),
+        "CMS_DHICNOTE": pd.DataFrame({
+            "DHICNOTE_NO": ["HIC1"],
+            "DHICNOTE_CNOTE_NO": ["CNOTE3"],
+        }),
+        "CMS_DHI_HOC": pd.DataFrame({
+            "DHI_NO": ["MHI1"],
+            "DHI_CNOTE_NO": ["CNOTE4"],
+        }),
+        "CMS_DHOCNOTE": pd.DataFrame({
+            "DHOCNOTE_NO": ["HOC1"],
+            "DHOCNOTE_CNOTE_NO": ["CNOTE5"],
+        }),
+        "CMS_DMBAG": pd.DataFrame({
+            "DMBAG_NO": ["MMBAG1"],
+            "DMBAG_BAG_NO": ["BAG1"],
+        }),
+        "CMS_DSMU": pd.DataFrame({
+            "DSMU_NO": ["SMU1"],
+            "DSMU_BAG_NO": ["BAG1"],
+        }),
+        "CMS_MSMU": pd.DataFrame({
+            "MSMU_NO": ["SMU1"],
+        }),
+        "CMS_RDSJ": pd.DataFrame({
+            "RDSJ_HVO_NO": ["HVO1"],
+            "RDSJ_HVI_NO": ["HIC1"],
+        }),
+        "CMS_DSJ": pd.DataFrame({
+            "DSJ_NO": ["MSJ1"],
+            "DSJ_HVO_NO": ["HVO1"],
+        }),
+        "CMS_MSJ": pd.DataFrame({
+            "MSJ_NO": ["MSJ1"],
+        }),
+    }
+
+    bridges = _entity_bridges(data)
+
+    assert bridges["CMS_MANIFEST"]["MAN1"] == ["CNOTE1"]
+    assert bridges["CMS_MRSHEET"]["RS1"] == ["CNOTE2"]
+    assert bridges["CMS_MHICNOTE"]["HIC1"] == ["CNOTE3"]
+    assert bridges["CMS_MHI_HOC"]["MHI1"] == ["CNOTE4"]
+    assert bridges["CMS_MHOCNOTE"]["HOC1"] == ["CNOTE5"]
+    assert bridges["CMS_DSMU"]["SMU1"] == ["CNOTE1"]
+    assert bridges["CMS_MSMU"]["SMU1"] == ["CNOTE1"]
+    assert bridges["CMS_DSJ"]["MSJ1"] == ["CNOTE3"]
+    assert bridges["CMS_MSJ"]["MSJ1"] == ["CNOTE3"]
 
 
 def test_unmapped_bag_entity_does_not_masquerade_as_cnote():
