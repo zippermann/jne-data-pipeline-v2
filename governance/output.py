@@ -9,6 +9,7 @@ import pandas as pd
 
 
 RESULT_COLUMNS = [
+    "result_id",
     "cnote_no",
     "entity_type",
     "entity_id",
@@ -21,6 +22,13 @@ RESULT_COLUMNS = [
     "variable_2",
     "impact_billing",
     "impact_operational",
+]
+
+RESULT_CNOTE_COLUMNS = [
+    "result_id",
+    "cnote_no",
+    "link_method",
+    "link_confidence",
 ]
 
 RULE_SUMMARY_COLUMNS = [
@@ -41,19 +49,19 @@ RULE_SUMMARY_COLUMNS = [
 
 
 def _result_columns(results: pd.DataFrame) -> pd.DataFrame:
-    if results.empty:
-        return pd.DataFrame(columns=RESULT_COLUMNS)
-    results = results.copy()
-    for column in RESULT_COLUMNS:
-        if column not in results.columns:
-            results[column] = ""
-    return results.loc[:, RESULT_COLUMNS].astype("string").fillna("")
+    return _select_columns(results, RESULT_COLUMNS)
 
 
 class GovernanceResultWriter:
-    def __init__(self, csv_path: str | Path, parquet_path: str | Path) -> None:
+    def __init__(
+        self,
+        csv_path: str | Path,
+        parquet_path: str | Path,
+        columns: list[str] | None = None,
+    ) -> None:
         self.csv_path = Path(csv_path)
         self.parquet_path = Path(parquet_path)
+        self.columns = columns or RESULT_COLUMNS
         self.csv_path.parent.mkdir(parents=True, exist_ok=True)
         self.parquet_path.parent.mkdir(parents=True, exist_ok=True)
         self.csv_path.unlink(missing_ok=True)
@@ -71,7 +79,7 @@ class GovernanceResultWriter:
     def write(self, results: pd.DataFrame) -> int:
         if results.empty:
             return 0
-        rows = _result_columns(results)
+        rows = _select_columns(results, self.columns)
         rows.to_csv(self.csv_path, mode="a", index=False, header=not self._csv_started)
         self._csv_started = True
 
@@ -92,15 +100,25 @@ class GovernanceResultWriter:
         if self._rows_written:
             return
 
-        empty = pd.DataFrame(columns=RESULT_COLUMNS)
+        empty = pd.DataFrame(columns=self.columns)
         empty.to_csv(self.csv_path, index=False)
 
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        schema = pa.schema([pa.field(column, pa.string()) for column in RESULT_COLUMNS])
-        arrays = [pa.array([], type=pa.string()) for _ in RESULT_COLUMNS]
+        schema = pa.schema([pa.field(column, pa.string()) for column in self.columns])
+        arrays = [pa.array([], type=pa.string()) for _ in self.columns]
         pq.write_table(pa.Table.from_arrays(arrays, schema=schema), self.parquet_path, compression="snappy")
+
+
+def _select_columns(results: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    if results.empty:
+        return pd.DataFrame(columns=columns)
+    results = results.copy()
+    for column in columns:
+        if column not in results.columns:
+            results[column] = ""
+    return results.loc[:, columns].astype("string").fillna("")
 
 
 def write_governance_results(results: pd.DataFrame, path: str | Path) -> Path:

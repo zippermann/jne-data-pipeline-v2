@@ -76,6 +76,7 @@ class SchemaConfig:
 class GovernanceConfig:
     enabled: bool
     results_path: Path
+    result_cnotes_path: Path
     summary_path: Path
 
 
@@ -111,6 +112,7 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
     mart = raw.get("mart", {})
     run_id = os.getenv("RUN_ID", "")
     default_governance_path = Path("governance/outputs") / run_id / "governance_results.csv"
+    default_result_cnotes_path = Path("governance/outputs") / run_id / "governance_result_cnotes.csv"
     default_summary_path = Path("governance/outputs") / run_id / "governance_rule_summary.csv"
 
     config = MartClickHouseConfig(
@@ -142,6 +144,7 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
         governance=GovernanceConfig(
             enabled=_as_bool(governance.get("enabled", True)),
             results_path=Path(governance.get("results_path") or default_governance_path),
+            result_cnotes_path=Path(governance.get("result_cnotes_path") or default_result_cnotes_path),
             summary_path=Path(governance.get("summary_path") or default_summary_path),
         ),
         skip_stages=tuple(str(stage).lower() for stage in mart.get("skip_stages", [])),
@@ -456,6 +459,16 @@ def _load_governance_results(client: Any, config: MartClickHouseConfig, batch_si
         path,
         batch_size=batch_size,
     )
+    if config.governance.result_cnotes_path.exists():
+        row_count += _load_governance_csv(
+            client,
+            config.schemas.governance,
+            "governance_result_cnotes",
+            config.governance.result_cnotes_path,
+            batch_size=batch_size,
+        )
+    else:
+        _log(f"Governance result CNOTE bridge file not found, skipping: {config.governance.result_cnotes_path}")
     if config.governance.summary_path.exists():
         row_count += _load_governance_csv(
             client,

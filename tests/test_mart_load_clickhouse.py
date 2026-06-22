@@ -30,6 +30,7 @@ def _config() -> MartClickHouseConfig:
         governance=GovernanceConfig(
             True,
             Path("governance/outputs/R_TEST/governance_results.csv"),
+            Path("governance/outputs/R_TEST/governance_result_cnotes.csv"),
             Path("governance/outputs/R_TEST/governance_rule_summary.csv"),
         ),
         reuse_existing_stages=("reference",),
@@ -66,6 +67,7 @@ schemas:
 governance:
   enabled: true
   results_path: "governance/outputs/${RUN_ID}/governance_results.csv"
+  result_cnotes_path: "governance/outputs/${RUN_ID}/governance_result_cnotes.csv"
   summary_path: "governance/outputs/${RUN_ID}/governance_rule_summary.csv"
 mart:
   load_mode: "latest_snapshot"
@@ -82,6 +84,7 @@ mart:
     assert config.skip_stages == ()
     assert config.reuse_existing_stages == ("reference",)
     assert config.governance.results_path.as_posix() == "governance/outputs/R_TEST/governance_results.csv"
+    assert config.governance.result_cnotes_path.as_posix() == "governance/outputs/R_TEST/governance_result_cnotes.csv"
     assert config.governance.summary_path.as_posix() == "governance/outputs/R_TEST/governance_rule_summary.csv"
 
 

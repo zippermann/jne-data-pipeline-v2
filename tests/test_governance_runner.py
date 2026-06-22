@@ -14,6 +14,7 @@ from governance.runner import (
     _entry_tables,
     _check_rows_frame,
     _entity_bridges,
+    _result_cnote_rows,
     _missing_entry_columns,
     _list_minio_parquet_objects,
     _read_parquet_files,
@@ -199,7 +200,7 @@ def test_catalog_entries_include_analysis_metadata():
     assert by_code["ACCU1A25"]["impact_operational"] == "Y"
 
 
-def test_bag_governance_rows_keep_entity_id_and_expand_to_cnotes():
+def test_bag_governance_rows_keep_entity_id_and_links_cnotes_separately():
     data = {
         "CMS_MFCNOTE": pd.DataFrame({
             "MFCNOTE_NO": ["CNOTE1", "CNOTE2"],
@@ -228,11 +229,15 @@ def test_bag_governance_rows_keep_entity_id_and_expand_to_cnotes():
         }),
     )
 
-    rows = _check_rows_frame(entry, outcome, _entity_bridges(data))
+    rows = _check_rows_frame(entry, outcome, _entity_bridges(data), {"CNOTE1", "CNOTE2"})
+    rows.insert(0, "result_id", ["R000000000001"])
+    link_rows = _result_cnote_rows(rows)
 
-    assert rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
-    assert rows["entity_id"].tolist() == ["BAG1", "BAG1"]
-    assert rows["entity_type"].tolist() == ["DMBAG", "DMBAG"]
+    assert rows["cnote_no"].tolist() == [""]
+    assert rows["entity_id"].tolist() == ["BAG1"]
+    assert rows["entity_type"].tolist() == ["DMBAG"]
+    assert link_rows["result_id"].tolist() == ["R000000000001", "R000000000001"]
+    assert link_rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
 
 
 def test_unmapped_bag_entity_does_not_masquerade_as_cnote():

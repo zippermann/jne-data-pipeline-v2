@@ -26,6 +26,7 @@ from extractor.bronze import MinioSettings, load_config
 from governance.catalog import CATALOG
 from governance.output import (
     GovernanceResultWriter,
+    RESULT_CNOTE_COLUMNS,
     write_rule_summary,
     write_rule_summary_parquet,
 )
@@ -741,6 +742,20 @@ def _cnote_universe(data: dict[str, pd.DataFrame]) -> set[str]:
     return set(values[values.ne("")].drop_duplicates())
 
 
+def _safe_linked_cnotes(values: Iterable[str], cnote_universe: set[str]) -> list[str]:
+    linked: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        cnote_no = str(value)
+        if not cnote_no or cnote_no in seen:
+            continue
+        if cnote_universe and cnote_no not in cnote_universe:
+            continue
+        seen.add(cnote_no)
+        linked.append(cnote_no)
+    return linked
+
+
 def _entity_type(entry: dict) -> str:
     table = str(entry.get("table", "")).upper()
     if table.startswith("CMS_"):
@@ -767,21 +782,16 @@ def _check_rows_frame(
     bridge_map = entity_bridges or {}
     bridge = bridge_map.get(table_name, {})
     if table_name in bridge_map:
-        rows["_cnote_no"] = rows["entity_id"].map(bridge)
-        mapped = rows.loc[rows["_cnote_no"].map(lambda value: isinstance(value, list) and len(value) > 0)].copy()
-        unmapped = rows.loc[~rows.index.isin(mapped.index)].copy()
-        if not mapped.empty:
-            mapped = mapped.explode("_cnote_no", ignore_index=True)
-            mapped["cnote_no"] = _string_key_values(mapped["_cnote_no"])
-            if cnotes:
-                mapped["cnote_no"] = mapped["cnote_no"].where(mapped["cnote_no"].isin(cnotes), "")
-        if not unmapped.empty:
-            unmapped["cnote_no"] = ""
-        rows = pd.concat([mapped, unmapped], ignore_index=True).drop(columns=["_cnote_no"])
+        rows["_linked_cnotes"] = rows["entity_id"].map(lambda value: _safe_linked_cnotes(bridge.get(str(value), []), cnotes))
+        rows["_link_method"] = f"{table_name.lower()}_bridge"
     elif table_name == "CMS_CNOTE":
-        rows["cnote_no"] = rows["entity_id"]
+        rows["_linked_cnotes"] = rows["entity_id"].map(lambda value: [str(value)] if (not cnotes or str(value) in cnotes) else [])
+        rows["_link_method"] = "direct_cnote"
     else:
-        rows["cnote_no"] = rows["entity_id"].where(rows["entity_id"].isin(cnotes), "")
+        rows["_linked_cnotes"] = rows["entity_id"].map(lambda value: [str(value)] if str(value) in cnotes else [])
+        rows["_link_method"] = "direct_cnote_value"
+
+    rows["cnote_no"] = rows["_linked_cnotes"].map(lambda values: values[0] if len(values) == 1 else "")
 
     rows["index_code"] = entry["index_code"]
     rows["main_indicator"] = entry.get("indicator", "")
@@ -790,6 +800,24 @@ def _check_rows_frame(
     rows["impact_billing"] = entry.get("impact_billing", "")
     rows["impact_operational"] = entry.get("impact_operational", "")
     return rows
+
+
+def _result_cnote_rows(rows: pd.DataFrame) -> pd.DataFrame:
+    link_rows: list[dict[str, str]] = []
+    for _, row in rows.iterrows():
+        result_id = str(row["result_id"])
+        link_method = str(row["_link_method"])
+        cnotes = row["_linked_cnotes"]
+        if not isinstance(cnotes, list):
+            continue
+        for cnote_no in cnotes:
+            link_rows.append({
+                "result_id": result_id,
+                "cnote_no": str(cnote_no),
+                "link_method": link_method,
+                "link_confidence": "safe",
+            })
+    return pd.DataFrame(link_rows, columns=RESULT_CNOTE_COLUMNS)
 
 
 def _rule_summary_row(
@@ -837,10 +865,20 @@ def _run_entries(
     skipped_count = 0
     results_path = output_dir / "governance_results.csv"
     results_parquet_path = output_dir / "governance_results.parquet"
+    result_cnotes_path = output_dir / "governance_result_cnotes.csv"
+    result_cnotes_parquet_path = output_dir / "governance_result_cnotes.parquet"
     bridges = _entity_bridges(data)
     cnotes = _cnote_universe(data)
+    next_result_number = 1
 
-    with GovernanceResultWriter(results_path, results_parquet_path) as result_writer:
+    with (
+        GovernanceResultWriter(results_path, results_parquet_path) as result_writer,
+        GovernanceResultWriter(
+            result_cnotes_path,
+            result_cnotes_parquet_path,
+            columns=RESULT_CNOTE_COLUMNS,
+        ) as result_cnote_writer,
+    ):
         for entry in CATALOG:
             if entry.get("enabled") is False:
                 disabled_count += 1
@@ -872,9 +910,18 @@ def _run_entries(
             check_rows = _check_rows_frame(entry, outcome, bridges, cnotes)
             result_rows = len(check_rows)
             if not check_rows.empty:
+                result_ids = [
+                    f"R{result_number:012d}"
+                    for result_number in range(next_result_number, next_result_number + result_rows)
+                ]
+                next_result_number += result_rows
+                check_rows.insert(0, "result_id", result_ids)
+                result_cnote_rows = _result_cnote_rows(check_rows)
+                check_rows = check_rows.drop(columns=["_linked_cnotes", "_link_method"])
                 for row_status, count in check_rows["status"].value_counts().items():
                     row_status_counts[str(row_status)] = row_status_counts.get(str(row_status), 0) + int(count)
                 result_row_total += result_writer.write(check_rows)
+                result_cnote_writer.write(result_cnote_rows)
             summary_rows.append(
                 _rule_summary_row(
                     entry,
@@ -892,7 +939,14 @@ def _run_entries(
     uploaded_paths = (
         _upload_governance_outputs_to_minio(
             upload_source,
-            [results_path, results_parquet_path, summary_path, summary_parquet_path],
+            [
+                results_path,
+                results_parquet_path,
+                result_cnotes_path,
+                result_cnotes_parquet_path,
+                summary_path,
+                summary_parquet_path,
+            ],
         )
         if upload_source is not None
         else []
