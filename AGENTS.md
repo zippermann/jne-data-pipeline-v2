@@ -129,11 +129,16 @@ Oracle extraction tuning knobs:
 
 Use `config/mart_clickhouse.yaml` for the ClickHouse mart. The mart loader
 publishes tables into the `bronze` database and replaces raw `bronze.cms_cnote`
-with the transformed
-`derived/cms_cnote_transformed` data. Governance output lands in
-`governance.governance_results`. Reference tables such as `cms_drourate` are
-loaded into the mart when missing, then reused on later mart loads instead of
-being reloaded every run.
+with the transformed `derived/cms_cnote_transformed` data. Governance output
+lands in the `governance` database:
+
+- `governance.governance_results`: one entity-level result row per rule check.
+- `governance.governance_result_cnotes`: zero-to-many CNOTE links per
+  `result_id`.
+- `governance.governance_rule_summary`: one audit row per rule.
+
+Reference tables such as `cms_drourate` are loaded into the mart when missing,
+then reused on later mart loads instead of being reloaded every run.
 
 Environment placeholders like `${ORACLE_USER}` are expanded at runtime.
 
@@ -149,13 +154,67 @@ An empty list extracts every configured table.
 ## Governance
 
 `governance/runner.py` reads the bronze `run_manifest.json`, loads the required
-Parquet columns for active catalog rules, and writes one long CNOTE-level file:
+Parquet columns for active catalog rules, and writes entity-level governance
+results. The primary output is one row per checked entity/index:
 
 - `governance_results.csv`
 
-It also writes one rule-level audit file:
+It also writes a CNOTE bridge file and one rule-level audit file:
 
+- `governance_result_cnotes.csv`
 - `governance_rule_summary.csv`
+
+`governance_results.csv` includes:
+
+- `result_id`: stable row id for joining to the CNOTE bridge in the same run.
+- `entity_type`: the source entity type, usually the source table name without
+  the `CMS_` prefix.
+- `entity_id`: the exact source entity checked, such as a CNOTE number, bag
+  number, manifest number, sheet number, or process document number.
+- `cnote_no`: a convenience shortcut only when exactly one safe sampled CNOTE is
+  linked. It is intentionally blank for zero-link and many-link entities.
+
+`governance_result_cnotes.csv` is the source of truth for CNOTE rollups. It
+contains one row per safe CNOTE link:
+
+- `result_id`
+- `cnote_no`
+- `link_method`
+- `link_confidence`
+
+Dashboard rule of thumb:
+
+- Entity-level views should use `governance_results.entity_id`.
+- CNOTE-level views should join `governance_results` to
+  `governance_result_cnotes` on `result_id` and use
+  `governance_result_cnotes.cnote_no`.
+- Do not group non-CNOTE tables only by `governance_results.cnote_no`; that
+  column is nullable by design.
+
+Reusable bridge maps in `governance/runner.py` should only represent confirmed
+source relationships. Current confirmed examples include:
+
+- `CMS_MFCNOTE.MFCNOTE_NO` directly to CNOTE.
+- `CMS_MFBAG.MFBAG_NO -> CMS_MFCNOTE.MFCNOTE_BAG_NO -> CNOTE`.
+- `CMS_DMBAG.DMBAG_BAG_NO/DMBAG_NO -> MFBAG/MFCNOTE -> CNOTE`.
+- `CMS_MMBAG.MMBAG_NO -> CMS_DMBAG.DMBAG_NO -> CNOTE`.
+- `CMS_MANIFEST.MANIFEST_NO -> CMS_MFCNOTE.MFCNOTE_MAN_NO -> CNOTE`.
+- `CMS_MRSHEET.MRSHEET_NO -> CMS_DRSHEET.DRSHEET_NO -> CNOTE`.
+- `CMS_MHICNOTE.MHICNOTE_NO -> CMS_DHICNOTE.DHICNOTE_NO -> CNOTE`.
+- `CMS_MHI_HOC.MHI_NO -> CMS_DHI_HOC.DHI_NO -> CNOTE`.
+- `CMS_MHOCNOTE.MHOCNOTE_NO -> CMS_DHOCNOTE.DHOCNOTE_NO -> CNOTE`.
+- `CMS_MHOUNDEL_POD.MHOUNDEL_NO -> CMS_DHOUNDEL_POD.DHOUNDEL_NO -> CNOTE`.
+- `CMS_DSMU.DSMU_NO/DSMU_BAG_NO -> DMBAG/MFCNOTE -> CNOTE`.
+- `CMS_MSMU.MSMU_NO -> CMS_DSMU.DSMU_NO -> CNOTE`.
+- `CMS_DSJ.DSJ_NO -> CMS_RDSJ/MHICNOTE/DHICNOTE -> CNOTE`.
+- `CMS_RDSJ.RDSJ_NO -> CMS_DSJ.DSJ_NO -> CNOTE`.
+- `CMS_MSJ.MSJ_NO -> CMS_DSJ.DSJ_NO -> CNOTE`.
+
+Direct CNOTE-bearing tables do not need custom bridges when their configured
+`cnote_column` already holds a sampled CNOTE value. Examples include
+`CMS_APICUST`, `CMS_CNOTE_POD`, `CMS_DRSHEET`, `CMS_DRSHEET_PRA`,
+`CMS_DRCNOTE`, `CMS_DHI_HOC`, `CMS_DHICNOTE`, `CMS_DHOCNOTE`,
+`CMS_DHOUNDEL_POD`, and cost/detail tables with true `*_CNOTE_NO` columns.
 
 Result rows use explicit statuses:
 
