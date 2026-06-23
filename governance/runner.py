@@ -31,6 +31,12 @@ from governance.output import (
     write_rule_summary_parquet,
 )
 from governance.rules import FAILURE_COLUMNS, RULE_FUNCTIONS, RuleOutcome
+from transform.entity_links import (
+    BRIDGE_COLUMNS,
+    ENTITY_LINK_COLUMNS,
+    ENTITY_LINKS_SOURCE_TABLE,
+    build_entity_bridges,
+)
 
 
 RUN_WINDOW_START = "2026-06-01"
@@ -48,28 +54,6 @@ TABLE_PARAM_KEYS = (
 )
 DROURATE_TABLE = "CMS_DROURATE"
 DROURATE_CODE_PATTERN = re.compile(r"^([A-Z]{3}[0-9]{5})([A-Z]{3}[0-9]{5})$")
-BRIDGE_COLUMNS: dict[str, set[str]] = {
-    "CMS_MFCNOTE": {"MFCNOTE_NO", "MFCNOTE_BAG_NO", "MFCNOTE_MAN_NO"},
-    "CMS_MANIFEST": {"MANIFEST_NO"},
-    "CMS_MFBAG": {"MFBAG_NO"},
-    "CMS_DMBAG": {"DMBAG_NO", "DMBAG_BAG_NO"},
-    "CMS_MMBAG": {"MMBAG_NO"},
-    "CMS_DRSHEET": {"DRSHEET_NO", "DRSHEET_CNOTE_NO"},
-    "CMS_MRSHEET": {"MRSHEET_NO"},
-    "CMS_DHICNOTE": {"DHICNOTE_NO", "DHICNOTE_CNOTE_NO"},
-    "CMS_MHICNOTE": {"MHICNOTE_NO"},
-    "CMS_DHI_HOC": {"DHI_NO", "DHI_CNOTE_NO"},
-    "CMS_MHI_HOC": {"MHI_NO"},
-    "CMS_DHOCNOTE": {"DHOCNOTE_NO", "DHOCNOTE_CNOTE_NO"},
-    "CMS_MHOCNOTE": {"MHOCNOTE_NO"},
-    "CMS_DHOUNDEL_POD": {"DHOUNDEL_NO", "DHOUNDEL_CNOTE_NO"},
-    "CMS_MHOUNDEL_POD": {"MHOUNDEL_NO"},
-    "CMS_DSMU": {"DSMU_NO", "DSMU_BAG_NO"},
-    "CMS_MSMU": {"MSMU_NO"},
-    "CMS_DSJ": {"DSJ_NO", "DSJ_HVO_NO"},
-    "CMS_MSJ": {"MSJ_NO"},
-    "CMS_RDSJ": {"RDSJ_NO", "RDSJ_HVO_NO", "RDSJ_HVI_NO"},
-}
 
 
 @dataclass(frozen=True)
@@ -223,7 +207,6 @@ def _required_tables() -> set[str]:
         if entry.get("enabled") is False:
             continue
         tables.update(_entry_tables(entry))
-    tables.update(BRIDGE_COLUMNS)
     return tables
 
 
@@ -342,8 +325,6 @@ def _required_columns(entries: Iterable[dict]) -> dict[str, set[str]]:
     for entry in entries:
         for table, columns in _entry_columns(entry).items():
             required.setdefault(table, set()).update(columns)
-    for table, columns in BRIDGE_COLUMNS.items():
-        required.setdefault(table, set()).update(columns)
     return required
 
 
@@ -387,7 +368,7 @@ def _minio_client(config: dict):
 
 def _manifest_tables(manifest: dict[str, Any]) -> dict[str, BronzeTable]:
     tables: dict[str, BronzeTable] = {}
-    for item in manifest.get("tables", []):
+    for item in [*manifest.get("tables", []), *manifest.get("derived", [])]:
         source_name = str(item["table"]).upper()
         tables[source_name] = BronzeTable(
             table=source_name,
@@ -640,7 +621,8 @@ def _load_table_from_minio(source: GovernanceSource, table: BronzeTable, columns
 
 def _load_table_from_local(source: GovernanceSource, table: BronzeTable, columns: set[str]) -> pd.DataFrame:
     assert source.run_path is not None
-    paths = sorted((source.run_path / table.output_name).glob("part-*.parquet"))
+    table_path = source.run_path / (table.source_prefix.rstrip("/") if table.source_prefix else table.output_name)
+    paths = sorted(table_path.glob("part-*.parquet"))
     return _read_parquet_files(paths, sorted(columns))
 
 
@@ -696,216 +678,27 @@ def _string_key_values(values: pd.Series) -> pd.Series:
     return values.fillna("").astype("string").str.strip()
 
 
-def _group_unique_strings(frame: pd.DataFrame, key_column: str, value_column: str) -> dict[str, list[str]]:
-    if frame.empty or key_column not in frame.columns or value_column not in frame.columns:
-        return {}
-    work = pd.DataFrame({
-        "key": _string_key_values(frame[key_column]),
-        "value": _string_key_values(frame[value_column]),
-    })
-    work = work.loc[work["key"].ne("") & work["value"].ne("")].drop_duplicates()
-    if work.empty:
-        return {}
-    grouped = work.groupby("key", sort=False)["value"].agg(list)
-    return {str(key): [str(value) for value in values] for key, values in grouped.items()}
-
-
-def _bag_to_cnotes(data: dict[str, pd.DataFrame]) -> dict[str, list[str]]:
-    mfcnote = data.get("CMS_MFCNOTE")
-    if mfcnote is None:
-        return {}
-    return _group_unique_strings(mfcnote, "MFCNOTE_BAG_NO", "MFCNOTE_NO")
-
-
-def _dmbag_to_cnotes(data: dict[str, pd.DataFrame], bag_to_cnotes: dict[str, list[str]]) -> dict[str, list[str]]:
-    dmbag = data.get("CMS_DMBAG")
-    if dmbag is None or not bag_to_cnotes:
-        return {}
-
-    bridge = dict(bag_to_cnotes)
-    if "DMBAG_NO" not in dmbag.columns or "DMBAG_BAG_NO" not in dmbag.columns:
-        return bridge
-
-    bag_rows = pd.DataFrame({
-        "dmbag_no": _string_key_values(dmbag["DMBAG_NO"]),
-        "bag_no": _string_key_values(dmbag["DMBAG_BAG_NO"]),
-    })
-    bag_rows = bag_rows.loc[bag_rows["dmbag_no"].ne("") & bag_rows["bag_no"].ne("")].drop_duplicates()
-    for dmbag_no, group in bag_rows.groupby("dmbag_no", sort=False):
-        cnotes: list[str] = []
-        seen: set[str] = set()
-        for bag_no in group["bag_no"]:
-            for cnote_no in bag_to_cnotes.get(str(bag_no), []):
-                if cnote_no not in seen:
-                    seen.add(cnote_no)
-                    cnotes.append(cnote_no)
-        if cnotes:
-            bridge[str(dmbag_no)] = cnotes
-    return bridge
-
-
-def _mmbag_to_cnotes(data: dict[str, pd.DataFrame], dmbag_to_cnotes: dict[str, list[str]]) -> dict[str, list[str]]:
-    mmbag = data.get("CMS_MMBAG")
-    if mmbag is None or "MMBAG_NO" not in mmbag.columns:
-        return {}
-
-    mmbag_numbers = _string_key_values(mmbag["MMBAG_NO"])
-    bridge: dict[str, list[str]] = {}
-    for mmbag_no in mmbag_numbers[mmbag_numbers.ne("")].drop_duplicates():
-        cnotes = dmbag_to_cnotes.get(str(mmbag_no), [])
-        if cnotes:
-            bridge[str(mmbag_no)] = cnotes
-    return bridge
-
-
-def _map_through_bridge(
-    frame: pd.DataFrame | None,
-    key_column: str,
-    link_column: str,
-    link_to_cnotes: dict[str, list[str]],
-) -> dict[str, list[str]]:
-    if frame is None or not link_to_cnotes or key_column not in frame.columns or link_column not in frame.columns:
-        return {}
-
-    rows = pd.DataFrame({
-        "key": _string_key_values(frame[key_column]),
-        "link": _string_key_values(frame[link_column]),
-    })
-    rows = rows.loc[rows["key"].ne("") & rows["link"].ne("")].drop_duplicates()
-    bridge: dict[str, list[str]] = {}
-    for key, group in rows.groupby("key", sort=False):
-        cnotes: list[str] = []
-        seen: set[str] = set()
-        for link in group["link"]:
-            for cnote_no in link_to_cnotes.get(str(link), []):
-                if cnote_no not in seen:
-                    seen.add(cnote_no)
-                    cnotes.append(cnote_no)
-        if cnotes:
-            bridge[str(key)] = cnotes
-    return bridge
-
-
-def _manifest_to_cnotes(data: dict[str, pd.DataFrame]) -> dict[str, list[str]]:
-    return _group_unique_strings(data.get("CMS_MFCNOTE", pd.DataFrame()), "MFCNOTE_MAN_NO", "MFCNOTE_NO")
-
-
-def _mrsheet_to_cnotes(data: dict[str, pd.DataFrame]) -> dict[str, list[str]]:
-    return _group_unique_strings(data.get("CMS_DRSHEET", pd.DataFrame()), "DRSHEET_NO", "DRSHEET_CNOTE_NO")
-
-
-def _mhicnote_to_cnotes(data: dict[str, pd.DataFrame]) -> dict[str, list[str]]:
-    return _group_unique_strings(data.get("CMS_DHICNOTE", pd.DataFrame()), "DHICNOTE_NO", "DHICNOTE_CNOTE_NO")
-
-
-def _mhi_hoc_to_cnotes(data: dict[str, pd.DataFrame]) -> dict[str, list[str]]:
-    return _group_unique_strings(data.get("CMS_DHI_HOC", pd.DataFrame()), "DHI_NO", "DHI_CNOTE_NO")
-
-
-def _mhocnote_to_cnotes(data: dict[str, pd.DataFrame]) -> dict[str, list[str]]:
-    return _group_unique_strings(data.get("CMS_DHOCNOTE", pd.DataFrame()), "DHOCNOTE_NO", "DHOCNOTE_CNOTE_NO")
-
-
-def _mhoundel_pod_to_cnotes(data: dict[str, pd.DataFrame]) -> dict[str, list[str]]:
-    return _group_unique_strings(data.get("CMS_DHOUNDEL_POD", pd.DataFrame()), "DHOUNDEL_NO", "DHOUNDEL_CNOTE_NO")
-
-
-def _dsmu_to_cnotes(data: dict[str, pd.DataFrame], dmbag_to_cnotes: dict[str, list[str]]) -> dict[str, list[str]]:
-    return _map_through_bridge(data.get("CMS_DSMU"), "DSMU_NO", "DSMU_BAG_NO", dmbag_to_cnotes)
-
-
-def _msmu_to_cnotes(data: dict[str, pd.DataFrame], dsmu_to_cnotes: dict[str, list[str]]) -> dict[str, list[str]]:
-    msmu = data.get("CMS_MSMU")
-    if msmu is None or "MSMU_NO" not in msmu.columns:
-        return {}
-    bridge: dict[str, list[str]] = {}
-    for msmu_no in _string_key_values(msmu["MSMU_NO"])[lambda values: values.ne("")].drop_duplicates():
-        cnotes = dsmu_to_cnotes.get(str(msmu_no), [])
-        if cnotes:
-            bridge[str(msmu_no)] = cnotes
-    return bridge
-
-
-def _dsj_to_cnotes(data: dict[str, pd.DataFrame], mhicnote_to_cnotes: dict[str, list[str]]) -> dict[str, list[str]]:
-    rdsj_to_mhicnote = _group_unique_strings(data.get("CMS_RDSJ", pd.DataFrame()), "RDSJ_HVO_NO", "RDSJ_HVI_NO")
-    if not rdsj_to_mhicnote:
-        return {}
-
-    hvo_to_cnotes: dict[str, list[str]] = {}
-    for hvo_no, mhicnote_numbers in rdsj_to_mhicnote.items():
-        cnotes: list[str] = []
-        seen: set[str] = set()
-        for mhicnote_no in mhicnote_numbers:
-            for cnote_no in mhicnote_to_cnotes.get(str(mhicnote_no), []):
-                if cnote_no not in seen:
-                    seen.add(cnote_no)
-                    cnotes.append(cnote_no)
-        if cnotes:
-            hvo_to_cnotes[str(hvo_no)] = cnotes
-    return _map_through_bridge(data.get("CMS_DSJ"), "DSJ_NO", "DSJ_HVO_NO", hvo_to_cnotes)
-
-
-def _rdsj_to_cnotes(data: dict[str, pd.DataFrame], dsj_to_cnotes: dict[str, list[str]]) -> dict[str, list[str]]:
-    rdsj = data.get("CMS_RDSJ")
-    if rdsj is None or "RDSJ_NO" not in rdsj.columns:
-        return {}
-    bridge: dict[str, list[str]] = {}
-    for rdsj_no in _string_key_values(rdsj["RDSJ_NO"])[lambda values: values.ne("")].drop_duplicates():
-        cnotes = dsj_to_cnotes.get(str(rdsj_no), [])
-        if cnotes:
-            bridge[str(rdsj_no)] = cnotes
-    return bridge
-
-
-def _msj_to_cnotes(data: dict[str, pd.DataFrame], dsj_to_cnotes: dict[str, list[str]]) -> dict[str, list[str]]:
-    msj = data.get("CMS_MSJ")
-    if msj is None or "MSJ_NO" not in msj.columns:
-        return {}
-    bridge: dict[str, list[str]] = {}
-    for msj_no in _string_key_values(msj["MSJ_NO"])[lambda values: values.ne("")].drop_duplicates():
-        cnotes = dsj_to_cnotes.get(str(msj_no), [])
-        if cnotes:
-            bridge[str(msj_no)] = cnotes
-    return bridge
-
-
 def _entity_bridges(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, list[str]]]:
-    bag_to_cnotes = _bag_to_cnotes(data)
-    dmbag_to_cnotes = _dmbag_to_cnotes(data, bag_to_cnotes)
-    mmbag_to_cnotes = _mmbag_to_cnotes(data, dmbag_to_cnotes)
-    manifest_to_cnotes = _manifest_to_cnotes(data)
-    mrsheet_to_cnotes = _mrsheet_to_cnotes(data)
-    mhicnote_to_cnotes = _mhicnote_to_cnotes(data)
-    mhi_hoc_to_cnotes = _mhi_hoc_to_cnotes(data)
-    mhocnote_to_cnotes = _mhocnote_to_cnotes(data)
-    mhoundel_pod_to_cnotes = _mhoundel_pod_to_cnotes(data)
-    dsmu_to_cnotes = _dsmu_to_cnotes(data, dmbag_to_cnotes)
-    msmu_to_cnotes = _msmu_to_cnotes(data, dsmu_to_cnotes)
-    dsj_to_cnotes = _dsj_to_cnotes(data, mhicnote_to_cnotes)
-    rdsj_to_cnotes = _rdsj_to_cnotes(data, dsj_to_cnotes)
-    msj_to_cnotes = _msj_to_cnotes(data, dsj_to_cnotes)
-    mfcnote_to_cnote: dict[str, list[str]] = {}
-    mfcnote = data.get("CMS_MFCNOTE")
-    if mfcnote is not None and "MFCNOTE_NO" in mfcnote.columns:
-        values = _string_key_values(mfcnote["MFCNOTE_NO"])
-        mfcnote_to_cnote = {str(value): [str(value)] for value in values[values.ne("")].drop_duplicates()}
-    return {
-        "CMS_MFCNOTE": mfcnote_to_cnote,
-        "CMS_MFBAG": bag_to_cnotes,
-        "CMS_DMBAG": dmbag_to_cnotes,
-        "CMS_MMBAG": mmbag_to_cnotes,
-        "CMS_MANIFEST": manifest_to_cnotes,
-        "CMS_MRSHEET": mrsheet_to_cnotes,
-        "CMS_MHICNOTE": mhicnote_to_cnotes,
-        "CMS_MHI_HOC": mhi_hoc_to_cnotes,
-        "CMS_MHOCNOTE": mhocnote_to_cnotes,
-        "CMS_MHOUNDEL_POD": mhoundel_pod_to_cnotes,
-        "CMS_DSMU": dsmu_to_cnotes,
-        "CMS_MSMU": msmu_to_cnotes,
-        "CMS_DSJ": dsj_to_cnotes,
-        "CMS_RDSJ": rdsj_to_cnotes,
-        "CMS_MSJ": msj_to_cnotes,
-    }
+    links = data.get(ENTITY_LINKS_SOURCE_TABLE)
+    if links is None or links.empty:
+        return build_entity_bridges(data)
+    required = {"source_table", "entity_id", "cnote_no"}
+    if not required <= set(links.columns):
+        return {}
+
+    work = pd.DataFrame({
+        "source_table": _string_key_values(links["source_table"]).str.upper(),
+        "entity_id": _string_key_values(links["entity_id"]),
+        "cnote_no": _string_key_values(links["cnote_no"]),
+    })
+    work = work.loc[
+        work["source_table"].ne("") & work["entity_id"].ne("") & work["cnote_no"].ne("")
+    ].drop_duplicates()
+
+    bridges: dict[str, dict[str, list[str]]] = {}
+    for (source_table, entity_id), group in work.groupby(["source_table", "entity_id"], sort=False):
+        bridges.setdefault(str(source_table), {})[str(entity_id)] = [str(value) for value in group["cnote_no"]]
+    return bridges
 
 
 def _cnote_universe(data: dict[str, pd.DataFrame]) -> set[str]:
@@ -1157,7 +950,7 @@ def run(
 ) -> None:
     output_dir = Path(output_dir)
     if source == "synthetic":
-        data = load_tables(_required_tables())
+        data = load_tables(_required_tables() | set(BRIDGE_COLUMNS))
         runnable = []
         skipped = {}
         available_tables = set(data)
@@ -1200,6 +993,14 @@ def run(
 
         streamed_reference_tables = _streamed_reference_tables(runnable, bronze_source)
         required_columns = _required_columns(runnable)
+        if ENTITY_LINKS_SOURCE_TABLE in bronze_source.tables:
+            required_columns[ENTITY_LINKS_SOURCE_TABLE] = set(ENTITY_LINK_COLUMNS)
+        else:
+            print(
+                f"WARNING: {ENTITY_LINKS_SOURCE_TABLE} is missing from the run manifest; "
+                "run transform_data before governance for non-CNOTE entity links.",
+                flush=True,
+            )
         load_columns = {
             table: columns
             for table, columns in required_columns.items()

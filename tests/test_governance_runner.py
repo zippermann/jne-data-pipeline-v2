@@ -333,12 +333,12 @@ def test_confirmed_operational_entities_bridge_to_cnotes():
         }),
         "CMS_RDSJ": pd.DataFrame({
             "RDSJ_NO": ["RDSJ1"],
-            "RDSJ_HVO_NO": ["HVO1"],
+            "RDSJ_HVO_NO": ["HOC1"],
             "RDSJ_HVI_NO": ["HIC1"],
         }),
         "CMS_DSJ": pd.DataFrame({
-            "DSJ_NO": ["MSJ1", "RDSJ1"],
-            "DSJ_HVO_NO": ["HVO1", "HVO1"],
+            "DSJ_NO": ["MSJ1"],
+            "DSJ_HVO_NO": ["HOC1"],
         }),
         "CMS_MSJ": pd.DataFrame({
             "MSJ_NO": ["MSJ1"],
@@ -356,7 +356,7 @@ def test_confirmed_operational_entities_bridge_to_cnotes():
     assert bridges["CMS_DSMU"]["SMU1"] == ["CNOTE1"]
     assert bridges["CMS_MSMU"]["SMU1"] == ["CNOTE1"]
     assert bridges["CMS_DSJ"]["MSJ1"] == ["CNOTE3"]
-    assert bridges["CMS_RDSJ"]["RDSJ1"] == ["CNOTE3"]
+    assert bridges["CMS_RDSJ"]["RDSJ1"] == ["CNOTE5"]
     assert bridges["CMS_MSJ"]["MSJ1"] == ["CNOTE3"]
 
 

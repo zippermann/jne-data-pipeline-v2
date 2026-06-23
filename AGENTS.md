@@ -76,13 +76,14 @@ The DAG id is `jne_data_pipeline`.
 Task order:
 
 ```text
-extract_oracle -> run_governance -> transform_data -> load_data_mart_clickhouse
+extract_oracle -> transform_data -> run_governance -> load_data_mart_clickhouse
 ```
 
 `extract_oracle` runs `extractor.bronze`.
-`run_governance` runs `governance.runner` against the bronze run manifest.
 `transform_data` runs `transform.transform_data` and appends `derived` metadata to
 the same run manifest.
+`run_governance` runs `governance.runner` against the bronze run manifest after
+transform has published reusable entity-to-CNOTE links.
 `load_data_mart_clickhouse` runs `loader.mart_load_clickhouse`.
 
 Pass `{"keep_scope": true}` in `dag_run.conf` to keep Oracle scope tables for
@@ -108,8 +109,13 @@ Each extracted source table gets its own folder with `part-*.parquet`,
 Reference tables are reusable across runs. When a completed reference table
 already exists in MinIO, extraction records `reused: true` and `source_prefix`
 in the manifest instead of pulling the table from Oracle again.
-The transform step writes `derived/cms_cnote_transformed/part-*.parquet` and
-records it in the manifest's `derived` section.
+The transform step writes derived Parquet outputs and records them in the
+manifest's `derived` section:
+
+- `derived/cms_cnote_transformed/part-*.parquet`: CNOTE enrichment used as the
+  mart's `bronze.cms_cnote`.
+- `derived/entity_cnote_links/part-*.parquet`: reusable non-CNOTE entity links
+  for governance and inspection.
 
 ## Configuration
 
@@ -191,8 +197,10 @@ Dashboard rule of thumb:
 - Do not group non-CNOTE tables only by `governance_results.cnote_no`; that
   column is nullable by design.
 
-Reusable bridge maps in `governance/runner.py` should only represent confirmed
-source relationships. Current confirmed examples include:
+Reusable bridge maps should only represent confirmed source relationships.
+Bridge construction belongs in `transform/entity_links.py`; governance consumes
+the derived `ENTITY_CNOTE_LINKS` table when it exists. Current confirmed
+examples include:
 
 - `CMS_MFCNOTE.MFCNOTE_NO` directly to CNOTE.
 - `CMS_MFBAG.MFBAG_NO -> CMS_MFCNOTE.MFCNOTE_BAG_NO -> CNOTE`.
@@ -207,7 +215,7 @@ source relationships. Current confirmed examples include:
 - `CMS_DSMU.DSMU_NO/DSMU_BAG_NO -> DMBAG/MFCNOTE -> CNOTE`.
 - `CMS_MSMU.MSMU_NO -> CMS_DSMU.DSMU_NO -> CNOTE`.
 - `CMS_DSJ.DSJ_NO -> CMS_RDSJ/MHICNOTE/DHICNOTE -> CNOTE`.
-- `CMS_RDSJ.RDSJ_NO -> CMS_DSJ.DSJ_NO -> CNOTE`.
+- `CMS_RDSJ.RDSJ_NO -> RDSJ_HVO_NO -> CMS_MHOCNOTE/CMS_DHOCNOTE -> CNOTE`.
 - `CMS_MSJ.MSJ_NO -> CMS_DSJ.DSJ_NO -> CNOTE`.
 
 Direct CNOTE-bearing tables do not need custom bridges when their configured

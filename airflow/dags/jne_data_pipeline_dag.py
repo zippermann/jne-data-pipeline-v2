@@ -1,8 +1,8 @@
 """
 JNE Data Pipeline DAG
 =====================
-Relational Oracle → Parquet bronze extraction, bronze governance checks,
-CNOTE transformation, and mart loading.
+Relational Oracle → Parquet bronze extraction, derived transformation,
+governance checks, and mart loading.
 
 Pass {"keep_scope": true} in dag_run.conf to leave Oracle scope tables in place
 for inspection after the run.
@@ -95,5 +95,4 @@ with DAG(
         ),
     )
 
-    extract_oracle >> run_governance >> transform_data
-    transform_data >> load_data_mart_clickhouse
+    extract_oracle >> transform_data >> run_governance >> load_data_mart_clickhouse

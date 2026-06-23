@@ -17,11 +17,18 @@ from pathlib import Path
 from typing import Any
 
 from extractor.bronze import MinioSettings, load_config
+from transform.entity_links import (
+    ENTITY_LINKS_SOURCE_TABLE,
+    ENTITY_LINKS_TABLE,
+    build_entity_cnote_links,
+    required_link_columns,
+)
 
 
 DERIVED_TABLE = "cms_cnote_transformed"
 DERIVED_SOURCE_TABLE = "CMS_CNOTE_TRANSFORMED"
-DERIVED_PREFIX = f"derived/{DERIVED_TABLE}/"
+DERIVED_PARENT = "derived"
+DERIVED_PREFIX = f"{DERIVED_PARENT}/{DERIVED_TABLE}/"
 
 
 @dataclass(frozen=True)
@@ -40,6 +47,10 @@ def _log(message: str) -> None:
 
 def _quote_sql(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def _quote_ident(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
 
 
 def _as_bool(value: Any) -> bool:
@@ -167,10 +178,11 @@ def _parquet_glob(source: DerivedSource, table: str) -> str:
     return f"s3://{source.bucket}/{_source_prefix(source, table_info)}*.parquet"
 
 
-def _derived_prefix(source: DerivedSource) -> str:
+def _derived_prefix(source: DerivedSource, output_name: str = DERIVED_TABLE) -> str:
+    relative = f"{DERIVED_PARENT}/{output_name}/"
     if source.run_prefix is None:
-        return DERIVED_PREFIX
-    return f"{source.run_prefix}/{DERIVED_PREFIX}"
+        return relative
+    return f"{source.run_prefix}/{relative}"
 
 
 def _build_cnote_transform_query(
@@ -339,7 +351,14 @@ def _log_quality_summary(con: Any, input_rows: int, output_rows: int) -> None:
         _log(f"WARNING: shipment_scope Unknown is above 1 percent ({unknown / input_rows:.2%})")
 
 
-def _derived_manifest_entry(row_count: int, output_dir: Path | None, source: DerivedSource) -> dict[str, Any]:
+def _derived_manifest_entry(
+    row_count: int,
+    output_dir: Path | None,
+    source: DerivedSource,
+    *,
+    output_name: str = DERIVED_TABLE,
+    source_table: str = DERIVED_SOURCE_TABLE,
+) -> dict[str, Any]:
     size_bytes = 0
     file_count = 0
     if output_dir is not None:
@@ -347,13 +366,13 @@ def _derived_manifest_entry(row_count: int, output_dir: Path | None, source: Der
         file_count = len(parts)
         size_bytes = sum(path.stat().st_size for path in parts)
     return {
-        "table": DERIVED_SOURCE_TABLE,
-        "output_name": DERIVED_TABLE,
+        "table": source_table,
+        "output_name": output_name,
         "stage": "derived",
         "row_count": row_count,
         "file_count": file_count,
         "size_bytes": size_bytes,
-        "source_prefix": _derived_prefix(source),
+        "source_prefix": _derived_prefix(source, output_name),
     }
 
 
@@ -375,12 +394,73 @@ def _write_local_manifest(source: DerivedSource) -> None:
     )
 
 
-def _upload_derived_to_minio(source: DerivedSource, output_dir: Path) -> None:
+def _upload_derived_to_minio(source: DerivedSource, output_dir: Path, output_name: str = DERIVED_TABLE) -> None:
     assert source.client is not None and source.bucket is not None
-    prefix = _derived_prefix(source)
+    prefix = _derived_prefix(source, output_name)
     for path in sorted(output_dir.iterdir()):
         if path.is_file():
             source.client.fput_object(source.bucket, f"{prefix}{path.name}", str(path))
+
+
+def _read_distinct_columns(con: Any, parquet_path: str, columns: set[str]) -> Any:
+    available_frame = con.execute(f"SELECT * FROM read_parquet({_quote_sql(parquet_path)}) LIMIT 0").fetchdf()
+    available = set(available_frame.columns)
+    selected = [column for column in sorted(columns) if column in available]
+    if not selected:
+        return available_frame.iloc[0:0]
+    select_list = ", ".join(_quote_ident(column) for column in selected)
+    return con.execute(
+        f"SELECT DISTINCT {select_list} FROM read_parquet({_quote_sql(parquet_path)})"
+    ).fetchdf()
+
+
+def _load_entity_link_inputs(con: Any, source: DerivedSource) -> dict[str, Any]:
+    data = {}
+    for table, columns in sorted(required_link_columns().items()):
+        try:
+            parquet_path = _parquet_glob(source, table)
+        except KeyError:
+            continue
+        data[table] = _read_distinct_columns(con, parquet_path, columns)
+    return data
+
+
+def _write_entity_links(con: Any, source: DerivedSource, tmpdir: Path | None = None) -> dict[str, Any]:
+    started = time.monotonic()
+    link_inputs = _load_entity_link_inputs(con, source)
+    links = build_entity_cnote_links(link_inputs)
+    con.register(ENTITY_LINKS_TABLE, links)
+
+    if source.run_path is not None:
+        output_dir = source.run_path / DERIVED_PARENT / ENTITY_LINKS_TABLE
+        row_count = _copy_to_parquet(con, f"SELECT * FROM {ENTITY_LINKS_TABLE}", output_dir)
+        entry = _derived_manifest_entry(
+            row_count,
+            output_dir,
+            source,
+            output_name=ENTITY_LINKS_TABLE,
+            source_table=ENTITY_LINKS_SOURCE_TABLE,
+        )
+        _update_manifest(source.manifest, entry)
+        _write_local_manifest(source)
+    else:
+        if tmpdir is None:
+            raise ValueError("tmpdir is required for minio derived output")
+        output_dir = tmpdir / ENTITY_LINKS_TABLE
+        row_count = _copy_to_parquet(con, f"SELECT * FROM {ENTITY_LINKS_TABLE}", output_dir)
+        entry = _derived_manifest_entry(
+            row_count,
+            output_dir,
+            source,
+            output_name=ENTITY_LINKS_TABLE,
+            source_table=ENTITY_LINKS_SOURCE_TABLE,
+        )
+        _update_manifest(source.manifest, entry)
+        _upload_derived_to_minio(source, output_dir, ENTITY_LINKS_TABLE)
+        _upload_manifest_to_minio(source, tmpdir)
+
+    _log(f"Transformed derived.{ENTITY_LINKS_TABLE}: {row_count:,} rows in {time.monotonic() - started:.1f}s")
+    return entry
 
 
 def _upload_manifest_to_minio(source: DerivedSource, tmpdir: Path) -> None:
@@ -439,6 +519,7 @@ def transform_data(source: DerivedSource, config: dict, tmpdir: Path | None = No
         _upload_manifest_to_minio(source, tmpdir)
 
     _log(f"Transformed derived.{DERIVED_TABLE}: {row_count:,} rows in {time.monotonic() - started:.1f}s")
+    _write_entity_links(con, source, tmpdir)
     return entry
 
 
