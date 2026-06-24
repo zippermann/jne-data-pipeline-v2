@@ -3,6 +3,26 @@ ENGINE = MergeTree
 ORDER BY tuple()
 AS
 WITH
+api_ranked AS (
+    SELECT
+        *,
+        row_number() OVER (
+            PARTITION BY `APICUST_CNOTE_NO`
+            ORDER BY `CREATE_DATE` DESC NULLS LAST
+        ) AS `rn`
+    FROM {bronze_schema}.`cms_apicust`
+    WHERE `APICUST_CNOTE_NO` IS NOT NULL
+),
+cancel_api_ranked AS (
+    SELECT
+        *,
+        row_number() OVER (
+            PARTITION BY `API_CNOTE_NO`
+            ORDER BY `CREATE_DATE` DESC NULLS LAST
+        ) AS `rn`
+    FROM {bronze_schema}.`t_cancel_cnote_api`
+    WHERE `API_CNOTE_NO` IS NOT NULL
+),
 cnote_api AS (
     SELECT
         c.`CNOTE_NO` AS `CNOTE_NO`,
@@ -33,10 +53,12 @@ cnote_api AS (
         a.`APICUST_WEIGHT` AS `API_WEIGHT`,
         t.`CREATE_DATE` AS `API_CANCELED_DATE`
     FROM {bronze_schema}.`cms_cnote` c
-    LEFT JOIN {bronze_schema}.`cms_apicust` a
+    LEFT JOIN api_ranked a
         ON c.`CNOTE_NO` = a.`APICUST_CNOTE_NO`
-    LEFT JOIN {bronze_schema}.`t_cancel_cnote_api` t
+       AND a.`rn` = 1
+    LEFT JOIN cancel_api_ranked t
         ON a.`APICUST_CNOTE_NO` = t.`API_CNOTE_NO`
+       AND t.`rn` = 1
 ),
 recv_events AS (
     SELECT
@@ -97,7 +119,7 @@ manifest_asset AS (
     LEFT JOIN {bronze_schema}.`cms_manifest` m
         ON f.`MFCNOTE_MAN_NO` = m.`MANIFEST_NO`
 ),
-pra_runsheet AS (
+pra_runsheet_events AS (
     SELECT
         d.`DRSHEET_CNOTE_NO` AS `DRI_PRA_CNOTE_NO`,
         d.`DRSHEET_NO` AS `DRI_PRA_NO`,
@@ -107,6 +129,17 @@ pra_runsheet AS (
     FROM {bronze_schema}.`cms_drsheet_pra` d
     LEFT JOIN {bronze_schema}.`cms_mrsheet_pra` m
         ON d.`DRSHEET_NO` = m.`MRSHEET_NO`
+),
+pra_runsheet AS (
+    SELECT
+        `DRI_PRA_CNOTE_NO`,
+        argMin(`DRI_PRA_NO`, `DRI_PRA_DATE`) AS `DRI_PRA_NO`,
+        argMin(`DRI_PRA_DATE`, `DRI_PRA_DATE`) AS `DRI_PRA_DATE`,
+        argMin(`DRI_PRA_USER`, `DRI_PRA_DATE`) AS `DRI_PRA_USER`,
+        argMin(`DRI_PRA_ZONE`, `DRI_PRA_DATE`) AS `DRI_PRA_ZONE`
+    FROM pra_runsheet_events
+    WHERE `DRI_PRA_CNOTE_NO` IS NOT NULL
+    GROUP BY `DRI_PRA_CNOTE_NO`
 ),
 manifest_grouped AS (
     SELECT
