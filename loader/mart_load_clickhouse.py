@@ -81,15 +81,53 @@ class GovernanceConfig:
 
 
 @dataclass(frozen=True)
+class UnifiedMartConfig:
+    enabled: bool
+    schema: str
+    table: str
+    sql_path: Path
+
+
+@dataclass(frozen=True)
 class MartClickHouseConfig:
     minio: MinioConfig
     bronze: BronzeConfig
     clickhouse: ClickHouseConfig
     schemas: SchemaConfig
     governance: GovernanceConfig
+    unified_mart: UnifiedMartConfig
     skip_stages: tuple[str, ...] = ()
     reuse_existing_stages: tuple[str, ...] = ()
     load_mode: str = "latest_snapshot"
+
+
+UNIFIED_REQUIRED_TABLES = (
+    "cms_cnote",
+    "cms_apicust",
+    "t_cancel_cnote_api",
+    "cms_drcnote",
+    "cms_mrcnote",
+    "cms_dhi_hoc",
+    "cms_mhi_hoc",
+    "cms_mfcnote",
+    "cms_manifest",
+    "cms_mrsheet_pra",
+    "cms_drsheet_pra",
+    "cms_dsmu",
+    "cms_msmu",
+    "cms_mhocnote",
+    "cms_dhocnote",
+    "cms_mhicnote",
+    "cms_dhicnote",
+    "cms_cost_dtransit_agen",
+    "cms_cost_mtransit_agen",
+    "cms_mhov_rsheet",
+    "cms_dhov_rsheet",
+    "cms_mrsheet",
+    "cms_drsheet",
+    "cms_mstatus",
+    "cms_dstatus",
+)
 
 
 def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHouseConfig:
@@ -109,6 +147,7 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
     clickhouse = raw.get("clickhouse", {})
     schemas = raw.get("schemas", {})
     governance = raw.get("governance", {})
+    unified_mart = raw.get("unified_mart", {})
     mart = raw.get("mart", {})
     run_id = os.getenv("RUN_ID", "")
     default_governance_path = Path("governance/outputs") / run_id / "governance_results.csv"
@@ -146,6 +185,12 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
             results_path=Path(governance.get("results_path") or default_governance_path),
             result_cnotes_path=Path(governance.get("result_cnotes_path") or default_result_cnotes_path),
             summary_path=Path(governance.get("summary_path") or default_summary_path),
+        ),
+        unified_mart=UnifiedMartConfig(
+            enabled=_as_bool(unified_mart.get("enabled", False)),
+            schema=unified_mart.get("schema", "mart"),
+            table=unified_mart.get("table", "unified_shipments"),
+            sql_path=Path(unified_mart.get("sql_path", "loader/sql/unified_shipments.sql")),
         ),
         skip_stages=tuple(str(stage).lower() for stage in mart.get("skip_stages", [])),
         reuse_existing_stages=tuple(str(stage).lower() for stage in mart.get("reuse_existing_stages", [])),
@@ -482,6 +527,51 @@ def _load_governance_results(client: Any, config: MartClickHouseConfig, batch_si
     return row_count
 
 
+def _render_unified_sql(config: MartClickHouseConfig) -> str:
+    if not config.unified_mart.sql_path.exists():
+        raise FileNotFoundError(f"Unified mart SQL file not found: {config.unified_mart.sql_path}")
+    template = config.unified_mart.sql_path.read_text(encoding="utf-8")
+    return template.format(
+        bronze_schema=_quote_ident(config.schemas.bronze),
+        target_table=_qualified(config.unified_mart.schema, config.unified_mart.table),
+    )
+
+
+def _validate_unified_sources(client: Any, config: MartClickHouseConfig) -> None:
+    missing = [
+        table
+        for table in UNIFIED_REQUIRED_TABLES
+        if not _table_exists(client, config.schemas.bronze, table)
+    ]
+    if missing:
+        formatted = ", ".join(f"{config.schemas.bronze}.{table}" for table in missing)
+        raise RuntimeError(f"Cannot build unified mart table; missing required ClickHouse table(s): {formatted}")
+
+
+def _load_unified_mart(client: Any, config: MartClickHouseConfig) -> int:
+    if not config.unified_mart.enabled:
+        _log("Skipping unified ClickHouse mart table because unified_mart.enabled=false")
+        return 0
+
+    started = time.monotonic()
+    _validate_unified_sources(client, config)
+    _create_database(client, config.unified_mart.schema)
+    _command(client, f"DROP TABLE IF EXISTS {_qualified(config.unified_mart.schema, config.unified_mart.table)}")
+    _command(client, _render_unified_sql(config))
+    row_count = int(_query_scalar(client, f"SELECT count() FROM {_qualified(config.unified_mart.schema, config.unified_mart.table)}"))
+    bronze_cnote_count = int(_query_scalar(client, f"SELECT count() FROM {_qualified(config.schemas.bronze, 'cms_cnote')}"))
+    if row_count != bronze_cnote_count:
+        raise RuntimeError(
+            f"Unified mart row count mismatch: expected {bronze_cnote_count:,} rows from "
+            f"{config.schemas.bronze}.cms_cnote, got {row_count:,}"
+        )
+    _log(
+        f"Loaded ClickHouse {config.unified_mart.schema}.{config.unified_mart.table}: "
+        f"{row_count:,} rows in {time.monotonic() - started:.1f}s"
+    )
+    return row_count
+
+
 def _ensure_metadata_table(client: Any, config: MartClickHouseConfig) -> None:
     _create_database(client, config.clickhouse.database)
     _command(
@@ -572,6 +662,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
     client = _connect_clickhouse(config)
     loaded_tables: dict[str, int] = {}
     loaded_derived: dict[str, int] = {}
+    unified_rows = 0
     governance_rows = 0
     try:
         _drop_database(client, config.schemas.bronze_staging)
@@ -598,13 +689,19 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
         _publish_schema(client, config.schemas.bronze_staging, config.schemas.bronze)
         _drop_database(client, config.schemas.derived)
 
+        unified_rows = _load_unified_mart(client, config)
         governance_rows = _load_governance_results(client, config)
-        total_rows = sum(loaded_tables.values()) + sum(loaded_derived.values()) + governance_rows
+        total_rows = sum(loaded_tables.values()) + sum(loaded_derived.values()) + unified_rows + governance_rows
         _insert_load_run(
             client,
             config,
             manifest,
-            table_count=len(loaded_tables) + len(loaded_derived) + (1 if config.governance.enabled else 0),
+            table_count=(
+                len(loaded_tables)
+                + len(loaded_derived)
+                + (1 if unified_rows else 0)
+                + (1 if config.governance.enabled else 0)
+            ),
             row_count=total_rows,
             status="SUCCESS",
         )
@@ -616,8 +713,8 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
                 client,
                 config,
                 manifest,
-                table_count=len(loaded_tables) + len(loaded_derived) + (1 if governance_rows else 0),
-                row_count=sum(loaded_tables.values()) + sum(loaded_derived.values()) + governance_rows,
+                table_count=len(loaded_tables) + len(loaded_derived) + (1 if unified_rows else 0) + (1 if governance_rows else 0),
+                row_count=sum(loaded_tables.values()) + sum(loaded_derived.values()) + unified_rows + governance_rows,
                 status="FAILED",
                 error_message=str(exc),
             )
@@ -630,6 +727,8 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
         _log(f"  {config.schemas.bronze}.{table}: {rows} rows")
     for table, rows in sorted(loaded_derived.items()):
         _log(f"  {config.schemas.derived}.{table}: {rows} rows")
+    if config.unified_mart.enabled:
+        _log(f"  {config.unified_mart.schema}.{config.unified_mart.table}: {unified_rows} rows")
     if config.governance.enabled:
         _log(f"  {config.schemas.governance}.governance_results: {governance_rows} rows")
 

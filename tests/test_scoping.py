@@ -50,8 +50,11 @@ def test_master_tables_scope_through_detail_doc_numbers():
     expected = {
         "CMS_MRCNOTE": ("MRCNOTE_NO", "DRCNOTE"),
         "CMS_MHI_HOC": ("MHI_NO", "DHI_HOC"),
+        "CMS_MHOV_RSHEET": ("MHOV_RSHEET_NO", "HOV_RSHEET"),
         "CMS_MHOUNDEL_POD": ("MHOUNDEL_NO", "DHOUNDEL"),
         "CMS_MRSHEET": ("MRSHEET_NO", "DRSHEET"),
+        "CMS_MRSHEET_PRA": ("MRSHEET_NO", "DRSHEET_PRA"),
+        "CMS_MSTATUS": ("MSTATUS_NO", "DSTATUS"),
         "CMS_MHICNOTE": ("MHICNOTE_NO", "HVI"),
         "CMS_MHOCNOTE": ("MHOCNOTE_NO", "HVO"),
         "CMS_MSMU": ("MSMU_NO", "SMU"),
@@ -86,11 +89,26 @@ def test_t_correct_awb_is_run_scoped_cnote_table():
     assert spec.scope_column == "C_CNOTE_NO"
 
 
+def test_pipeline_mapping_sources_are_run_scoped():
+    expected = {
+        "T_CANCEL_CNOTE_API": ("API_CNOTE_NO", "CNOTE"),
+        "CMS_MHOV_RSHEET": ("MHOV_RSHEET_NO", "HOV_RSHEET"),
+        "CMS_MRSHEET_PRA": ("MRSHEET_NO", "DRSHEET_PRA"),
+        "CMS_MSTATUS": ("MSTATUS_NO", "DSTATUS"),
+    }
+
+    for table, (scope_column, scope_name) in expected.items():
+        spec = _spec(table)
+        assert spec.scope_column == scope_column
+        assert spec.scope_name == scope_name
+
+
 def test_scope_dependencies_cover_parent_chains():
-    scopes = _expand_required_scopes({"MMBAG", "SMU", "MSJ", "COST_MANIFEST"})
+    scopes = _expand_required_scopes({"MMBAG", "SMU", "MSJ", "COST_MANIFEST", "HOV_RSHEET", "DRSHEET_PRA", "DSTATUS"})
 
     assert {"CNOTE", "MANIFEST", "MFBAG", "DMBAG", "MMBAG", "SMU"} <= scopes
     assert {"HVI", "RDSJ_HVO", "MSJ"} <= scopes
+    assert {"HOV_RSHEET", "DRSHEET_PRA", "DSTATUS"} <= scopes
     assert "COST_MANIFEST" in scopes
     assert "BAG" not in scopes
     assert "RUNSHEET" not in scopes
@@ -107,6 +125,15 @@ def test_scope_predicate_uses_correct_parent_key_columns():
     )
     assert scope_predicate(scope, "src", "RDSJ_HVO", "DSJ_HVO_NO") == (
         "src.DSJ_HVO_NO IN (SELECT HVO_NO FROM HOA.BRONZE_SCOPE_RDSJ_HVO_R_TEST)"
+    )
+    assert scope_predicate(scope, "src", "HOV_RSHEET", "MHOV_RSHEET_NO") == (
+        "src.MHOV_RSHEET_NO IN (SELECT HOV_RSHEET_NO FROM HOA.BRONZE_SCOPE_HOV_RSHEET_R_TEST)"
+    )
+    assert scope_predicate(scope, "src", "DRSHEET_PRA", "MRSHEET_NO") == (
+        "src.MRSHEET_NO IN (SELECT DRSHEET_NO FROM HOA.BRONZE_SCOPE_DRSHEET_PRA_R_TEST)"
+    )
+    assert scope_predicate(scope, "src", "DSTATUS", "MSTATUS_NO") == (
+        "src.MSTATUS_NO IN (SELECT DSTATUS_NO FROM HOA.BRONZE_SCOPE_DSTATUS_R_TEST)"
     )
 
 

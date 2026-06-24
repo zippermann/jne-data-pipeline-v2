@@ -7,8 +7,12 @@ from loader.mart_load_clickhouse import (
     ClickHouseConfig,
     GovernanceConfig,
     SchemaConfig,
+    UnifiedMartConfig,
+    UNIFIED_REQUIRED_TABLES,
+    _load_unified_mart,
     _load_table_entries,
     _load_governance_csv,
+    _render_unified_sql,
     _s3_url,
     _table_object_prefix,
     load_config,
@@ -32,6 +36,12 @@ def _config() -> MartClickHouseConfig:
             Path("governance/outputs/R_TEST/governance_results.csv"),
             Path("governance/outputs/R_TEST/governance_result_cnotes.csv"),
             Path("governance/outputs/R_TEST/governance_rule_summary.csv"),
+        ),
+        unified_mart=UnifiedMartConfig(
+            True,
+            "mart",
+            "unified_shipments",
+            Path("loader/sql/unified_shipments.sql"),
         ),
         reuse_existing_stages=("reference",),
     )
@@ -69,6 +79,11 @@ governance:
   results_path: "governance/outputs/${RUN_ID}/governance_results.csv"
   result_cnotes_path: "governance/outputs/${RUN_ID}/governance_result_cnotes.csv"
   summary_path: "governance/outputs/${RUN_ID}/governance_rule_summary.csv"
+unified_mart:
+  enabled: true
+  schema: "mart"
+  table: "unified_shipments"
+  sql_path: "loader/sql/unified_shipments.sql"
 mart:
   load_mode: "latest_snapshot"
   skip_stages: []
@@ -86,6 +101,9 @@ mart:
     assert config.governance.results_path.as_posix() == "governance/outputs/R_TEST/governance_results.csv"
     assert config.governance.result_cnotes_path.as_posix() == "governance/outputs/R_TEST/governance_result_cnotes.csv"
     assert config.governance.summary_path.as_posix() == "governance/outputs/R_TEST/governance_rule_summary.csv"
+    assert config.unified_mart.enabled is True
+    assert config.unified_mart.schema == "mart"
+    assert config.unified_mart.table == "unified_shipments"
 
 
 def test_clickhouse_s3_url_uses_source_prefix_for_reused_tables():
@@ -187,3 +205,92 @@ def test_clickhouse_governance_csv_rejects_mixed_column_counts(tmp_path):
     assert "header has 2" in message
     assert f"{csv_path}:3" in message
     assert client.inserts == []
+
+
+def test_unified_mart_sql_template_renders_qualified_names(tmp_path):
+    sql_path = tmp_path / "unified.sql"
+    sql_path.write_text("CREATE TABLE {target_table} AS SELECT * FROM {bronze_schema}.`cms_cnote`", encoding="utf-8")
+    config = _config()
+    config = MartClickHouseConfig(
+        config.minio,
+        config.bronze,
+        config.clickhouse,
+        config.schemas,
+        config.governance,
+        UnifiedMartConfig(True, "mart", "unified_shipments", sql_path),
+        config.skip_stages,
+        config.reuse_existing_stages,
+        config.load_mode,
+    )
+
+    sql = _render_unified_sql(config)
+
+    assert "CREATE TABLE `mart`.`unified_shipments`" in sql
+    assert "FROM `bronze`.`cms_cnote`" in sql
+
+
+def test_unified_mart_validates_required_sources_before_rebuild(monkeypatch, tmp_path):
+    sql_path = tmp_path / "unified.sql"
+    sql_path.write_text("CREATE TABLE {target_table} AS SELECT 1", encoding="utf-8")
+    config = _config()
+    config = MartClickHouseConfig(
+        config.minio,
+        config.bronze,
+        config.clickhouse,
+        config.schemas,
+        config.governance,
+        UnifiedMartConfig(True, "mart", "unified_shipments", sql_path),
+        config.skip_stages,
+        config.reuse_existing_stages,
+        config.load_mode,
+    )
+
+    monkeypatch.setattr(
+        "loader.mart_load_clickhouse._table_exists",
+        lambda client, schema, table: table != "cms_mstatus",
+    )
+
+    try:
+        _load_unified_mart(object(), config)
+    except RuntimeError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("Expected unified mart source validation to fail")
+
+    assert "bronze.cms_mstatus" in message
+
+
+def test_unified_mart_rebuilds_target_after_source_validation(monkeypatch, tmp_path):
+    sql_path = tmp_path / "unified.sql"
+    sql_path.write_text("CREATE TABLE {target_table} AS SELECT * FROM {bronze_schema}.`cms_cnote`", encoding="utf-8")
+    config = _config()
+    config = MartClickHouseConfig(
+        config.minio,
+        config.bronze,
+        config.clickhouse,
+        config.schemas,
+        config.governance,
+        UnifiedMartConfig(True, "mart", "unified_shipments", sql_path),
+        config.skip_stages,
+        config.reuse_existing_stages,
+        config.load_mode,
+    )
+    commands = []
+
+    monkeypatch.setattr("loader.mart_load_clickhouse._table_exists", lambda client, schema, table: True)
+    monkeypatch.setattr("loader.mart_load_clickhouse._command", lambda client, sql: commands.append(sql))
+    monkeypatch.setattr("loader.mart_load_clickhouse._query_scalar", lambda client, sql: 42)
+
+    rows = _load_unified_mart(object(), config)
+
+    assert rows == 42
+    assert any("CREATE DATABASE IF NOT EXISTS `mart`" in sql for sql in commands)
+    assert any("DROP TABLE IF EXISTS `mart`.`unified_shipments`" in sql for sql in commands)
+    assert any("CREATE TABLE `mart`.`unified_shipments`" in sql for sql in commands)
+
+
+def test_unified_mart_sql_references_declared_required_sources():
+    sql = Path("loader/sql/unified_shipments.sql").read_text(encoding="utf-8")
+
+    for table in UNIFIED_REQUIRED_TABLES:
+        assert f"`{table}`" in sql

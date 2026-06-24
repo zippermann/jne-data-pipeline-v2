@@ -29,6 +29,12 @@ governance:
   result_cnotes_path: "governance/outputs/${RUN_ID}/governance_result_cnotes.csv"
   summary_path: "governance/outputs/${RUN_ID}/governance_rule_summary.csv"
 
+unified_mart:
+  enabled: true
+  schema: "mart"
+  table: "unified_shipments"
+  sql_path: "loader/sql/unified_shipments.sql"
+
 mart:
   load_mode: "latest_snapshot"
   skip_stages: []
