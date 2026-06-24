@@ -122,10 +122,10 @@ manifest_asset AS (
 pra_runsheet_events AS (
     SELECT
         d.`DRSHEET_CNOTE_NO` AS `DRI_PRA_CNOTE_NO`,
-        d.`DRSHEET_NO` AS `DRI_PRA_NO`,
-        m.`MRSHEET_DATE` AS `DRI_PRA_DATE`,
-        m.`MRSHEET_UID` AS `DRI_PRA_USER`,
-        CAST(NULL AS Nullable(String)) AS `DRI_PRA_ZONE`
+        d.`DRSHEET_NO` AS `DRI_PRA_EVENT_NO`,
+        m.`MRSHEET_DATE` AS `DRI_PRA_EVENT_DATE`,
+        m.`MRSHEET_UID` AS `DRI_PRA_EVENT_USER`,
+        CAST(NULL AS Nullable(String)) AS `DRI_PRA_EVENT_ZONE`
     FROM {bronze_schema}.`cms_drsheet_pra` d
     LEFT JOIN {bronze_schema}.`cms_mrsheet_pra` m
         ON d.`DRSHEET_NO` = m.`MRSHEET_NO`
@@ -133,10 +133,10 @@ pra_runsheet_events AS (
 pra_runsheet AS (
     SELECT
         `DRI_PRA_CNOTE_NO`,
-        argMin(`DRI_PRA_NO`, `DRI_PRA_DATE`) AS `DRI_PRA_NO`,
-        argMin(`DRI_PRA_DATE`, `DRI_PRA_DATE`) AS `DRI_PRA_DATE`,
-        argMin(`DRI_PRA_USER`, `DRI_PRA_DATE`) AS `DRI_PRA_USER`,
-        argMin(`DRI_PRA_ZONE`, `DRI_PRA_DATE`) AS `DRI_PRA_ZONE`
+        argMin(`DRI_PRA_EVENT_NO`, `DRI_PRA_EVENT_DATE`) AS `DRI_PRA_NO`,
+        min(`DRI_PRA_EVENT_DATE`) AS `DRI_PRA_DATE`,
+        argMin(`DRI_PRA_EVENT_USER`, `DRI_PRA_EVENT_DATE`) AS `DRI_PRA_USER`,
+        argMin(`DRI_PRA_EVENT_ZONE`, `DRI_PRA_EVENT_DATE`) AS `DRI_PRA_ZONE`
     FROM pra_runsheet_events
     WHERE `DRI_PRA_CNOTE_NO` IS NOT NULL
     GROUP BY `DRI_PRA_CNOTE_NO`
@@ -146,23 +146,23 @@ manifest_grouped AS (
         `MF_CNOTE_NO`,
         argMinIf(`MF_NO`, `MF_SCAN_DATE`, `MF_CODE` = '1') AS `OM_NO`,
         argMinIf(`MF_BAG_NO`, `MF_SCAN_DATE`, `MF_CODE` = '1') AS `OM_BAG_NO`,
-        argMinIf(`MF_SCAN_DATE`, `MF_SCAN_DATE`, `MF_CODE` = '1') AS `OM_SCAN_DATE`,
+        minIf(`MF_SCAN_DATE`, `MF_CODE` = '1') AS `OM_SCAN_DATE`,
         argMinIf(`MF_DATE`, `MF_SCAN_DATE`, `MF_CODE` = '1') AS `OM_DATE`,
         argMinIf(`MF_USER`, `MF_SCAN_DATE`, `MF_CODE` = '1') AS `OM_USER`,
         CAST(NULL AS Nullable(String)) AS `OM_ZONE`,
         countIf(`MF_CODE` = '2') AS `TM_COUNT`,
         argMinIf(`MF_NO`, `MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_FIRST_NO`,
-        argMinIf(`MF_SCAN_DATE`, `MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_FIRST_SCAN_DATE`,
+        minIf(`MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_FIRST_SCAN_DATE`,
         argMinIf(`MF_DATE`, `MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_FIRST_DATE`,
         argMinIf(`MF_USER`, `MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_FIRST_USER`,
         CAST(NULL AS Nullable(String)) AS `TM_FIRST_ZONE`,
         argMaxIf(`MF_NO`, `MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_LAST_NO`,
-        argMaxIf(`MF_SCAN_DATE`, `MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_LAST_SCAN_DATE`,
+        maxIf(`MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_LAST_SCAN_DATE`,
         argMaxIf(`MF_DATE`, `MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_LAST_DATE`,
         argMaxIf(`MF_USER`, `MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_LAST_USER`,
         CAST(NULL AS Nullable(String)) AS `TM_LAST_ZONE`,
         argMinIf(`MF_NO`, `MF_SCAN_DATE`, `MF_CODE` = '3') AS `IM_NO`,
-        argMinIf(`MF_SCAN_DATE`, `MF_SCAN_DATE`, `MF_CODE` = '3') AS `IM_SCAN_DATE`,
+        minIf(`MF_SCAN_DATE`, `MF_CODE` = '3') AS `IM_SCAN_DATE`,
         argMinIf(`MF_DATE`, `MF_SCAN_DATE`, `MF_CODE` = '3') AS `IM_DATE`,
         argMinIf(`MF_USER`, `MF_SCAN_DATE`, `MF_CODE` = '3') AS `IM_USER`,
         CAST(NULL AS Nullable(String)) AS `IM_ZONE`,
