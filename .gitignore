@@ -7,6 +7,7 @@
 
 # Data files — may contain PII
 data/
+outputs/
 *.csv
 !governance/catalog_skipped_rows.csv
 *.parquet
@@ -20,6 +21,7 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+tests/
 
 # Airflow logs and run artifacts
 airflow/logs/
