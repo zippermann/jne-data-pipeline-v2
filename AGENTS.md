@@ -83,7 +83,7 @@ extract_oracle -> transform_data -> run_governance -> load_data_mart_clickhouse
 `transform_data` runs `transform.transform_data` and appends `derived` metadata to
 the same run manifest.
 `run_governance` runs `governance.runner` against the bronze run manifest after
-transform has published reusable entity-to-CNOTE links.
+transform has published reusable document-to-CNOTE links.
 `load_data_mart_clickhouse` runs `loader.mart_load_clickhouse`.
 
 Pass `{"keep_scope": true}` in `dag_run.conf` to keep Oracle scope tables for
@@ -114,7 +114,7 @@ manifest's `derived` section:
 
 - `derived/cms_cnote_transformed/part-*.parquet`: CNOTE enrichment used as the
   mart's `bronze.cms_cnote`.
-- `derived/entity_cnote_links/part-*.parquet`: reusable non-CNOTE entity links
+- `derived/document_cnote_links/part-*.parquet`: reusable non-CNOTE document links
   for governance and inspection.
 
 ## Configuration
@@ -138,7 +138,7 @@ publishes tables into the `bronze` database and replaces raw `bronze.cms_cnote`
 with the transformed `derived/cms_cnote_transformed` data. Governance output
 lands in the `governance` database:
 
-- `governance.governance_results`: one entity-level result row per rule check.
+- `governance.governance_results`: one document-level result row per rule check.
 - `governance.governance_result_cnotes`: zero-to-many CNOTE links per
   `result_id`.
 - `governance.governance_rule_summary`: one audit row per rule.
@@ -160,8 +160,8 @@ An empty list extracts every configured table.
 ## Governance
 
 `governance/runner.py` reads the bronze `run_manifest.json`, loads the required
-Parquet columns for active catalog rules, and writes entity-level governance
-results. The primary output is one row per checked entity/index:
+Parquet columns for active catalog rules, and writes document-level governance
+results. The primary output is one row per checked document/index:
 
 - `governance_results.csv`
 
@@ -173,12 +173,12 @@ It also writes a CNOTE bridge file and one rule-level audit file:
 `governance_results.csv` includes:
 
 - `result_id`: stable row id for joining to the CNOTE bridge in the same run.
-- `entity_type`: the source entity type, usually the source table name without
+- `document_type`: the source document type, usually the source table name without
   the `CMS_` prefix.
-- `entity_id`: the exact source entity checked, such as a CNOTE number, bag
+- `document_id`: the exact source document checked, such as a CNOTE number, bag
   number, manifest number, sheet number, or process document number.
 - `cnote_no`: a convenience shortcut only when exactly one safe sampled CNOTE is
-  linked. It is intentionally blank for zero-link and many-link entities.
+  linked. It is intentionally blank for zero-link and many-link documents.
 
 `governance_result_cnotes.csv` is the source of truth for CNOTE rollups. It
 contains one row per safe CNOTE link:
@@ -190,7 +190,7 @@ contains one row per safe CNOTE link:
 
 Dashboard rule of thumb:
 
-- Entity-level views should use `governance_results.entity_id`.
+- Document-level views should use `governance_results.document_id`.
 - CNOTE-level views should join `governance_results` to
   `governance_result_cnotes` on `result_id` and use
   `governance_result_cnotes.cnote_no`.
@@ -198,8 +198,8 @@ Dashboard rule of thumb:
   column is nullable by design.
 
 Reusable bridge maps should only represent confirmed source relationships.
-Bridge construction belongs in `transform/entity_links.py`; governance consumes
-the derived `ENTITY_CNOTE_LINKS` table when it exists. Current confirmed
+Bridge construction belongs in `transform/document_links.py`; governance consumes
+the derived `DOCUMENT_CNOTE_LINKS` table when it exists. Current confirmed
 examples include:
 
 - `CMS_MFCNOTE.MFCNOTE_NO` directly to CNOTE.

@@ -31,11 +31,11 @@ from governance.output import (
     write_rule_summary_parquet,
 )
 from governance.rules import FAILURE_COLUMNS, RULE_FUNCTIONS, RuleOutcome
-from transform.entity_links import (
+from transform.document_links import (
     BRIDGE_COLUMNS,
-    ENTITY_LINK_COLUMNS,
-    ENTITY_LINKS_SOURCE_TABLE,
-    build_entity_bridges,
+    DOCUMENT_LINK_COLUMNS,
+    DOCUMENT_LINKS_SOURCE_TABLE,
+    build_document_bridges,
 )
 
 
@@ -678,26 +678,26 @@ def _string_key_values(values: pd.Series) -> pd.Series:
     return values.fillna("").astype("string").str.strip()
 
 
-def _entity_bridges(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, list[str]]]:
-    links = data.get(ENTITY_LINKS_SOURCE_TABLE)
+def _document_bridges(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, list[str]]]:
+    links = data.get(DOCUMENT_LINKS_SOURCE_TABLE)
     if links is None or links.empty:
-        return build_entity_bridges(data)
-    required = {"source_table", "entity_id", "cnote_no"}
+        return build_document_bridges(data)
+    required = {"source_table", "document_id", "cnote_no"}
     if not required <= set(links.columns):
         return {}
 
     work = pd.DataFrame({
         "source_table": _string_key_values(links["source_table"]).str.upper(),
-        "entity_id": _string_key_values(links["entity_id"]),
+        "document_id": _string_key_values(links["document_id"]),
         "cnote_no": _string_key_values(links["cnote_no"]),
     })
     work = work.loc[
-        work["source_table"].ne("") & work["entity_id"].ne("") & work["cnote_no"].ne("")
+        work["source_table"].ne("") & work["document_id"].ne("") & work["cnote_no"].ne("")
     ].drop_duplicates()
 
     bridges: dict[str, dict[str, list[str]]] = {}
-    for (source_table, entity_id), group in work.groupby(["source_table", "entity_id"], sort=False):
-        bridges.setdefault(str(source_table), {})[str(entity_id)] = [str(value) for value in group["cnote_no"]]
+    for (source_table, document_id), group in work.groupby(["source_table", "document_id"], sort=False):
+        bridges.setdefault(str(source_table), {})[str(document_id)] = [str(value) for value in group["cnote_no"]]
     return bridges
 
 
@@ -723,7 +723,7 @@ def _safe_linked_cnotes(values: Iterable[str], cnote_universe: set[str]) -> list
     return linked
 
 
-def _entity_type(entry: dict) -> str:
+def _document_type(entry: dict) -> str:
     table = str(entry.get("table", "")).upper()
     if table.startswith("CMS_"):
         return table.removeprefix("CMS_")
@@ -733,29 +733,29 @@ def _entity_type(entry: dict) -> str:
 def _check_rows_frame(
     entry: dict,
     outcome: RuleOutcome,
-    entity_bridges: dict[str, dict[str, list[str]]] | None = None,
+    document_bridges: dict[str, dict[str, list[str]]] | None = None,
     cnote_universe: set[str] | None = None,
 ) -> pd.DataFrame:
     checks = outcome.checks
     if checks is None or checks.empty:
         return pd.DataFrame()
     rows = checks.copy()
-    rows = rows.rename(columns={"cnote_no": "entity_id"})
-    rows["entity_id"] = _string_key_values(rows["entity_id"])
+    rows = rows.rename(columns={"cnote_no": "document_id"})
+    rows["document_id"] = _string_key_values(rows["document_id"])
     table_name = str(entry["table"]).upper()
-    rows["entity_type"] = _entity_type(entry)
+    rows["document_type"] = _document_type(entry)
     cnotes = cnote_universe or set()
 
-    bridge_map = entity_bridges or {}
+    bridge_map = document_bridges or {}
     bridge = bridge_map.get(table_name, {})
     if table_name in bridge_map:
-        rows["_linked_cnotes"] = rows["entity_id"].map(lambda value: _safe_linked_cnotes(bridge.get(str(value), []), cnotes))
+        rows["_linked_cnotes"] = rows["document_id"].map(lambda value: _safe_linked_cnotes(bridge.get(str(value), []), cnotes))
         rows["_link_method"] = f"{table_name.lower()}_bridge"
     elif table_name == "CMS_CNOTE":
-        rows["_linked_cnotes"] = rows["entity_id"].map(lambda value: [str(value)] if (not cnotes or str(value) in cnotes) else [])
+        rows["_linked_cnotes"] = rows["document_id"].map(lambda value: [str(value)] if (not cnotes or str(value) in cnotes) else [])
         rows["_link_method"] = "direct_cnote"
     else:
-        rows["_linked_cnotes"] = rows["entity_id"].map(lambda value: [str(value)] if str(value) in cnotes else [])
+        rows["_linked_cnotes"] = rows["document_id"].map(lambda value: [str(value)] if str(value) in cnotes else [])
         rows["_link_method"] = "direct_cnote_value"
 
     rows["cnote_no"] = rows["_linked_cnotes"].map(lambda values: values[0] if len(values) == 1 else "")
@@ -834,7 +834,7 @@ def _run_entries(
     results_parquet_path = output_dir / "governance_results.parquet"
     result_cnotes_path = output_dir / "governance_result_cnotes.csv"
     result_cnotes_parquet_path = output_dir / "governance_result_cnotes.parquet"
-    bridges = _entity_bridges(data)
+    bridges = _document_bridges(data)
     cnotes = _cnote_universe(data)
     next_result_number = 1
 
@@ -993,12 +993,12 @@ def run(
 
         streamed_reference_tables = _streamed_reference_tables(runnable, bronze_source)
         required_columns = _required_columns(runnable)
-        if ENTITY_LINKS_SOURCE_TABLE in bronze_source.tables:
-            required_columns[ENTITY_LINKS_SOURCE_TABLE] = set(ENTITY_LINK_COLUMNS)
+        if DOCUMENT_LINKS_SOURCE_TABLE in bronze_source.tables:
+            required_columns[DOCUMENT_LINKS_SOURCE_TABLE] = set(DOCUMENT_LINK_COLUMNS)
         else:
             print(
-                f"WARNING: {ENTITY_LINKS_SOURCE_TABLE} is missing from the run manifest; "
-                "run transform_data before governance for non-CNOTE entity links.",
+                f"WARNING: {DOCUMENT_LINKS_SOURCE_TABLE} is missing from the run manifest; "
+                "run transform_data before governance for non-CNOTE document links.",
                 flush=True,
             )
         load_columns = {

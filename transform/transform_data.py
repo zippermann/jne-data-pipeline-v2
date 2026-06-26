@@ -17,10 +17,10 @@ from pathlib import Path
 from typing import Any
 
 from extractor.bronze import MinioSettings, load_config
-from transform.entity_links import (
-    ENTITY_LINKS_SOURCE_TABLE,
-    ENTITY_LINKS_TABLE,
-    build_entity_cnote_links,
+from transform.document_links import (
+    DOCUMENT_LINKS_SOURCE_TABLE,
+    DOCUMENT_LINKS_TABLE,
+    build_document_cnote_links,
     required_link_columns,
 )
 
@@ -414,7 +414,7 @@ def _read_distinct_columns(con: Any, parquet_path: str, columns: set[str]) -> An
     ).fetchdf()
 
 
-def _load_entity_link_inputs(con: Any, source: DerivedSource) -> dict[str, Any]:
+def _load_document_link_inputs(con: Any, source: DerivedSource) -> dict[str, Any]:
     data = {}
     for table, columns in sorted(required_link_columns().items()):
         try:
@@ -425,41 +425,41 @@ def _load_entity_link_inputs(con: Any, source: DerivedSource) -> dict[str, Any]:
     return data
 
 
-def _write_entity_links(con: Any, source: DerivedSource, tmpdir: Path | None = None) -> dict[str, Any]:
+def _write_document_links(con: Any, source: DerivedSource, tmpdir: Path | None = None) -> dict[str, Any]:
     started = time.monotonic()
-    link_inputs = _load_entity_link_inputs(con, source)
-    links = build_entity_cnote_links(link_inputs)
-    con.register(ENTITY_LINKS_TABLE, links)
+    link_inputs = _load_document_link_inputs(con, source)
+    links = build_document_cnote_links(link_inputs)
+    con.register(DOCUMENT_LINKS_TABLE, links)
 
     if source.run_path is not None:
-        output_dir = source.run_path / DERIVED_PARENT / ENTITY_LINKS_TABLE
-        row_count = _copy_to_parquet(con, f"SELECT * FROM {ENTITY_LINKS_TABLE}", output_dir)
+        output_dir = source.run_path / DERIVED_PARENT / DOCUMENT_LINKS_TABLE
+        row_count = _copy_to_parquet(con, f"SELECT * FROM {DOCUMENT_LINKS_TABLE}", output_dir)
         entry = _derived_manifest_entry(
             row_count,
             output_dir,
             source,
-            output_name=ENTITY_LINKS_TABLE,
-            source_table=ENTITY_LINKS_SOURCE_TABLE,
+            output_name=DOCUMENT_LINKS_TABLE,
+            source_table=DOCUMENT_LINKS_SOURCE_TABLE,
         )
         _update_manifest(source.manifest, entry)
         _write_local_manifest(source)
     else:
         if tmpdir is None:
             raise ValueError("tmpdir is required for minio derived output")
-        output_dir = tmpdir / ENTITY_LINKS_TABLE
-        row_count = _copy_to_parquet(con, f"SELECT * FROM {ENTITY_LINKS_TABLE}", output_dir)
+        output_dir = tmpdir / DOCUMENT_LINKS_TABLE
+        row_count = _copy_to_parquet(con, f"SELECT * FROM {DOCUMENT_LINKS_TABLE}", output_dir)
         entry = _derived_manifest_entry(
             row_count,
             output_dir,
             source,
-            output_name=ENTITY_LINKS_TABLE,
-            source_table=ENTITY_LINKS_SOURCE_TABLE,
+            output_name=DOCUMENT_LINKS_TABLE,
+            source_table=DOCUMENT_LINKS_SOURCE_TABLE,
         )
         _update_manifest(source.manifest, entry)
-        _upload_derived_to_minio(source, output_dir, ENTITY_LINKS_TABLE)
+        _upload_derived_to_minio(source, output_dir, DOCUMENT_LINKS_TABLE)
         _upload_manifest_to_minio(source, tmpdir)
 
-    _log(f"Transformed derived.{ENTITY_LINKS_TABLE}: {row_count:,} rows in {time.monotonic() - started:.1f}s")
+    _log(f"Transformed derived.{DOCUMENT_LINKS_TABLE}: {row_count:,} rows in {time.monotonic() - started:.1f}s")
     return entry
 
 
@@ -519,7 +519,7 @@ def transform_data(source: DerivedSource, config: dict, tmpdir: Path | None = No
         _upload_manifest_to_minio(source, tmpdir)
 
     _log(f"Transformed derived.{DERIVED_TABLE}: {row_count:,} rows in {time.monotonic() - started:.1f}s")
-    _write_entity_links(con, source, tmpdir)
+    _write_document_links(con, source, tmpdir)
     return entry
 
 

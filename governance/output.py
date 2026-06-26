@@ -11,8 +11,8 @@ import pandas as pd
 RESULT_COLUMNS = [
     "result_id",
     "cnote_no",
-    "entity_type",
-    "entity_id",
+    "document_type",
+    "document_id",
     "index_code",
     "main_indicator",
     "column_name",

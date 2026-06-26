@@ -1,4 +1,4 @@
-"""Build reusable entity-to-CNOTE bridge links from relational bronze tables."""
+"""Build reusable document-to-CNOTE bridge links from relational bronze tables."""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ from typing import Iterable
 import pandas as pd
 
 
-ENTITY_LINKS_TABLE = "entity_cnote_links"
-ENTITY_LINKS_SOURCE_TABLE = "ENTITY_CNOTE_LINKS"
-ENTITY_LINK_COLUMNS = [
+DOCUMENT_LINKS_TABLE = "document_cnote_links"
+DOCUMENT_LINKS_SOURCE_TABLE = "DOCUMENT_CNOTE_LINKS"
+DOCUMENT_LINK_COLUMNS = [
     "source_table",
-    "entity_type",
-    "entity_id",
+    "document_type",
+    "document_id",
     "cnote_no",
     "link_method",
     "link_confidence",
@@ -219,7 +219,7 @@ def _mfcnote_to_cnotes(data: dict[str, pd.DataFrame]) -> dict[str, list[str]]:
     return {str(value): [str(value)] for value in values[values.ne("")].drop_duplicates()}
 
 
-def build_entity_bridges(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, list[str]]]:
+def build_document_bridges(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, list[str]]]:
     bag_to_cnotes = _bag_to_cnotes(data)
     dmbag_to_cnotes = _dmbag_to_cnotes(data, bag_to_cnotes)
     mmbag_to_cnotes = _mmbag_to_cnotes(data, dmbag_to_cnotes)
@@ -275,7 +275,7 @@ def _safe_cnotes(values: Iterable[str], cnote_universe: set[str]) -> list[str]:
     return linked
 
 
-def _entity_type(source_table: str) -> str:
+def _document_type(source_table: str) -> str:
     return source_table.removeprefix("CMS_") if source_table.startswith("CMS_") else source_table
 
 
@@ -299,21 +299,21 @@ def _method_for_table(source_table: str) -> str:
     }.get(source_table, f"{source_table.lower()}_bridge")
 
 
-def build_entity_cnote_links(data: dict[str, pd.DataFrame], cnote_universe: set[str] | None = None) -> pd.DataFrame:
+def build_document_cnote_links(data: dict[str, pd.DataFrame], cnote_universe: set[str] | None = None) -> pd.DataFrame:
     cnotes = cnote_universe if cnote_universe is not None else _cnote_universe(data)
     rows: list[dict[str, str]] = []
-    for source_table, bridge in build_entity_bridges(data).items():
+    for source_table, bridge in build_document_bridges(data).items():
         method = _method_for_table(source_table)
-        for entity_id, linked_cnotes in bridge.items():
+        for document_id, linked_cnotes in bridge.items():
             for cnote_no in _safe_cnotes(linked_cnotes, cnotes):
                 rows.append({
                     "source_table": source_table,
-                    "entity_type": _entity_type(source_table),
-                    "entity_id": str(entity_id),
+                    "document_type": _document_type(source_table),
+                    "document_id": str(document_id),
                     "cnote_no": str(cnote_no),
                     "link_method": method,
                     "link_confidence": "safe",
                 })
     if not rows:
-        return pd.DataFrame(columns=ENTITY_LINK_COLUMNS)
-    return pd.DataFrame(rows, columns=ENTITY_LINK_COLUMNS).drop_duplicates(ignore_index=True)
+        return pd.DataFrame(columns=DOCUMENT_LINK_COLUMNS)
+    return pd.DataFrame(rows, columns=DOCUMENT_LINK_COLUMNS).drop_duplicates(ignore_index=True)

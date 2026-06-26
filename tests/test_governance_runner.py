@@ -13,7 +13,7 @@ from governance.runner import (
     BronzeTable,
     _entry_tables,
     _check_rows_frame,
-    _entity_bridges,
+    _document_bridges,
     _result_cnote_rows,
     _missing_entry_columns,
     _list_minio_parquet_objects,
@@ -164,8 +164,8 @@ def test_governance_writer_replaces_existing_output_files(tmp_path):
     with GovernanceResultWriter(csv_path, parquet_path) as writer:
         writer.write(pd.DataFrame({
             "cnote_no": ["C1"],
-            "entity_type": ["CNOTE"],
-            "entity_id": ["C1"],
+            "document_type": ["CNOTE"],
+            "document_id": ["C1"],
             "index_code": ["COMP_TEST"],
             "main_indicator": ["Completeness"],
             "column_name": ["CNOTE_NO"],
@@ -200,19 +200,19 @@ def test_catalog_entries_include_analysis_metadata():
     assert by_code["ACCU1A25"]["impact_operational"] == "Y"
 
 
-def test_drsheet_pra_uses_existing_cnote_column_as_entity_key():
+def test_drsheet_pra_uses_existing_cnote_column_as_document_key():
     for entry in CATALOG:
         if entry.get("table") == "CMS_DRSHEET_PRA":
             assert entry["params"].get("cnote_column") == "DRSHEET_CNOTE_NO"
 
 
-def test_mhi_hoc_uses_mhi_no_as_entity_key():
+def test_mhi_hoc_uses_mhi_no_as_document_key():
     for entry in CATALOG:
         if entry.get("table") == "CMS_MHI_HOC" and entry.get("rule_family") != "bridged_timeliness":
             assert entry["params"].get("cnote_column") == "MHI_NO"
 
 
-def test_bag_governance_rows_keep_entity_id_and_links_cnotes_separately():
+def test_bag_governance_rows_keep_document_id_and_links_cnotes_separately():
     data = {
         "CMS_MFCNOTE": pd.DataFrame({
             "MFCNOTE_NO": ["CNOTE1", "CNOTE2"],
@@ -241,13 +241,13 @@ def test_bag_governance_rows_keep_entity_id_and_links_cnotes_separately():
         }),
     )
 
-    rows = _check_rows_frame(entry, outcome, _entity_bridges(data), {"CNOTE1", "CNOTE2"})
+    rows = _check_rows_frame(entry, outcome, _document_bridges(data), {"CNOTE1", "CNOTE2"})
     rows.insert(0, "result_id", ["R000000000001"])
     link_rows = _result_cnote_rows(rows)
 
     assert rows["cnote_no"].tolist() == [""]
-    assert rows["entity_id"].tolist() == ["BAG1"]
-    assert rows["entity_type"].tolist() == ["DMBAG"]
+    assert rows["document_id"].tolist() == ["BAG1"]
+    assert rows["document_type"].tolist() == ["DMBAG"]
     assert link_rows["result_id"].tolist() == ["R000000000001", "R000000000001"]
     assert link_rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
 
@@ -284,16 +284,16 @@ def test_mmbag_links_to_cnotes_through_dmbag():
         }),
     )
 
-    rows = _check_rows_frame(entry, outcome, _entity_bridges(data), {"CNOTE1", "CNOTE2"})
+    rows = _check_rows_frame(entry, outcome, _document_bridges(data), {"CNOTE1", "CNOTE2"})
     rows.insert(0, "result_id", ["R000000000001"])
     link_rows = _result_cnote_rows(rows)
 
-    assert rows.loc[0, "entity_id"] == "MMBAG1"
+    assert rows.loc[0, "document_id"] == "MMBAG1"
     assert rows.loc[0, "cnote_no"] == ""
     assert link_rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
 
 
-def test_confirmed_operational_entities_bridge_to_cnotes():
+def test_confirmed_operational_documents_bridge_to_cnotes():
     data = {
         "CMS_MFCNOTE": pd.DataFrame({
             "MFCNOTE_NO": ["CNOTE1"],
@@ -345,7 +345,7 @@ def test_confirmed_operational_entities_bridge_to_cnotes():
         }),
     }
 
-    bridges = _entity_bridges(data)
+    bridges = _document_bridges(data)
 
     assert bridges["CMS_MANIFEST"]["MAN1"] == ["CNOTE1"]
     assert bridges["CMS_MRSHEET"]["RS1"] == ["CNOTE2"]
@@ -360,7 +360,7 @@ def test_confirmed_operational_entities_bridge_to_cnotes():
     assert bridges["CMS_MSJ"]["MSJ1"] == ["CNOTE3"]
 
 
-def test_unmapped_bag_entity_does_not_masquerade_as_cnote():
+def test_unmapped_bag_document_does_not_masquerade_as_cnote():
     entry = {
         "index_code": "COMP_TEST",
         "indicator": "Unique Identifier",
@@ -382,11 +382,11 @@ def test_unmapped_bag_entity_does_not_masquerade_as_cnote():
     rows = _check_rows_frame(entry, outcome, {"CMS_MFBAG": {}})
 
     assert rows.loc[0, "cnote_no"] == ""
-    assert rows.loc[0, "entity_id"] == "BAG_ONLY"
-    assert rows.loc[0, "entity_type"] == "MFBAG"
+    assert rows.loc[0, "document_id"] == "BAG_ONLY"
+    assert rows.loc[0, "document_type"] == "MFBAG"
 
 
-def test_non_cnote_entity_only_populates_cnote_when_in_sample():
+def test_non_cnote_document_only_populates_cnote_when_in_sample():
     entry = {
         "index_code": "COMP_TEST",
         "indicator": "Completeness",
@@ -407,11 +407,11 @@ def test_non_cnote_entity_only_populates_cnote_when_in_sample():
 
     rows = _check_rows_frame(entry, outcome, {}, {"CNOTE1"})
 
-    assert rows["entity_id"].tolist() == ["MANIFEST1", "CNOTE1"]
+    assert rows["document_id"].tolist() == ["MANIFEST1", "CNOTE1"]
     assert rows["cnote_no"].tolist() == ["", "CNOTE1"]
 
 
-def test_bridge_cnote_outside_sample_keeps_entity_but_blanks_cnote():
+def test_bridge_cnote_outside_sample_keeps_document_but_blanks_cnote():
     entry = {
         "index_code": "COMP_TEST",
         "indicator": "Completeness",
@@ -432,7 +432,7 @@ def test_bridge_cnote_outside_sample_keeps_entity_but_blanks_cnote():
 
     rows = _check_rows_frame(entry, outcome, {"CMS_MFBAG": {"BAG1": ["OUTSIDE_SAMPLE"]}}, {"CNOTE1"})
 
-    assert rows.loc[0, "entity_id"] == "BAG1"
+    assert rows.loc[0, "document_id"] == "BAG1"
     assert rows.loc[0, "cnote_no"] == ""
 
 
