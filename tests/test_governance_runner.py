@@ -252,6 +252,33 @@ def test_bag_governance_rows_keep_document_id_and_links_cnotes_separately():
     assert link_rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
 
 
+def test_bag_bridge_uses_mfcnote_bag_not_manifest_context():
+    data = {
+        "CMS_MFCNOTE": pd.DataFrame({
+            "MFCNOTE_NO": ["CNOTE1"],
+            "MFCNOTE_BAG_NO": ["OTHER_BAG"],
+            "MFCNOTE_MAN_NO": ["MAN1"],
+        }),
+        "CMS_MFBAG": pd.DataFrame({
+            "MFBAG_NO": ["BAG1"],
+            "MFBAG_MAN_NO": ["MAN1"],
+        }),
+        "CMS_DMBAG": pd.DataFrame({
+            "DMBAG_NO": ["DMBAG1"],
+            "DMBAG_BAG_NO": ["BAG1"],
+        }),
+        "CMS_MANIFEST": pd.DataFrame({
+            "MANIFEST_NO": ["MAN1"],
+        }),
+    }
+
+    bridges = _document_bridges(data)
+
+    assert bridges["CMS_MANIFEST"]["MAN1"] == ["CNOTE1"]
+    assert "BAG1" not in bridges["CMS_MFBAG"]
+    assert "BAG1" not in bridges["CMS_DMBAG"]
+
+
 def test_mmbag_links_to_cnotes_through_dmbag():
     data = {
         "CMS_MFCNOTE": pd.DataFrame({

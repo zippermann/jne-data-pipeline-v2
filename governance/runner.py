@@ -30,7 +30,7 @@ from governance.output import (
     write_rule_summary,
     write_rule_summary_parquet,
 )
-from governance.rules import FAILURE_COLUMNS, RULE_FUNCTIONS, RuleOutcome
+from governance.rules import FAILURE_COLUMNS, RULE_FUNCTIONS, RuleOutcome, rule_function_for_entry
 from transform.document_links import (
     BRIDGE_COLUMNS,
     DOCUMENT_LINK_COLUMNS,
@@ -859,8 +859,10 @@ def _run_entries(
 
             params = dict(entry["params"])
             params.setdefault("table", entry["table"])
+            params["_index_code"] = entry["index_code"]
+            params["_rule_family"] = entry["rule_family"]
             try:
-                outcome = RULE_FUNCTIONS[entry["rule_family"]](data, params)
+                outcome = rule_function_for_entry(entry)(data, params)
                 if outcome.checks is None or len(outcome.checks) == 0:
                     status = "NO_ROWS"
                 else:

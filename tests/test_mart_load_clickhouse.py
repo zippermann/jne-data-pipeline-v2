@@ -294,3 +294,14 @@ def test_unified_mart_sql_references_declared_required_sources():
 
     for table in UNIFIED_REQUIRED_TABLES:
         assert f"`{table}`" in sql
+
+
+def test_unified_mart_manifest_joins_match_pipeline_mapping_workbook():
+    sql = Path("loader/sql/unified_shipments.sql").read_text(encoding="utf-8")
+
+    assert "f.`MFCNOTE_MAN_NO` AS `MF_NO`" in sql
+    assert "f.`MFCNOTE_NO` AS `MF_CNOTE_NO`" in sql
+    assert "f.`MFCNOTE_BAG_NO` AS `MF_BAG_NO`" in sql
+    assert "ON f.`MFCNOTE_MAN_NO` = m.`MANIFEST_NO`" in sql
+    assert "ON c.`CNOTE_NO` = m.`MF_CNOTE_NO`" in sql
+    assert "ON m.`OM_BAG_NO` = sm.`SM_BAG`" in sql

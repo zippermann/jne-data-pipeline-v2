@@ -7,6 +7,8 @@ The code favors readability over speed so junior engineers can trace the logic.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
+from typing import Callable
 
 import pandas as pd
 
@@ -21,6 +23,13 @@ class RuleOutcome:
 
 FAILURE_COLUMNS = ["cnote_no", "failed_value", "failure_reason"]
 CHECK_COLUMNS = ["cnote_no", "status", "variable_1", "variable_2"]
+RuleFunction = Callable[[dict[str, pd.DataFrame], dict], RuleOutcome]
+
+# JNE lookup guide:
+# - Full index codes such as VALD2Y15 live in governance/catalog.py.
+# - The rule index is the leading code group, such as VALD2, COMP1, or TIME1.
+# - Each check function below is labeled with the rule indexes it implements.
+# - rule_family maps catalog entries to functions through RULE_FUNCTIONS.
 
 
 def _empty_failures() -> pd.DataFrame:
@@ -116,6 +125,7 @@ def _merged_pair_column(merged: pd.DataFrame, column: str, side: str) -> pd.Seri
     raise KeyError(column)
 
 
+# JNE rule indexes here: COMP1, plus COMP2 rows that are simple null checks.
 def check_completeness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     table = data[params["table"]]
     column = params["column"]
@@ -126,6 +136,8 @@ def check_completeness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutco
     return RuleOutcome(len(table), int(failed.sum()), failures, checks)
 
 
+# JNE rule indexes here: COMP2 conditional rows; current catalog also routes
+# COMP3J9 here because it is implemented as a conditional completeness check.
 def check_conditional_completeness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     table = data[params["table"]]
     column = params["column"]
@@ -152,6 +164,7 @@ def check_conditional_completeness(data: dict[str, pd.DataFrame], params: dict) 
     return RuleOutcome(int(condition.sum()), int(failed.sum()), failures, checks)
 
 
+# JNE rule indexes here: COMP2 rows whose condition comes from a reference table.
 def check_reference_conditional_completeness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     table = data[params["table"]]
     column = params["column"]
@@ -175,6 +188,7 @@ def check_reference_conditional_completeness(data: dict[str, pd.DataFrame], para
     return RuleOutcome(int(condition.sum()), int(failed.sum()), failures, checks)
 
 
+# JNE rule indexes: VALD1, VALD5, VALD7, VALD8, VALD9, VALD11.
 def check_validity_regex(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     table = data[params["table"]]
     column = params["column"]
@@ -186,6 +200,7 @@ def check_validity_regex(data: dict[str, pd.DataFrame], params: dict) -> RuleOut
     return RuleOutcome(int(present.sum()), int(failed.sum()), failures, checks)
 
 
+# JNE rule indexes: UNIQ1, UNIQ2.
 def check_uniqueness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     table = data[params["table"]]
     columns = params["columns"]
@@ -204,6 +219,7 @@ def check_uniqueness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome
     return RuleOutcome(int(present.sum()), len(failed_rows), failures, checks)
 
 
+# JNE rule indexes: CONS1, CONS2.
 def check_pair_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     merged = _merge_pair(data, params)
     left_value = _merged_pair_column(merged, params["left_column"], "left")
@@ -217,6 +233,7 @@ def check_pair_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleO
     return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
+# JNE rule indexes: ACCU2.
 def check_prefix_match(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     merged = _merge_pair(data, params)
     prefix_length = int(params.get("prefix_length", 3))
@@ -234,6 +251,7 @@ def check_prefix_match(data: dict[str, pd.DataFrame], params: dict) -> RuleOutco
     return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
+# JNE rule indexes: ACCU3.
 def check_suffix_after_prefix_match(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     merged = _merge_pair(data, params)
     prefix_length = int(params.get("prefix_length", 3))
@@ -251,6 +269,7 @@ def check_suffix_after_prefix_match(data: dict[str, pd.DataFrame], params: dict)
     return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
+# JNE rule indexes: CONS2.
 def check_rounded_pair_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     merged = _merge_pair(data, params)
     decimals = int(params.get("decimals", 0))
@@ -270,6 +289,7 @@ def check_rounded_pair_consistency(data: dict[str, pd.DataFrame], params: dict) 
     return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
+# JNE rule indexes: CONS3.
 def check_duplicate_aware_weight_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     merged = _merge_pair(data, params)
     group_key = params["duplicate_key"]
@@ -341,6 +361,7 @@ def check_duplicate_aware_weight_consistency(data: dict[str, pd.DataFrame], para
     return RuleOutcome(len(direct) + aggregate_checked, len(failures), failures, checks)
 
 
+# JNE rule indexes: CONS2.
 def check_bridged_pair_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     merged = _merge_bridge(data, params)
     left_value = merged[params["left_column"]]
@@ -365,6 +386,7 @@ def check_bridged_pair_consistency(data: dict[str, pd.DataFrame], params: dict) 
     return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
+# JNE rule indexes: CONS3.
 def check_bridged_substring_match(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     merged = _merge_bridge(data, params)
     start = int(params["substring_start"])
@@ -384,6 +406,7 @@ def check_bridged_substring_match(data: dict[str, pd.DataFrame], params: dict) -
     return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
+# JNE rule indexes: CONS3.
 def check_aggregate_sum_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     detail_params = {
         "left_table": params["detail_table"],
@@ -419,6 +442,7 @@ def check_aggregate_sum_consistency(data: dict[str, pd.DataFrame], params: dict)
     return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
+# JNE rule indexes: CONS4.
 def check_aggregate_count_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     detail_params = {
         "left_table": params["detail_table"],
@@ -452,6 +476,7 @@ def check_aggregate_count_consistency(data: dict[str, pd.DataFrame], params: dic
 
 
 
+# JNE rule indexes: VALD4.
 def check_validity_datetime(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     table = data[params["table"]]
     column = params["column"]
@@ -464,6 +489,7 @@ def check_validity_datetime(data: dict[str, pd.DataFrame], params: dict) -> Rule
     return RuleOutcome(int(present.sum()), int(failed.sum()), failures, checks)
 
 
+# JNE rule indexes: VALD2, VALD3.
 def check_validity_integer(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     table = data[params["table"]]
     column = params["column"]
@@ -482,6 +508,7 @@ def _normalized_strings(values: pd.Series) -> pd.Series:
     return _string_values(values).str.replace(r"\.0+$", "", regex=True)
 
 
+# JNE rule indexes: VALD10.
 def check_validity_in_set(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     table = data[params["table"]]
     column = params["column"]
@@ -504,6 +531,7 @@ def _reference_values(data: dict[str, pd.DataFrame], params: dict) -> set[str]:
     return set(_normalized_strings(reference[column].dropna()))
 
 
+# JNE rule indexes: ACCU5, ACCU6.
 def check_value_in_reference(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     table = data[params["table"]]
     column = params["column"]
@@ -520,6 +548,7 @@ def check_value_in_reference(data: dict[str, pd.DataFrame], params: dict) -> Rul
     return RuleOutcome(int(present.sum()), int(failed.sum()), failures, checks)
 
 
+# JNE rule indexes: VALD1, VALD12, VALD13.
 def check_reference_format(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     table = data[params["table"]]
     column = params["column"]
@@ -538,6 +567,7 @@ def check_reference_format(data: dict[str, pd.DataFrame], params: dict) -> RuleO
     return RuleOutcome(int(present.sum()), int(failed.sum()), failures, checks)
 
 
+# JNE rule indexes: ACCU1.
 def check_non_negative(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     table = data[params["table"]]
     column = params["column"]
@@ -549,6 +579,7 @@ def check_non_negative(data: dict[str, pd.DataFrame], params: dict) -> RuleOutco
     return RuleOutcome(int(present.sum()), int(failed.sum()), failures, checks)
 
 
+# JNE rule indexes: ACCU4.
 def check_non_negative_not_in_reference(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     table = data[params["table"]]
     column = params["column"]
@@ -566,6 +597,7 @@ def check_non_negative_not_in_reference(data: dict[str, pd.DataFrame], params: d
     return RuleOutcome(int(present.sum()), int(failed.sum()), failures, checks)
 
 
+# JNE rule indexes: CONS4.
 def check_count_consistency(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     master = data[params["master_table"]]
     child = data[params["child_table"]]
@@ -584,6 +616,8 @@ def check_count_consistency(data: dict[str, pd.DataFrame], params: dict) -> Rule
     return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
+# JNE special completeness check: the current catalog names this COMP4J1.
+# The uploaded "What to fix" sheet has the related row as COMP3J1.
 def check_transit_manifest_required_for_origin_mismatch(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     merged = (
         data["CMS_DSMU"]
@@ -617,6 +651,7 @@ def check_transit_manifest_required_for_origin_mismatch(data: dict[str, pd.DataF
     return RuleOutcome(int(origin_mismatch.sum()), int(failed.sum()), failures, checks)
 
 
+# JNE rule indexes: TIME1.
 def check_timeliness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     start = data[params["start_table"]]
     end = data[params["end_table"]]
@@ -636,6 +671,7 @@ def check_timeliness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome
     return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
+# JNE rule indexes: TIME1.
 def check_bridged_timeliness(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     merged = _merge_bridge(data, params)
     start_time = pd.to_datetime(merged[params["start_column"]], errors="coerce")
@@ -664,6 +700,7 @@ def _cnotes_for_failed_groups(groups: list[str]) -> pd.Series:
     return pd.Series(groups, dtype="string")
 
 
+# JNE rule indexes: TIME1.
 def check_manifest_code_sequence(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     merged = data["CMS_MFCNOTE"].merge(
         data["CMS_MANIFEST"],
@@ -744,6 +781,7 @@ def check_manifest_code_sequence(data: dict[str, pd.DataFrame], params: dict) ->
     return RuleOutcome(checked, len(failed_cnotes), failures, checks)
 
 
+# JNE rule indexes: TIME1.
 def check_cnote_im_manifest_before_msj(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     manifest_path = data["CMS_MFCNOTE"].merge(
         data["CMS_MANIFEST"],
@@ -784,6 +822,7 @@ def check_cnote_im_manifest_before_msj(data: dict[str, pd.DataFrame], params: di
     return RuleOutcome(int(comparable.sum()), int(failed.sum()), failures, checks)
 
 
+# JNE rule indexes: INTG1.
 def check_integrity_orphan(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
     child = data[params["child_table"]]
     parent = data[params["parent_table"]]
@@ -794,6 +833,183 @@ def check_integrity_orphan(data: dict[str, pd.DataFrame], params: dict) -> RuleO
     failures = _as_failure_frame(_cnote_values(child.loc[failed], params), child_values.loc[failed], "parent key is missing")
     checks = _as_check_frame(_cnote_values(child.loc[present], params), failed.loc[present], child_values.loc[present], params["parent_table"])
     return RuleOutcome(int(present.sum()), int(failed.sum()), failures, checks)
+
+
+def _rule_index(index_code: str) -> str:
+    """Return the JNE rule group from a full index code, e.g. VALD2Y15 -> VALD2."""
+    match = re.match(r"([A-Z]+\d+)", index_code)
+    return match.group(1) if match else index_code
+
+
+def _run_catalog_rule_family(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    return RULE_FUNCTIONS[params["_rule_family"]](data, params)
+
+
+# ---------------------------------------------------------------------------
+# JNE-facing rule blocks
+#
+# These functions are intentionally organized by the rule indexes used in JNE's
+# workbook. Most of them call a shared implementation above because many index
+# groups use the same pandas operation with different catalog parameters.
+# ---------------------------------------------------------------------------
+
+
+def check_COMP1(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """COMP1: required-field completeness; the configured column must be filled."""
+    return check_completeness(data, params)
+
+
+def check_COMP2(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """COMP2: conditional completeness; a field is required only when a condition applies."""
+    if params.get("_rule_family"):
+        return _run_catalog_rule_family(data, params)
+    if params.get("reference_table"):
+        return check_reference_conditional_completeness(data, params)
+    if params.get("condition_column"):
+        return check_conditional_completeness(data, params)
+    return check_completeness(data, params)
+
+
+def check_COMP3(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """COMP3: special conditional completeness row currently modeled as condition-based completeness."""
+    return check_conditional_completeness(data, params)
+
+
+def check_COMP4(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """COMP4: special transit-manifest completeness check in the current catalog."""
+    return check_transit_manifest_required_for_origin_mismatch(data, params)
+
+
+def check_VALD1(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """VALD1: reference/format validity; configured values must be shaped correctly and known."""
+    if params.get("_rule_family"):
+        return _run_catalog_rule_family(data, params)
+    return check_reference_format(data, params)
+
+
+def check_VALD2(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """VALD2: integer validity; configured values must be whole numbers."""
+    return check_validity_integer(data, params)
+
+
+def check_VALD3(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """VALD3: integer validity; configured values must be whole numbers."""
+    return check_validity_integer(data, params)
+
+
+def check_VALD4(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """VALD4: datetime validity; configured values must parse as timestamps."""
+    return check_validity_datetime(data, params)
+
+
+def check_VALD5(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """VALD5: regex validity; configured values must match the catalog pattern."""
+    return check_validity_regex(data, params)
+
+
+def check_VALD7(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """VALD7: regex validity; configured values must match the catalog pattern."""
+    return check_validity_regex(data, params)
+
+
+def check_VALD8(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """VALD8: regex validity; configured values must match the catalog pattern."""
+    return check_validity_regex(data, params)
+
+
+def check_VALD9(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """VALD9: regex validity; configured values must match the catalog pattern."""
+    return check_validity_regex(data, params)
+
+
+def check_VALD10(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """VALD10: allowed-set validity; configured values must be one of the allowed values."""
+    return check_validity_in_set(data, params)
+
+
+def check_VALD11(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """VALD11: regex validity; configured values must match the catalog pattern."""
+    return check_validity_regex(data, params)
+
+
+def check_VALD12(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """VALD12: reference/format validity; configured values must be known to the reference."""
+    return check_reference_format(data, params)
+
+
+def check_VALD13(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """VALD13: reference/format validity; configured values must be known to the reference."""
+    return check_reference_format(data, params)
+
+
+def check_UNIQ1(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """UNIQ1: uniqueness; configured key columns must not duplicate."""
+    return check_uniqueness(data, params)
+
+
+def check_UNIQ2(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """UNIQ2: uniqueness; configured key columns must not duplicate."""
+    return check_uniqueness(data, params)
+
+
+def check_CONS1(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """CONS1: pair consistency; values from two related sources must match."""
+    return check_pair_consistency(data, params)
+
+
+def check_CONS2(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """CONS2: pair consistency with optional rounding or document bridge logic."""
+    return _run_catalog_rule_family(data, params)
+
+
+def check_CONS3(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """CONS3: aggregate or duplicate-aware consistency, depending on the catalog row."""
+    return _run_catalog_rule_family(data, params)
+
+
+def check_CONS4(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """CONS4: count consistency; master counts must match related detail counts."""
+    return _run_catalog_rule_family(data, params)
+
+
+def check_TIME1(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """TIME1: timeliness/sequence; start events must not happen after end events."""
+    return _run_catalog_rule_family(data, params)
+
+
+def check_INTG1(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """INTG1: integrity; child keys must exist in the parent table."""
+    return check_integrity_orphan(data, params)
+
+
+def check_ACCU1(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """ACCU1: accuracy; configured numeric values must not be negative."""
+    return check_non_negative(data, params)
+
+
+def check_ACCU2(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """ACCU2: accuracy; configured prefixes must match across related rows."""
+    return check_prefix_match(data, params)
+
+
+def check_ACCU3(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """ACCU3: accuracy; configured suffixes must match after the shared prefix."""
+    return check_suffix_after_prefix_match(data, params)
+
+
+def check_ACCU4(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """ACCU4: accuracy; values must be non-negative and excluded from a reference set."""
+    return check_non_negative_not_in_reference(data, params)
+
+
+def check_ACCU5(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """ACCU5: accuracy; configured values must exist in the reference table."""
+    return check_value_in_reference(data, params)
+
+
+def check_ACCU6(data: dict[str, pd.DataFrame], params: dict) -> RuleOutcome:
+    """ACCU6: accuracy; configured values must exist in the reference table."""
+    return check_value_in_reference(data, params)
 
 
 RULE_FUNCTIONS = {
@@ -826,3 +1042,45 @@ RULE_FUNCTIONS = {
     "cnote_im_manifest_before_msj": check_cnote_im_manifest_before_msj,
     "integrity_orphan": check_integrity_orphan,
 }
+
+
+JNE_RULE_FUNCTIONS: dict[str, RuleFunction] = {
+    "COMP1": check_COMP1,
+    "COMP2": check_COMP2,
+    "COMP3": check_COMP3,
+    "COMP4": check_COMP4,
+    "VALD1": check_VALD1,
+    "VALD2": check_VALD2,
+    "VALD3": check_VALD3,
+    "VALD4": check_VALD4,
+    "VALD5": check_VALD5,
+    "VALD7": check_VALD7,
+    "VALD8": check_VALD8,
+    "VALD9": check_VALD9,
+    "VALD10": check_VALD10,
+    "VALD11": check_VALD11,
+    "VALD12": check_VALD12,
+    "VALD13": check_VALD13,
+    "UNIQ1": check_UNIQ1,
+    "UNIQ2": check_UNIQ2,
+    "CONS1": check_CONS1,
+    "CONS2": check_CONS2,
+    "CONS3": check_CONS3,
+    "CONS4": check_CONS4,
+    "TIME1": check_TIME1,
+    "INTG1": check_INTG1,
+    "ACCU1": check_ACCU1,
+    "ACCU2": check_ACCU2,
+    "ACCU3": check_ACCU3,
+    "ACCU4": check_ACCU4,
+    "ACCU5": check_ACCU5,
+    "ACCU6": check_ACCU6,
+}
+
+
+def rule_function_for_entry(entry: dict) -> RuleFunction:
+    """Return the beginner-facing JNE rule block for a catalog entry."""
+    index_function = JNE_RULE_FUNCTIONS.get(_rule_index(str(entry.get("index_code", ""))))
+    if index_function is not None:
+        return index_function
+    return RULE_FUNCTIONS[entry["rule_family"]]
