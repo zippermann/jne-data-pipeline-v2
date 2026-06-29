@@ -5023,12 +5023,12 @@ CATALOG: list[dict] = [
         'table': 'CMS_DRSHEET',
         'params': {
             'column': 'DRSHEET_STATUS',
-            'pattern': '^[DU]$',
+            'pattern': '^[DU][0-9]{2}$',
             'cnote_column': 'DRSHEET_CNOTE_NO',
         },
         'impact_billing': '',
         'impact_operational': '',
-        'description': 'CMS_DRSHEET.DRSHEET_STATUS must be D or U',
+        'description': 'CMS_DRSHEET.DRSHEET_STATUS must be D or U followed by two digits',
     },
 
     {
