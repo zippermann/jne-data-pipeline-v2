@@ -13,6 +13,8 @@ RESULT_COLUMNS = [
     "cnote_no",
     "document_type",
     "document_id",
+    "level",
+    "stage",
     "index_code",
     "main_indicator",
     "column_name",
@@ -28,7 +30,6 @@ RESULT_CNOTE_COLUMNS = [
     "result_id",
     "cnote_no",
     "link_method",
-    "link_confidence",
 ]
 
 RULE_SUMMARY_COLUMNS = [

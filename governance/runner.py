@@ -730,6 +730,48 @@ def _document_type(entry: dict) -> str:
     return table
 
 
+DOCUMENT_STAGE_BY_TABLE = {
+    "CMS_DRCNOTE": "receival",
+    "CMS_MRCNOTE": "receival",
+    "CMS_MHI_HOC": "receival",
+    "CMS_DHI_HOC": "receival",
+    "CMS_MANIFEST": "manifest",
+    "CMS_MFCNOTE": "manifest",
+    "CMS_MFBAG": "manifest",
+    "CMS_DMBAG": "manifest",
+    "CMS_MMBAG": "manifest",
+    "CMS_DSMU": "manifest",
+    "CMS_MSMU": "manifest",
+    "CMS_DHOCNOTE": "handover",
+    "CMS_MHOCNOTE": "handover",
+    "CMS_DBAG": "handover",
+    "CMS_DBAG_HO": "handover",
+    "CMS_COST_DTRANSIT_AGEN": "handover",
+    "CMS_COST_MTRANSIT_AGEN": "handover",
+    "CMS_DSJ": "handover",
+    "CMS_MSJ": "handover",
+    "CMS_RDSJ": "handover",
+    "CMS_DHICNOTE": "handover",
+    "CMS_MHICNOTE": "handover",
+    "CMS_MRSHEET": "runsheet",
+    "CMS_DRSHEET": "runsheet",
+    "CMS_CNOTE_POD": "runsheet",
+    "CMS_DHOV_RSHEET": "runsheet",
+    "CMS_MHOUNDEL_POD": "runsheet",
+    "CMS_DHOUNDEL_POD": "runsheet",
+}
+
+
+def _document_level(entry: dict) -> str:
+    table_name = str(entry.get("table", "")).upper()
+    return "bag" if table_name in DOCUMENT_STAGE_BY_TABLE else "index"
+
+
+def _document_stage(entry: dict) -> str:
+    table_name = str(entry.get("table", "")).upper()
+    return DOCUMENT_STAGE_BY_TABLE.get(table_name, "")
+
+
 def _check_rows_frame(
     entry: dict,
     outcome: RuleOutcome,
@@ -744,6 +786,8 @@ def _check_rows_frame(
     rows["document_id"] = _string_key_values(rows["document_id"])
     table_name = str(entry["table"]).upper()
     rows["document_type"] = _document_type(entry)
+    rows["level"] = _document_level(entry)
+    rows["stage"] = _document_stage(entry)
     cnotes = cnote_universe or set()
 
     bridge_map = document_bridges or {}
@@ -782,7 +826,6 @@ def _result_cnote_rows(rows: pd.DataFrame) -> pd.DataFrame:
                 "result_id": result_id,
                 "cnote_no": str(cnote_no),
                 "link_method": link_method,
-                "link_confidence": "safe",
             })
     return pd.DataFrame(link_rows, columns=RESULT_CNOTE_COLUMNS)
 

@@ -7383,28 +7383,28 @@ CATALOG: list[dict] = [
         'index_code': 'CONS2L7',
         'element': 'Consistency',
         'indicator': 'Weight',
-        'rule_family': 'rounded_pair_consistency',
+        'rule_family': 'aggregate_sum_consistency',
         'table': 'CMS_MMBAG',
         'params': {
-            'left_table': 'CMS_MMBAG',
-            'left_column': 'MMBAG_WEIGHT',
-            'right_table': 'CMS_DMBAG',
-            'right_column': 'DMBAG_WEIGHT',
-            'left_join_key': 'MMBAG_NO',
-            'right_join_key': 'DMBAG_NO',
+            'master_table': 'CMS_MMBAG',
+            'master_key': 'MMBAG_NO',
+            'master_value_column': 'MMBAG_WEIGHT',
+            'detail_table': 'CMS_DMBAG',
+            'detail_key': 'DMBAG_NO',
+            'detail_value_column': 'DMBAG_WEIGHT',
             'cnote_column': 'MMBAG_NO',
             'decimals': 0,
         },
         'impact_billing': 'Y',
         'impact_operational': '',
-        'description': 'Master bag weight must match detail bag weight (rounded)',
+        'description': 'Master bag weight must equal the sum of detail bag weights grouped by DMBAG_NO.',
     },
 
     {
         'index_code': 'CONS2N3',
         'element': 'Consistency',
         'indicator': 'Origin',
-        'rule_family': 'pair_consistency',
+        'rule_family': 'prefix_match',
         'table': 'CMS_MSMU',
         'params': {
             'left_table': 'CMS_MSMU',
@@ -7414,17 +7414,18 @@ CATALOG: list[dict] = [
             'left_join_key': 'MSMU_NO',
             'right_join_key': 'DSMU_NO',
             'cnote_column': 'MSMU_NO',
+            'prefix_length': 3,
         },
         'impact_billing': '',
         'impact_operational': 'Y',
-        'description': 'SMU master origin must match SMU detail bag origin',
+        'description': 'SMU master origin prefix must match SMU detail bag origin prefix',
     },
 
     {
         'index_code': 'CONS2N4',
         'element': 'Consistency',
         'indicator': 'Destination',
-        'rule_family': 'pair_consistency',
+        'rule_family': 'prefix_match',
         'table': 'CMS_MSMU',
         'params': {
             'left_table': 'CMS_MSMU',
@@ -7434,10 +7435,11 @@ CATALOG: list[dict] = [
             'left_join_key': 'MSMU_NO',
             'right_join_key': 'DSMU_NO',
             'cnote_column': 'MSMU_NO',
+            'prefix_length': 3,
         },
         'impact_billing': '',
         'impact_operational': 'Y',
-        'description': 'SMU master destination must match SMU detail bag destination',
+        'description': 'SMU master destination prefix must match SMU detail bag destination prefix',
     },
 
     {
@@ -8198,7 +8200,7 @@ CATALOG: list[dict] = [
         'params': {
             'left_table': 'CMS_COST_MTRANSIT_AGEN',
             'left_column': 'CTC_WEIGHT',
-            'right_column': 'CNOTE_WEIGHT',
+            'right_column': 'MFCNOTE_WEIGHT',
             'joins': [
                 {
                     'table': 'CMS_COST_DTRANSIT_AGEN',
@@ -8206,9 +8208,9 @@ CATALOG: list[dict] = [
                     'right_on': 'DMANIFEST_NO',
                 },
                 {
-                    'table': 'CMS_CNOTE',
+                    'table': 'CMS_MFCNOTE',
                     'left_on': 'CNOTE_NO',
-                    'right_on': 'CNOTE_NO',
+                    'right_on': 'MFCNOTE_NO',
                 },
             ],
             'cnote_column': 'CNOTE_NO',
@@ -8216,7 +8218,7 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': '',
-        'description': 'Transit cost manifest CTC weight must match CNOTE weight through cost detail.',
+        'description': 'Transit cost manifest CTC weight must match manifest CNOTE weight through cost detail.',
     },
 
     {

@@ -13,6 +13,8 @@ from governance.runner import (
     BronzeTable,
     _entry_tables,
     _check_rows_frame,
+    _document_level,
+    _document_stage,
     _document_bridges,
     _result_cnote_rows,
     _missing_entry_columns,
@@ -166,6 +168,8 @@ def test_governance_writer_replaces_existing_output_files(tmp_path):
             "cnote_no": ["C1"],
             "document_type": ["CNOTE"],
             "document_id": ["C1"],
+            "level": ["index"],
+            "stage": [""],
             "index_code": ["COMP_TEST"],
             "main_indicator": ["Completeness"],
             "column_name": ["CNOTE_NO"],
@@ -248,8 +252,11 @@ def test_bag_governance_rows_keep_document_id_and_links_cnotes_separately():
     assert rows["cnote_no"].tolist() == [""]
     assert rows["document_id"].tolist() == ["BAG1"]
     assert rows["document_type"].tolist() == ["DMBAG"]
+    assert rows["level"].tolist() == ["bag"]
+    assert rows["stage"].tolist() == ["manifest"]
     assert link_rows["result_id"].tolist() == ["R000000000001", "R000000000001"]
     assert link_rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
+    assert link_rows.columns.tolist() == ["result_id", "cnote_no", "link_method"]
 
 
 def test_bag_bridge_uses_mfcnote_bag_not_manifest_context():
@@ -317,6 +324,8 @@ def test_mmbag_links_to_cnotes_through_dmbag():
 
     assert rows.loc[0, "document_id"] == "MMBAG1"
     assert rows.loc[0, "cnote_no"] == ""
+    assert rows.loc[0, "level"] == "bag"
+    assert rows.loc[0, "stage"] == "manifest"
     assert link_rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
 
 
@@ -436,6 +445,49 @@ def test_non_cnote_document_only_populates_cnote_when_in_sample():
 
     assert rows["document_id"].tolist() == ["MANIFEST1", "CNOTE1"]
     assert rows["cnote_no"].tolist() == ["", "CNOTE1"]
+    assert rows["level"].tolist() == ["bag", "bag"]
+    assert rows["stage"].tolist() == ["manifest", "manifest"]
+
+
+def test_regular_cnote_governance_rows_are_index_level_without_stage():
+    entry = {
+        "index_code": "COMP_TEST",
+        "indicator": "Completeness",
+        "table": "CMS_CNOTE",
+        "params": {"column": "CNOTE_NO", "cnote_column": "CNOTE_NO"},
+    }
+    outcome = RuleOutcome(
+        total_checked=1,
+        total_failed=0,
+        failures=pd.DataFrame(columns=["cnote_no", "failed_value", "failure_reason"]),
+        checks=pd.DataFrame({
+            "cnote_no": ["CNOTE1"],
+            "status": ["PASS"],
+            "variable_1": ["CNOTE1"],
+            "variable_2": [""],
+        }),
+    )
+
+    rows = _check_rows_frame(entry, outcome, {}, {"CNOTE1"})
+
+    assert rows.loc[0, "level"] == "index"
+    assert rows.loc[0, "stage"] == ""
+
+
+def test_document_tags_cover_level_and_operational_stage():
+    examples = {
+        "CMS_DRCNOTE": ("bag", "receival"),
+        "CMS_MFCNOTE": ("bag", "manifest"),
+        "CMS_DHOCNOTE": ("bag", "handover"),
+        "CMS_DRSHEET": ("bag", "runsheet"),
+        "CMS_CNOTE": ("index", ""),
+    }
+
+    for table_name, (expected_level, expected_stage) in examples.items():
+        entry = {"table": table_name}
+
+        assert _document_level(entry) == expected_level
+        assert _document_stage(entry) == expected_stage
 
 
 def test_bridge_cnote_outside_sample_keeps_document_but_blanks_cnote():
