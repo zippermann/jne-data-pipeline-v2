@@ -27,6 +27,8 @@ governance:
   enabled: true
   results_path: "governance/outputs/${RUN_ID}/governance_results.csv"
   result_cnotes_path: "governance/outputs/${RUN_ID}/governance_result_cnotes.csv"
+  flat_cnote_path: "governance/outputs/${RUN_ID}/flat_cnote_issues.csv"
+  html_dashboard_path: "governance/outputs/${RUN_ID}/html_dashboard_summary.csv"
   summary_path: "governance/outputs/${RUN_ID}/governance_rule_summary.csv"
 
 unified_mart:

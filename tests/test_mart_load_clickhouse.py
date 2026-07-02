@@ -35,6 +35,8 @@ def _config() -> MartClickHouseConfig:
             True,
             Path("governance/outputs/R_TEST/governance_results.csv"),
             Path("governance/outputs/R_TEST/governance_result_cnotes.csv"),
+            Path("governance/outputs/R_TEST/flat_cnote_issues.csv"),
+            Path("governance/outputs/R_TEST/html_dashboard_summary.csv"),
             Path("governance/outputs/R_TEST/governance_rule_summary.csv"),
         ),
         unified_mart=UnifiedMartConfig(
@@ -78,6 +80,8 @@ governance:
   enabled: true
   results_path: "governance/outputs/${RUN_ID}/governance_results.csv"
   result_cnotes_path: "governance/outputs/${RUN_ID}/governance_result_cnotes.csv"
+  flat_cnote_path: "governance/outputs/${RUN_ID}/flat_cnote_issues.csv"
+  html_dashboard_path: "governance/outputs/${RUN_ID}/html_dashboard_summary.csv"
   summary_path: "governance/outputs/${RUN_ID}/governance_rule_summary.csv"
 unified_mart:
   enabled: true
@@ -100,6 +104,8 @@ mart:
     assert config.reuse_existing_stages == ("reference",)
     assert config.governance.results_path.as_posix() == "governance/outputs/R_TEST/governance_results.csv"
     assert config.governance.result_cnotes_path.as_posix() == "governance/outputs/R_TEST/governance_result_cnotes.csv"
+    assert config.governance.flat_cnote_path.as_posix() == "governance/outputs/R_TEST/flat_cnote_issues.csv"
+    assert config.governance.html_dashboard_path.as_posix() == "governance/outputs/R_TEST/html_dashboard_summary.csv"
     assert config.governance.summary_path.as_posix() == "governance/outputs/R_TEST/governance_rule_summary.csv"
     assert config.unified_mart.enabled is True
     assert config.unified_mart.schema == "mart"

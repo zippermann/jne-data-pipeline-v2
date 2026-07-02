@@ -11,11 +11,14 @@ from governance.rules import RuleOutcome
 from governance.runner import (
     GovernanceSource,
     BronzeTable,
+    _add_flat_cnote_rows,
     _entry_tables,
     _check_rows_frame,
+    _cnote_flat_context,
     _document_level,
     _document_stage,
     _document_bridges,
+    _html_dashboard_frame,
     _result_cnote_rows,
     _missing_entry_columns,
     _list_minio_parquet_objects,
@@ -193,15 +196,17 @@ def test_catalog_entries_include_analysis_metadata():
     assert all("indicator" in entry for entry in CATALOG)
     assert all("impact_billing" in entry for entry in CATALOG)
     assert all("impact_operational" in entry for entry in CATALOG)
+    assert all("main_impact" in entry for entry in CATALOG)
+    assert all("impact_details" in entry for entry in CATALOG)
     assert all("impact" not in entry for entry in CATALOG)
     assert all("impact_none" not in entry for entry in CATALOG)
-    assert by_code["COMP1V19"]["indicator"] == "Timestamp"
     assert by_code["COMP1E11"]["indicator"] == "Zone Code"
-    assert by_code["COMP1J9"]["indicator"] == "Unique Identifier"
     assert by_code["COMP2P6"]["indicator"] == "Flag"
-    assert by_code["COMP1V19"]["impact_operational"] == "Y"
+    assert by_code["COMP1B15"]["indicator"] == "Weight"
     assert by_code["ACCU1A25"]["impact_billing"] == "Y"
     assert by_code["ACCU1A25"]["impact_operational"] == "Y"
+    assert by_code["ACCU4B15"]["main_impact"] == "Billing"
+    assert by_code["ACCU4B15"]["impact_details"] == "Potential Revenue Loss"
 
 
 def test_drsheet_pra_uses_existing_cnote_column_as_document_key():
@@ -257,6 +262,116 @@ def test_bag_governance_rows_keep_document_id_and_links_cnotes_separately():
     assert link_rows["result_id"].tolist() == ["R000000000001", "R000000000001"]
     assert link_rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
     assert link_rows.columns.tolist() == ["result_id", "cnote_no", "link_method"]
+
+
+def test_flat_cnote_issue_rows_include_delivery_service_and_drop_passes():
+    cnote_contexts = _cnote_flat_context({
+        "CMS_CNOTE": pd.DataFrame({
+            "CNOTE_NO": ["CNOTE1"],
+            "CNOTE_ORIGIN": ["CGK10000"],
+            "CNOTE_DESTINATION": ["SUB10000"],
+            "CNOTE_SERVICES_CODE": ["REG23"],
+        })
+    })
+    entry = {
+        "index_code": "CONS_TEST",
+        "element": "Consistency",
+        "indicator": "Weight",
+        "description": "Weight Difference",
+        "impact_billing": "Y",
+        "impact_operational": "",
+        "main_impact": "Billing",
+        "impact_details": "Under-billing",
+    }
+    rows = pd.DataFrame({
+        "document_id": ["BAG1", "BAG2"],
+        "level": ["bag", "bag"],
+        "status": ["FAIL", "PASS"],
+        "_linked_cnotes": [["CNOTE1"], ["CNOTE1"]],
+    })
+    flat_rows = {}
+
+    _add_flat_cnote_rows(flat_rows, rows, entry, cnote_contexts)
+
+    assert list(flat_rows) == [("CNOTE1", "CONS_TEST")]
+    flat_row = next(iter(flat_rows.values()))
+    assert flat_row["cnote_no"] == "CNOTE1"
+    assert flat_row["delivery_service"] == "REG23"
+    assert flat_row["shipment_type"] == "Domestic"
+    assert flat_row["package_journey_stage"] == "Other"
+    assert flat_row["element"] == "Consistency"
+    assert flat_row["issue_description"] == "Weight Difference"
+    assert flat_row["index_code"] == "CONS_TEST"
+    assert flat_row["level"] == "bag"
+    assert flat_row["main_indicator"] == "Weight"
+    assert flat_row["main_impact"] == "Billing"
+    assert flat_row["impact_details"] == "Under-billing"
+
+
+def test_flat_cnote_issue_rows_include_package_journey_stage():
+    entry = {
+        "index_code": "VALD_TEST",
+        "element": "Validity",
+        "indicator": "Service Code",
+        "description": "Invalid service code",
+        "table": "CMS_CNOTE",
+    }
+    rows = pd.DataFrame({
+        "document_id": ["CNOTE1"],
+        "level": ["cnote"],
+        "status": ["FAIL"],
+        "_linked_cnotes": [["CNOTE1"]],
+    })
+    flat_rows = {}
+
+    _add_flat_cnote_rows(flat_rows, rows, entry, {"CNOTE1": {"delivery_service": "REG23"}})
+
+    flat_row = next(iter(flat_rows.values()))
+    assert flat_row["package_journey_stage"] == "1. Shipper"
+
+
+def test_html_dashboard_frame_preaggregates_flat_cnote_issues():
+    flat_rows = {
+        ("CNOTE1", "VALD_TEST"): {
+            "cnote_no": "CNOTE1",
+            "origin_region": "Jakarta",
+            "destination_region": "Jawa Barat",
+            "shipment_type": "Domestic",
+            "delivery_service": "REG23",
+            "package_journey_stage": "2. Pick up/Drop Off",
+            "element": "Validity",
+            "issue_description": "Invalid service code",
+            "index_code": "VALD_TEST",
+            "level": "cnote",
+            "main_indicator": "Service Code",
+            "main_impact": "TBD",
+            "impact_details": "TBD",
+        },
+        ("CNOTE2", "VALD_TEST"): {
+            "cnote_no": "CNOTE2",
+            "origin_region": "Jakarta",
+            "destination_region": "Jawa Barat",
+            "shipment_type": "Domestic",
+            "delivery_service": "REG23",
+            "package_journey_stage": "2. Pick up/Drop Off",
+            "element": "Validity",
+            "issue_description": "Invalid service code",
+            "index_code": "VALD_TEST",
+            "level": "cnote",
+            "main_indicator": "Service Code",
+            "main_impact": "TBD",
+            "impact_details": "TBD",
+        },
+    }
+
+    frame = _html_dashboard_frame(flat_rows)
+
+    assert len(frame) == 1
+    row = frame.iloc[0].to_dict()
+    assert row["cnote_count"] == 2
+    assert row["index_code"] == "VALD_TEST"
+    assert row["origin_region"] == "Jakarta"
+    assert row["destination_region"] == "Jawa Barat"
 
 
 def test_bag_bridge_uses_mfcnote_bag_not_manifest_context():
@@ -470,7 +585,7 @@ def test_regular_cnote_governance_rows_are_index_level_without_stage():
 
     rows = _check_rows_frame(entry, outcome, {}, {"CNOTE1"})
 
-    assert rows.loc[0, "level"] == "index"
+    assert rows.loc[0, "level"] == "cnote"
     assert rows.loc[0, "stage"] == ""
 
 
@@ -480,7 +595,7 @@ def test_document_tags_cover_level_and_operational_stage():
         "CMS_MFCNOTE": ("bag", "manifest"),
         "CMS_DHOCNOTE": ("bag", "handover"),
         "CMS_DRSHEET": ("bag", "runsheet"),
-        "CMS_CNOTE": ("index", ""),
+        "CMS_CNOTE": ("cnote", ""),
     }
 
     for table_name, (expected_level, expected_stage) in examples.items():

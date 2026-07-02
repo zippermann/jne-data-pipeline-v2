@@ -25,12 +25,15 @@ import pandas as pd
 from extractor.bronze import MinioSettings, load_config
 from governance.catalog import CATALOG
 from governance.output import (
+    FLAT_CNOTE_COLUMNS,
     GovernanceResultWriter,
+    HTML_DASHBOARD_COLUMNS,
     RESULT_CNOTE_COLUMNS,
     write_rule_summary,
     write_rule_summary_parquet,
 )
 from governance.rules import FAILURE_COLUMNS, RULE_FUNCTIONS, RuleOutcome, rule_function_for_entry
+from transform.transform_data import shipment_scope
 from transform.document_links import (
     BRIDGE_COLUMNS,
     DOCUMENT_LINK_COLUMNS,
@@ -54,6 +57,12 @@ TABLE_PARAM_KEYS = (
 )
 DROURATE_TABLE = "CMS_DROURATE"
 DROURATE_CODE_PATTERN = re.compile(r"^([A-Z]{3}[0-9]{5})([A-Z]{3}[0-9]{5})$")
+FLAT_CNOTE_CONTEXT_COLUMNS = {
+    "CNOTE_NO",
+    "CNOTE_ORIGIN",
+    "CNOTE_DESTINATION",
+    "CNOTE_SERVICES_CODE",
+}
 
 
 @dataclass(frozen=True)
@@ -709,6 +718,36 @@ def _cnote_universe(data: dict[str, pd.DataFrame]) -> set[str]:
     return set(values[values.ne("")].drop_duplicates())
 
 
+def _cnote_flat_context(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, str]]:
+    cnote = data.get("CMS_CNOTE")
+    if cnote is None or "CNOTE_NO" not in cnote.columns:
+        return {}
+
+    available = [column for column in FLAT_CNOTE_CONTEXT_COLUMNS if column in cnote.columns]
+    work = cnote.loc[:, available].copy()
+    work["CNOTE_NO"] = _string_key_values(work["CNOTE_NO"])
+    work = work.loc[work["CNOTE_NO"].ne("")]
+    work = work.drop_duplicates(subset=["CNOTE_NO"], keep="first")
+
+    contexts: dict[str, dict[str, str]] = {}
+    for _, row in work.iterrows():
+        origin = _row_string(row, "CNOTE_ORIGIN")
+        destination = _row_string(row, "CNOTE_DESTINATION")
+        contexts[str(row["CNOTE_NO"])] = {
+            "origin_region": "",
+            "destination_region": "",
+            "shipment_type": shipment_scope(origin, destination),
+            "delivery_service": _row_string(row, "CNOTE_SERVICES_CODE"),
+        }
+    return contexts
+
+
+def _row_string(row: pd.Series, column: str) -> str:
+    if column not in row.index or pd.isna(row[column]):
+        return ""
+    return str(row[column])
+
+
 def _safe_linked_cnotes(values: Iterable[str], cnote_universe: set[str]) -> list[str]:
     linked: list[str] = []
     seen: set[str] = set()
@@ -761,15 +800,41 @@ DOCUMENT_STAGE_BY_TABLE = {
     "CMS_DHOUNDEL_POD": "runsheet",
 }
 
+PACKAGE_JOURNEY_STAGE_BY_TABLE = {
+    "CMS_APICUST": "1. Shipper",
+    "CMS_CNOTE": "1. Shipper",
+    "CMS_MRCNOTE": "2. Pick up/Drop Off",
+    "CMS_DRCNOTE": "2. Pick up/Drop Off",
+    "CMS_MHICNOTE": "3. Warehouse Receival",
+    "CMS_DHICNOTE": "3. Warehouse Receival",
+    "CMS_MMBAG": "4. Warehouse Manifest",
+    "CMS_DMBAG": "4. Warehouse Manifest",
+    "CMS_MFBAG": "4. Warehouse Manifest",
+    "CMS_DFBAG": "4. Warehouse Manifest",
+    "CMS_MHOCNOTE": "4. Warehouse Manifest",
+    "CMS_DHOCNOTE": "4. Warehouse Manifest",
+    "CMS_DBAG_HO": "5. Cabang",
+    "CMS_DSTATUS": "5. Cabang",
+    "CMS_MSJ": "6. Receiver",
+    "CMS_DSJ": "6. Receiver",
+    "CMS_MRSHEET": "6. Receiver",
+    "CMS_DRSHEET": "6. Receiver",
+}
+
 
 def _document_level(entry: dict) -> str:
     table_name = str(entry.get("table", "")).upper()
-    return "bag" if table_name in DOCUMENT_STAGE_BY_TABLE else "index"
+    return "bag" if table_name in DOCUMENT_STAGE_BY_TABLE else "cnote"
 
 
 def _document_stage(entry: dict) -> str:
     table_name = str(entry.get("table", "")).upper()
     return DOCUMENT_STAGE_BY_TABLE.get(table_name, "")
+
+
+def _package_journey_stage(entry: dict) -> str:
+    table_name = str(entry.get("table", "")).upper()
+    return PACKAGE_JOURNEY_STAGE_BY_TABLE.get(table_name, "Other")
 
 
 def _check_rows_frame(
@@ -830,6 +895,80 @@ def _result_cnote_rows(rows: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(link_rows, columns=RESULT_CNOTE_COLUMNS)
 
 
+def _add_flat_cnote_rows(
+    flat_rows: dict[tuple[str, str], dict[str, str]],
+    rows: pd.DataFrame,
+    entry: dict,
+    cnote_contexts: dict[str, dict[str, str]],
+) -> None:
+    if rows.empty or "_linked_cnotes" not in rows.columns:
+        return
+    failed_rows = rows.loc[rows["status"].astype(str).eq("FAIL")]
+    if failed_rows.empty:
+        return
+
+    for _, row in failed_rows.iterrows():
+        linked_cnotes = row["_linked_cnotes"]
+        if not isinstance(linked_cnotes, list) or not linked_cnotes:
+            continue
+        for cnote_no in linked_cnotes:
+            key = (str(cnote_no), str(entry["index_code"]))
+            if key in flat_rows:
+                continue
+            context = cnote_contexts.get(str(cnote_no), {})
+            flat_rows[key] = {
+                "cnote_no": str(cnote_no),
+                "origin_region": context.get("origin_region", ""),
+                "destination_region": context.get("destination_region", ""),
+                "shipment_type": context.get("shipment_type", ""),
+                "delivery_service": context.get("delivery_service", ""),
+                "package_journey_stage": _package_journey_stage(entry),
+                "element": str(entry.get("element", "")),
+                "issue_description": str(entry.get("description", "")),
+                "index_code": str(entry.get("index_code", "")),
+                "level": str(row.get("level", "")),
+                "main_indicator": str(entry.get("indicator", "")),
+                "main_impact": str(entry.get("main_impact", "")),
+                "impact_details": str(entry.get("impact_details", "")),
+            }
+
+
+def _write_flat_cnote_output(
+    flat_rows: dict[tuple[str, str], dict[str, str]],
+    csv_path: Path,
+    parquet_path: Path,
+) -> tuple[Path, Path, int]:
+    frame = pd.DataFrame(flat_rows.values(), columns=FLAT_CNOTE_COLUMNS)
+    with GovernanceResultWriter(csv_path, parquet_path, columns=FLAT_CNOTE_COLUMNS) as writer:
+        rows = writer.write(frame)
+    return csv_path, parquet_path, rows
+
+
+def _html_dashboard_frame(flat_rows: dict[tuple[str, str], dict[str, str]]) -> pd.DataFrame:
+    flat_frame = pd.DataFrame(flat_rows.values(), columns=FLAT_CNOTE_COLUMNS)
+    if flat_frame.empty:
+        return pd.DataFrame(columns=HTML_DASHBOARD_COLUMNS)
+
+    group_columns = [column for column in HTML_DASHBOARD_COLUMNS if column != "cnote_count"]
+    summary = (
+        flat_frame.groupby(group_columns, dropna=False, sort=True)["cnote_no"]
+        .nunique()
+        .reset_index(name="cnote_count")
+    )
+    return summary.loc[:, HTML_DASHBOARD_COLUMNS]
+
+
+def _write_html_dashboard_output(
+    flat_rows: dict[tuple[str, str], dict[str, str]],
+    csv_path: Path,
+    parquet_path: Path,
+) -> tuple[Path, Path, int]:
+    frame = _html_dashboard_frame(flat_rows)
+    with GovernanceResultWriter(csv_path, parquet_path, columns=HTML_DASHBOARD_COLUMNS) as writer:
+        rows = writer.write(frame)
+    return csv_path, parquet_path, rows
+
+
 def _rule_summary_row(
     entry: dict,
     status: str,
@@ -877,8 +1016,14 @@ def _run_entries(
     results_parquet_path = output_dir / "governance_results.parquet"
     result_cnotes_path = output_dir / "governance_result_cnotes.csv"
     result_cnotes_parquet_path = output_dir / "governance_result_cnotes.parquet"
+    flat_cnote_path = output_dir / "flat_cnote_issues.csv"
+    flat_cnote_parquet_path = output_dir / "flat_cnote_issues.parquet"
+    html_dashboard_path = output_dir / "html_dashboard_summary.csv"
+    html_dashboard_parquet_path = output_dir / "html_dashboard_summary.parquet"
     bridges = _document_bridges(data)
     cnotes = _cnote_universe(data)
+    cnote_contexts = _cnote_flat_context(data)
+    flat_rows: dict[tuple[str, str], dict[str, str]] = {}
     next_result_number = 1
 
     with (
@@ -929,6 +1074,7 @@ def _run_entries(
                 next_result_number += result_rows
                 check_rows.insert(0, "result_id", result_ids)
                 result_cnote_rows = _result_cnote_rows(check_rows)
+                _add_flat_cnote_rows(flat_rows, check_rows, entry, cnote_contexts)
                 check_rows = check_rows.drop(columns=["_linked_cnotes", "_link_method"])
                 for row_status, count in check_rows["status"].value_counts().items():
                     row_status_counts[str(row_status)] = row_status_counts.get(str(row_status), 0) + int(count)
@@ -946,6 +1092,16 @@ def _run_entries(
             )
 
     summary_frame = pd.DataFrame(summary_rows)
+    flat_cnote_path, flat_cnote_parquet_path, flat_row_total = _write_flat_cnote_output(
+        flat_rows,
+        flat_cnote_path,
+        flat_cnote_parquet_path,
+    )
+    html_dashboard_path, html_dashboard_parquet_path, html_row_total = _write_html_dashboard_output(
+        flat_rows,
+        html_dashboard_path,
+        html_dashboard_parquet_path,
+    )
     summary_path = write_rule_summary(summary_frame, output_dir / "governance_rule_summary.csv")
     summary_parquet_path = write_rule_summary_parquet(summary_frame, output_dir / "governance_rule_summary.parquet")
     uploaded_paths = (
@@ -956,6 +1112,10 @@ def _run_entries(
                 results_parquet_path,
                 result_cnotes_path,
                 result_cnotes_parquet_path,
+                flat_cnote_path,
+                flat_cnote_parquet_path,
+                html_dashboard_path,
+                html_dashboard_parquet_path,
                 summary_path,
                 summary_parquet_path,
             ],
@@ -969,9 +1129,15 @@ def _run_entries(
     print(f"Disabled entries: {disabled_count}")
     print(f"Skipped entries: {skipped_count}")
     print(f"CNOTE result rows: {result_row_total:,}")
+    print(f"Flat CNOTE issue rows: {flat_row_total:,}")
+    print(f"HTML dashboard summary rows: {html_row_total:,}")
     print(f"CNOTE row status counts: {row_status_counts}")
     print(f"Output: {results_path}")
     print(f"Output parquet: {results_parquet_path}")
+    print(f"Flat CNOTE issues: {flat_cnote_path}")
+    print(f"Flat CNOTE issues parquet: {flat_cnote_parquet_path}")
+    print(f"HTML dashboard summary: {html_dashboard_path}")
+    print(f"HTML dashboard summary parquet: {html_dashboard_parquet_path}")
     print(f"Rule summary: {summary_path}")
     print(f"Rule summary parquet: {summary_parquet_path}")
     for uploaded_path in uploaded_paths:
@@ -1038,6 +1204,8 @@ def run(
 
         streamed_reference_tables = _streamed_reference_tables(runnable, bronze_source)
         required_columns = _required_columns(runnable)
+        if "CMS_CNOTE" in bronze_source.tables:
+            required_columns.setdefault("CMS_CNOTE", set()).update(FLAT_CNOTE_CONTEXT_COLUMNS)
         if DOCUMENT_LINKS_SOURCE_TABLE in bronze_source.tables:
             required_columns[DOCUMENT_LINKS_SOURCE_TABLE] = set(DOCUMENT_LINK_COLUMNS)
         else:

@@ -77,6 +77,8 @@ class GovernanceConfig:
     enabled: bool
     results_path: Path
     result_cnotes_path: Path
+    flat_cnote_path: Path
+    html_dashboard_path: Path
     summary_path: Path
 
 
@@ -152,6 +154,8 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
     run_id = os.getenv("RUN_ID", "")
     default_governance_path = Path("governance/outputs") / run_id / "governance_results.csv"
     default_result_cnotes_path = Path("governance/outputs") / run_id / "governance_result_cnotes.csv"
+    default_flat_cnote_path = Path("governance/outputs") / run_id / "flat_cnote_issues.csv"
+    default_html_dashboard_path = Path("governance/outputs") / run_id / "html_dashboard_summary.csv"
     default_summary_path = Path("governance/outputs") / run_id / "governance_rule_summary.csv"
 
     config = MartClickHouseConfig(
@@ -184,6 +188,8 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
             enabled=_as_bool(governance.get("enabled", True)),
             results_path=Path(governance.get("results_path") or default_governance_path),
             result_cnotes_path=Path(governance.get("result_cnotes_path") or default_result_cnotes_path),
+            flat_cnote_path=Path(governance.get("flat_cnote_path") or default_flat_cnote_path),
+            html_dashboard_path=Path(governance.get("html_dashboard_path") or default_html_dashboard_path),
             summary_path=Path(governance.get("summary_path") or default_summary_path),
         ),
         unified_mart=UnifiedMartConfig(
@@ -514,6 +520,26 @@ def _load_governance_results(client: Any, config: MartClickHouseConfig, batch_si
         )
     else:
         _log(f"Governance result CNOTE bridge file not found, skipping: {config.governance.result_cnotes_path}")
+    if config.governance.flat_cnote_path.exists():
+        row_count += _load_governance_csv(
+            client,
+            config.schemas.governance,
+            "flat_cnote_issues",
+            config.governance.flat_cnote_path,
+            batch_size=batch_size,
+        )
+    else:
+        _log(f"Flat CNOTE issue file not found, skipping: {config.governance.flat_cnote_path}")
+    if config.governance.html_dashboard_path.exists():
+        row_count += _load_governance_csv(
+            client,
+            config.schemas.governance,
+            "html_dashboard_summary",
+            config.governance.html_dashboard_path,
+            batch_size=batch_size,
+        )
+    else:
+        _log(f"HTML dashboard summary file not found, skipping: {config.governance.html_dashboard_path}")
     if config.governance.summary_path.exists():
         row_count += _load_governance_csv(
             client,

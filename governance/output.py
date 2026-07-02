@@ -32,6 +32,38 @@ RESULT_CNOTE_COLUMNS = [
     "link_method",
 ]
 
+FLAT_CNOTE_COLUMNS = [
+    "cnote_no",
+    "origin_region",
+    "destination_region",
+    "shipment_type",
+    "delivery_service",
+    "package_journey_stage",
+    "element",
+    "issue_description",
+    "index_code",
+    "level",
+    "main_indicator",
+    "main_impact",
+    "impact_details",
+]
+
+HTML_DASHBOARD_COLUMNS = [
+    "origin_region",
+    "destination_region",
+    "shipment_type",
+    "delivery_service",
+    "package_journey_stage",
+    "element",
+    "issue_description",
+    "index_code",
+    "level",
+    "main_indicator",
+    "main_impact",
+    "impact_details",
+    "cnote_count",
+]
+
 RULE_SUMMARY_COLUMNS = [
     "index_code",
     "element",
