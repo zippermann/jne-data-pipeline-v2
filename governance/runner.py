@@ -9,6 +9,7 @@ rule tests and demos, but Airflow uses the bronze manifest path.
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import json
 import os
 import re
@@ -62,6 +63,80 @@ FLAT_CNOTE_CONTEXT_COLUMNS = {
     "CNOTE_ORIGIN",
     "CNOTE_DESTINATION",
     "CNOTE_SERVICES_CODE",
+}
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+REGION_BY_BRANCH = {
+    "AMI": "JTBNN",
+    "DPS": "JTBNN",
+    "KOE": "JTBNN",
+    "LBJ": "JTBNN",
+    "JBR": "JTBNN",
+    "KDR": "JTBNN",
+    "MDN": "JTBNN",
+    "MJK": "JTBNN",
+    "MXG": "JTBNN",
+    "PBL": "JTBNN",
+    "PSR": "JTBNN",
+    "SDA": "JTBNN",
+    "SUB": "JTBNN",
+    "BKI": "Bodetabekcikcil",
+    "BOO": "Bodetabekcikcil",
+    "CKR": "Bodetabekcikcil",
+    "DPK": "Bodetabekcikcil",
+    "TGR": "Bodetabekcikcil",
+    "CLG": "Bodetabekcikcil",
+    "CGK": "Jakarta",
+    "BDO": "Jawa Barat",
+    "CBN": "Jawa Barat",
+    "KRW": "Jawa Barat",
+    "PWT": "Jawa Barat",
+    "SMI": "Jawa Barat",
+    "TSM": "Jawa Barat",
+    "GRT": "Jawa Barat",
+    "CXP": "Jawa Tengah",
+    "JOG": "Jawa Tengah",
+    "MGL": "Jawa Tengah",
+    "SOC": "Jawa Tengah",
+    "SRG": "Jawa Tengah",
+    "TGL": "Jawa Tengah",
+    "BDJ": "Kalimantan",
+    "BPN": "Kalimantan",
+    "BTG": "Kalimantan",
+    "PKY": "Kalimantan",
+    "PNK": "Kalimantan",
+    "SMD": "Kalimantan",
+    "TRK": "Kalimantan",
+    "AMQ": "Sulampapua",
+    "DJJ": "Sulampapua",
+    "GTO": "Sulampapua",
+    "KDI": "Sulampapua",
+    "MDC": "Sulampapua",
+    "MKQ": "Sulampapua",
+    "PLW": "Sulampapua",
+    "SOQ": "Sulampapua",
+    "TIM": "Sulampapua",
+    "TTE": "Sulampapua",
+    "UPG": "Sulampapua",
+    "MKW": "Sulampapua",
+    "BKS": "Sumbagsel",
+    "DJB": "Sumbagsel",
+    "PGK": "Sumbagsel",
+    "PLM": "Sumbagsel",
+    "TJQ": "Sumbagsel",
+    "TKG": "Sumbagsel",
+    "BTH": "Sumbagut",
+    "BTJ": "Sumbagut",
+    "DTB": "Sumbagut",
+    "MES": "Sumbagut",
+    "PDG": "Sumbagut",
+    "PKU": "Sumbagut",
+    "TNJ": "Sumbagut",
 }
 
 
@@ -734,12 +809,17 @@ def _cnote_flat_context(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, st
         origin = _row_string(row, "CNOTE_ORIGIN")
         destination = _row_string(row, "CNOTE_DESTINATION")
         contexts[str(row["CNOTE_NO"])] = {
-            "origin_region": "",
-            "destination_region": "",
+            "origin_region": _region_for_branch(origin),
+            "destination_region": _region_for_branch(destination),
             "shipment_type": shipment_scope(origin, destination),
             "delivery_service": _row_string(row, "CNOTE_SERVICES_CODE"),
         }
     return contexts
+
+
+def _region_for_branch(value: str) -> str:
+    branch = str(value or "").strip().upper()[:3]
+    return REGION_BY_BRANCH.get(branch, "Other")
 
 
 def _row_string(row: pd.Series, column: str) -> str:
@@ -801,24 +881,24 @@ DOCUMENT_STAGE_BY_TABLE = {
 }
 
 PACKAGE_JOURNEY_STAGE_BY_TABLE = {
-    "CMS_APICUST": "1. Shipper",
-    "CMS_CNOTE": "1. Shipper",
-    "CMS_MRCNOTE": "2. Pick up/Drop Off",
-    "CMS_DRCNOTE": "2. Pick up/Drop Off",
-    "CMS_MHICNOTE": "3. Warehouse Receival",
-    "CMS_DHICNOTE": "3. Warehouse Receival",
-    "CMS_MMBAG": "4. Warehouse Manifest",
-    "CMS_DMBAG": "4. Warehouse Manifest",
-    "CMS_MFBAG": "4. Warehouse Manifest",
-    "CMS_DFBAG": "4. Warehouse Manifest",
-    "CMS_MHOCNOTE": "4. Warehouse Manifest",
-    "CMS_DHOCNOTE": "4. Warehouse Manifest",
-    "CMS_DBAG_HO": "5. Cabang",
-    "CMS_DSTATUS": "5. Cabang",
-    "CMS_MSJ": "6. Receiver",
-    "CMS_DSJ": "6. Receiver",
-    "CMS_MRSHEET": "6. Receiver",
-    "CMS_DRSHEET": "6. Receiver",
+    "CMS_APICUST": "Shipper",
+    "CMS_CNOTE": "Shipper",
+    "CMS_MRCNOTE": "Pick up/Drop Off",
+    "CMS_DRCNOTE": "Pick up/Drop Off",
+    "CMS_MHICNOTE": "Warehouse Receival",
+    "CMS_DHICNOTE": "Warehouse Receival",
+    "CMS_MMBAG": "Warehouse Manifest",
+    "CMS_DMBAG": "Warehouse Manifest",
+    "CMS_MFBAG": "Warehouse Manifest",
+    "CMS_DFBAG": "Warehouse Manifest",
+    "CMS_MHOCNOTE": "Warehouse Manifest",
+    "CMS_DHOCNOTE": "Warehouse Manifest",
+    "CMS_DBAG_HO": "Cabang",
+    "CMS_DSTATUS": "Cabang",
+    "CMS_MSJ": "Receiver",
+    "CMS_DSJ": "Receiver",
+    "CMS_MRSHEET": "Receiver",
+    "CMS_DRSHEET": "Receiver",
 }
 
 
@@ -1003,6 +1083,7 @@ def _run_entries(
     strict: bool,
     fail_on_skipped: bool = False,
     upload_source: GovernanceSource | None = None,
+    emit_result_rows: bool = True,
 ) -> None:
     run_at = datetime.now(timezone.utc).isoformat()
     summary_rows: list[dict] = []
@@ -1026,14 +1107,22 @@ def _run_entries(
     flat_rows: dict[tuple[str, str], dict[str, str]] = {}
     next_result_number = 1
 
-    with (
-        GovernanceResultWriter(results_path, results_parquet_path) as result_writer,
-        GovernanceResultWriter(
-            result_cnotes_path,
-            result_cnotes_parquet_path,
-            columns=RESULT_CNOTE_COLUMNS,
-        ) as result_cnote_writer,
-    ):
+    if not emit_result_rows:
+        for stale_path in (results_path, results_parquet_path, result_cnotes_path, result_cnotes_parquet_path):
+            stale_path.unlink(missing_ok=True)
+
+    with ExitStack() as stack:
+        result_writer = None
+        result_cnote_writer = None
+        if emit_result_rows:
+            result_writer = stack.enter_context(GovernanceResultWriter(results_path, results_parquet_path))
+            result_cnote_writer = stack.enter_context(
+                GovernanceResultWriter(
+                    result_cnotes_path,
+                    result_cnotes_parquet_path,
+                    columns=RESULT_CNOTE_COLUMNS,
+                )
+            )
         for entry in CATALOG:
             if entry.get("enabled") is False:
                 disabled_count += 1
@@ -1067,19 +1156,22 @@ def _run_entries(
             check_rows = _check_rows_frame(entry, outcome, bridges, cnotes)
             result_rows = len(check_rows)
             if not check_rows.empty:
-                result_ids = [
-                    f"R{result_number:012d}"
-                    for result_number in range(next_result_number, next_result_number + result_rows)
-                ]
-                next_result_number += result_rows
-                check_rows.insert(0, "result_id", result_ids)
-                result_cnote_rows = _result_cnote_rows(check_rows)
                 _add_flat_cnote_rows(flat_rows, check_rows, entry, cnote_contexts)
-                check_rows = check_rows.drop(columns=["_linked_cnotes", "_link_method"])
                 for row_status, count in check_rows["status"].value_counts().items():
                     row_status_counts[str(row_status)] = row_status_counts.get(str(row_status), 0) + int(count)
-                result_row_total += result_writer.write(check_rows)
-                result_cnote_writer.write(result_cnote_rows)
+                result_row_total += result_rows
+                if emit_result_rows:
+                    assert result_writer is not None and result_cnote_writer is not None
+                    result_ids = [
+                        f"R{result_number:012d}"
+                        for result_number in range(next_result_number, next_result_number + result_rows)
+                    ]
+                    next_result_number += result_rows
+                    check_rows.insert(0, "result_id", result_ids)
+                    result_cnote_rows = _result_cnote_rows(check_rows)
+                    check_rows = check_rows.drop(columns=["_linked_cnotes", "_link_method"])
+                    result_writer.write(check_rows)
+                    result_cnote_writer.write(result_cnote_rows)
             summary_rows.append(
                 _rule_summary_row(
                     entry,
@@ -1104,36 +1196,42 @@ def _run_entries(
     )
     summary_path = write_rule_summary(summary_frame, output_dir / "governance_rule_summary.csv")
     summary_parquet_path = write_rule_summary_parquet(summary_frame, output_dir / "governance_rule_summary.parquet")
-    uploaded_paths = (
-        _upload_governance_outputs_to_minio(
-            upload_source,
-            [
-                results_path,
-                results_parquet_path,
-                result_cnotes_path,
-                result_cnotes_parquet_path,
-                flat_cnote_path,
-                flat_cnote_parquet_path,
-                html_dashboard_path,
-                html_dashboard_parquet_path,
-                summary_path,
-                summary_parquet_path,
-            ],
-        )
-        if upload_source is not None
-        else []
-    )
+    output_paths = [
+        flat_cnote_path,
+        flat_cnote_parquet_path,
+        html_dashboard_path,
+        html_dashboard_parquet_path,
+        summary_path,
+        summary_parquet_path,
+    ]
+    if emit_result_rows:
+        output_paths = [
+            results_path,
+            results_parquet_path,
+            result_cnotes_path,
+            result_cnotes_parquet_path,
+            *output_paths,
+        ]
+    uploaded_paths = _upload_governance_outputs_to_minio(upload_source, output_paths) if upload_source is not None else []
 
     print(f"Catalog entries evaluated: {sum(status_counts.values())}")
     print(f"Rule status counts: {status_counts}")
     print(f"Disabled entries: {disabled_count}")
     print(f"Skipped entries: {skipped_count}")
-    print(f"CNOTE result rows: {result_row_total:,}")
+    if emit_result_rows:
+        print(f"CNOTE result rows: {result_row_total:,}")
+    else:
+        print(f"CNOTE result rows not emitted; would have written {result_row_total:,} rows")
     print(f"Flat CNOTE issue rows: {flat_row_total:,}")
     print(f"HTML dashboard summary rows: {html_row_total:,}")
     print(f"CNOTE row status counts: {row_status_counts}")
-    print(f"Output: {results_path}")
-    print(f"Output parquet: {results_parquet_path}")
+    if emit_result_rows:
+        print(f"Output: {results_path}")
+        print(f"Output parquet: {results_parquet_path}")
+        print(f"CNOTE bridge: {result_cnotes_path}")
+        print(f"CNOTE bridge parquet: {result_cnotes_parquet_path}")
+    else:
+        print("Skipped governance_results and governance_result_cnotes output")
     print(f"Flat CNOTE issues: {flat_cnote_path}")
     print(f"Flat CNOTE issues parquet: {flat_cnote_parquet_path}")
     print(f"HTML dashboard summary: {html_dashboard_path}")
@@ -1158,8 +1256,11 @@ def run(
     bronze_run_path: str | Path | None = None,
     strict: bool = True,
     fail_on_skipped: bool = False,
+    emit_result_rows: bool | None = None,
 ) -> None:
     output_dir = Path(output_dir)
+    if emit_result_rows is None:
+        emit_result_rows = not _env_bool("GOVERNANCE_SKIP_RESULT_ROWS")
     if source == "synthetic":
         data = load_tables(_required_tables() | set(BRIDGE_COLUMNS))
         runnable = []
@@ -1176,7 +1277,15 @@ def run(
                 skipped[entry["index_code"]] = "missing synthetic column(s): " + ", ".join(missing_columns)
             else:
                 runnable.append(entry)
-        _run_entries(runnable, data, skipped, output_dir, strict, fail_on_skipped=fail_on_skipped)
+        _run_entries(
+            runnable,
+            data,
+            skipped,
+            output_dir,
+            strict,
+            fail_on_skipped=fail_on_skipped,
+            emit_result_rows=emit_result_rows,
+        )
         return
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -1237,6 +1346,7 @@ def run(
             strict,
             fail_on_skipped=fail_on_skipped,
             upload_source=bronze_source if source == "minio" else None,
+            emit_result_rows=emit_result_rows,
         )
 
 
@@ -1249,6 +1359,12 @@ def main() -> None:
     parser.add_argument("--bronze-run-path", default=None)
     parser.add_argument("--no-strict", action="store_true", help="Do not fail the process on rule implementation errors")
     parser.add_argument("--fail-on-skipped", action="store_true", help="Fail when any active rule is skipped")
+    parser.add_argument(
+        "--skip-result-rows",
+        action="store_true",
+        default=None,
+        help="Do not write governance_results or governance_result_cnotes; keep summary and dashboard outputs",
+    )
     args = parser.parse_args()
     run(
         output_dir=args.output_dir,
@@ -1258,6 +1374,7 @@ def main() -> None:
         bronze_run_path=args.bronze_run_path,
         strict=not args.no_strict,
         fail_on_skipped=args.fail_on_skipped,
+        emit_result_rows=None if args.skip_result_rows is None else not args.skip_result_rows,
     )
 
 

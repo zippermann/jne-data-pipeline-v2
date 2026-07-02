@@ -497,19 +497,19 @@ def _load_governance_results(client: Any, config: MartClickHouseConfig, batch_si
         _log("Skipping ClickHouse governance results load because governance.enabled=false")
         return 0
 
-    path = config.governance.results_path
-    if not path.exists():
-        raise FileNotFoundError(f"Governance results file not found: {path}")
-
     _drop_database(client, config.schemas.governance)
     _create_database(client, config.schemas.governance)
-    row_count = _load_governance_csv(
-        client,
-        config.schemas.governance,
-        "governance_results",
-        path,
-        batch_size=batch_size,
-    )
+    row_count = 0
+    if config.governance.results_path.exists():
+        row_count += _load_governance_csv(
+            client,
+            config.schemas.governance,
+            "governance_results",
+            config.governance.results_path,
+            batch_size=batch_size,
+        )
+    else:
+        _log(f"Governance results file not found, skipping: {config.governance.results_path}")
     if config.governance.result_cnotes_path.exists():
         row_count += _load_governance_csv(
             client,

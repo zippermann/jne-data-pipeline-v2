@@ -12,6 +12,7 @@ from loader.mart_load_clickhouse import (
     _load_unified_mart,
     _load_table_entries,
     _load_governance_csv,
+    _load_governance_results,
     _render_unified_sql,
     _s3_url,
     _table_object_prefix,
@@ -211,6 +212,52 @@ def test_clickhouse_governance_csv_rejects_mixed_column_counts(tmp_path):
     assert "header has 2" in message
     assert f"{csv_path}:3" in message
     assert client.inserts == []
+
+
+def test_clickhouse_governance_load_allows_summary_without_result_rows(tmp_path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+
+    class Client:
+        def __init__(self):
+            self.commands = []
+            self.inserts = []
+
+        def command(self, sql):
+            self.commands.append(sql)
+            return None
+
+        def insert(self, table, batch, column_names, database):
+            self.inserts.append((table, batch, column_names, database))
+
+    summary_path = tmp_path / "governance_rule_summary.csv"
+    summary_path.write_text("index_code,status\nCONS_TEST,FAIL\n", encoding="utf-8")
+    base = _config()
+    config = MartClickHouseConfig(
+        base.minio,
+        base.bronze,
+        base.clickhouse,
+        base.schemas,
+        GovernanceConfig(
+            True,
+            tmp_path / "missing_governance_results.csv",
+            tmp_path / "missing_governance_result_cnotes.csv",
+            tmp_path / "missing_flat_cnote_issues.csv",
+            tmp_path / "missing_html_dashboard_summary.csv",
+            summary_path,
+        ),
+        base.unified_mart,
+        base.skip_stages,
+        base.reuse_existing_stages,
+        base.load_mode,
+    )
+    client = Client()
+
+    row_count = _load_governance_results(client, config, batch_size=10)
+
+    assert row_count == 1
+    assert client.inserts == [
+        ("governance_rule_summary", [["CONS_TEST", "FAIL"]], ["index_code", "status"], "governance")
+    ]
 
 
 def test_unified_mart_sql_template_renders_qualified_names(tmp_path):

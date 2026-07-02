@@ -296,6 +296,8 @@ def test_flat_cnote_issue_rows_include_delivery_service_and_drop_passes():
     assert list(flat_rows) == [("CNOTE1", "CONS_TEST")]
     flat_row = next(iter(flat_rows.values()))
     assert flat_row["cnote_no"] == "CNOTE1"
+    assert flat_row["origin_region"] == "Jakarta"
+    assert flat_row["destination_region"] == "JTBNN"
     assert flat_row["delivery_service"] == "REG23"
     assert flat_row["shipment_type"] == "Domestic"
     assert flat_row["package_journey_stage"] == "Other"
@@ -306,6 +308,20 @@ def test_flat_cnote_issue_rows_include_delivery_service_and_drop_passes():
     assert flat_row["main_indicator"] == "Weight"
     assert flat_row["main_impact"] == "Billing"
     assert flat_row["impact_details"] == "Under-billing"
+
+
+def test_cnote_flat_context_maps_unknown_region_to_other():
+    cnote_contexts = _cnote_flat_context({
+        "CMS_CNOTE": pd.DataFrame({
+            "CNOTE_NO": ["CNOTE1"],
+            "CNOTE_ORIGIN": ["ZZZ10000"],
+            "CNOTE_DESTINATION": ["MES10000"],
+            "CNOTE_SERVICES_CODE": ["REG23"],
+        })
+    })
+
+    assert cnote_contexts["CNOTE1"]["origin_region"] == "Other"
+    assert cnote_contexts["CNOTE1"]["destination_region"] == "Sumbagut"
 
 
 def test_flat_cnote_issue_rows_include_package_journey_stage():
@@ -327,7 +343,7 @@ def test_flat_cnote_issue_rows_include_package_journey_stage():
     _add_flat_cnote_rows(flat_rows, rows, entry, {"CNOTE1": {"delivery_service": "REG23"}})
 
     flat_row = next(iter(flat_rows.values()))
-    assert flat_row["package_journey_stage"] == "1. Shipper"
+    assert flat_row["package_journey_stage"] == "Shipper"
 
 
 def test_html_dashboard_frame_preaggregates_flat_cnote_issues():
@@ -338,7 +354,7 @@ def test_html_dashboard_frame_preaggregates_flat_cnote_issues():
             "destination_region": "Jawa Barat",
             "shipment_type": "Domestic",
             "delivery_service": "REG23",
-            "package_journey_stage": "2. Pick up/Drop Off",
+            "package_journey_stage": "Pick up/Drop Off",
             "element": "Validity",
             "issue_description": "Invalid service code",
             "index_code": "VALD_TEST",
@@ -353,7 +369,7 @@ def test_html_dashboard_frame_preaggregates_flat_cnote_issues():
             "destination_region": "Jawa Barat",
             "shipment_type": "Domestic",
             "delivery_service": "REG23",
-            "package_journey_stage": "2. Pick up/Drop Off",
+            "package_journey_stage": "Pick up/Drop Off",
             "element": "Validity",
             "issue_description": "Invalid service code",
             "index_code": "VALD_TEST",
