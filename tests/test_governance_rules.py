@@ -4,6 +4,7 @@ from governance.rules import (
     check_aggregate_count_consistency,
     check_aggregate_sum_consistency,
     check_bridged_pair_consistency,
+    check_bridged_substring_match,
     check_bridged_timeliness,
     check_cnote_im_manifest_before_msj,
     check_duplicate_aware_weight_consistency,
@@ -391,6 +392,41 @@ def test_bridged_pair_consistency_compares_across_intermediate_table():
     assert outcome.total_checked == 2
     assert outcome.total_failed == 1
     assert outcome.failures.iloc[0]["cnote_no"] == "B2"
+
+
+def test_bridged_substring_match_compares_full_route_destination_component():
+    data = {
+        "CMS_MANIFEST": pd.DataFrame({
+            "MANIFEST_NO": ["M1", "M2"],
+            "MANIFEST_ROUTE": ["CGK10000MES10000", "CGK10000BOO10000"],
+        }),
+        "CMS_MFCNOTE": pd.DataFrame({
+            "MFCNOTE_NO": ["C1", "C2"],
+            "MFCNOTE_MAN_NO": ["M1", "M2"],
+        }),
+        "CMS_CNOTE": pd.DataFrame({
+            "CNOTE_NO": ["C1", "C2"],
+            "CNOTE_DESTINATION": ["MES10000", "BOO10026"],
+        }),
+    }
+
+    outcome = check_bridged_substring_match(data, {
+        "left_table": "CMS_MANIFEST",
+        "left_column": "MANIFEST_ROUTE",
+        "right_column": "CNOTE_DESTINATION",
+        "joins": [
+            {"table": "CMS_MFCNOTE", "left_on": "MANIFEST_NO", "right_on": "MFCNOTE_MAN_NO"},
+            {"table": "CMS_CNOTE", "left_on": "MFCNOTE_NO", "right_on": "CNOTE_NO"},
+        ],
+        "substring_start": 8,
+        "substring_length": 8,
+        "cnote_column": "CNOTE_NO",
+    })
+
+    assert outcome.total_checked == 2
+    assert outcome.total_failed == 1
+    assert outcome.checks.loc[outcome.checks["cnote_no"].eq("C1"), "status"].iloc[0] == "PASS"
+    assert outcome.failures.iloc[0]["cnote_no"] == "C2"
 
 
 def test_bridged_timeliness_compares_across_path():

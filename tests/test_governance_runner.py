@@ -603,8 +603,8 @@ def test_drourate_stream_matches_candidate_components_and_counts_malformed():
 
 def test_drourate_catalog_components_and_branch_reference_are_configured():
     by_code = {entry["index_code"]: entry for entry in CATALOG}
-    origin_codes = {"VALD1A3", "VALD1Y3", "VALD1K3", "VALD1M6", "VALD1H5", "VALD1H9", "VALD1L3", "VALD1Z12", "VALD1N3", "VALD1B12"}
-    destination_codes = {"VALD1A7", "VALD1B13", "VALD1Y4", "VALD1X4", "VALD1AE6", "VALD1K4", "VALD1M7", "VALD1H6", "VALD1L4", "VALD1Z11", "VALD1N4"}
+    origin_codes = {"VALD1A3", "VALD1Y3", "VALD1K3", "VALD1M6", "VALD1H5", "VALD1H9", "VALD1L3", "VALD1B12"}
+    destination_codes = {"VALD1A7", "VALD1B13", "VALD1Y4", "VALD1X4", "VALD1AE6", "VALD1K4", "VALD1M7", "VALD1H6", "VALD1L4"}
 
     for code in origin_codes:
         assert by_code[code]["params"]["reference_component"] == "origin"
@@ -618,6 +618,14 @@ def test_drourate_catalog_components_and_branch_reference_are_configured():
     assert by_code["VALD1B12"]["rule_family"] == "reference_format"
     assert by_code["VALD1B12"]["params"]["reference_component"] == "origin"
     assert "pattern" not in by_code["VALD1B12"]["params"]
+    assert by_code["VALD1Z11"]["params"]["reference_table"] == "ORA_ZONE"
+    assert by_code["VALD1Z11"]["params"]["reference_column"] == "ZONE_CODE"
+    assert by_code["VALD1Z12"]["params"]["reference_table"] == "ORA_ZONE"
+    assert by_code["VALD1Z12"]["params"]["reference_column"] == "ZONE_CODE"
+    assert by_code["VALD1N3"]["params"]["reference_table"] == "ORA_BRANCH"
+    assert by_code["VALD1N3"]["params"]["reference_column"] == "BRANCH_CODE"
+    assert by_code["VALD1N4"]["params"]["reference_table"] == "ORA_BRANCH"
+    assert by_code["VALD1N4"]["params"]["reference_column"] == "BRANCH_CODE"
 
 
 def test_rule_summary_records_skipped_and_no_row_rules(monkeypatch, tmp_path):

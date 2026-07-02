@@ -5034,7 +5034,7 @@ CATALOG: list[dict] = [
     {
         'index_code': 'VALD13P7',
         'element': 'Validity',
-        'indicator': 'User ID',
+        'indicator': 'Zone Code',
         'rule_family': 'reference_format',
         'table': 'CMS_DRSHEET',
         'params': {
@@ -6046,14 +6046,13 @@ CATALOG: list[dict] = [
         'table': 'CMS_MSJ',
         'params': {
             'column': 'MSJ_DEST',
-            'reference_table': 'CMS_DROURATE',
-            'reference_column': 'DROURATE_CODE',
+            'reference_table': 'ORA_ZONE',
+            'reference_column': 'ZONE_CODE',
             'cnote_column': 'MSJ_NO',
-            'reference_component': 'destination',
         },
         'impact_billing': '',
         'impact_operational': '',
-        'description': 'CMS_MSJ.MSJ_DEST must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
+        'description': 'CMS_MSJ.MSJ_DEST must be alphanumeric and exist in ORA_ZONE.ZONE_CODE',
     },
 
     {
@@ -6064,14 +6063,13 @@ CATALOG: list[dict] = [
         'table': 'CMS_MSJ',
         'params': {
             'column': 'MSJ_ORIG',
-            'reference_table': 'CMS_DROURATE',
-            'reference_column': 'DROURATE_CODE',
+            'reference_table': 'ORA_ZONE',
+            'reference_column': 'ZONE_CODE',
             'cnote_column': 'MSJ_NO',
-            'reference_component': 'origin',
         },
         'impact_billing': '',
         'impact_operational': '',
-        'description': 'CMS_MSJ.MSJ_ORIG must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
+        'description': 'CMS_MSJ.MSJ_ORIG must be alphanumeric and exist in ORA_ZONE.ZONE_CODE',
     },
 
     {
@@ -6143,14 +6141,13 @@ CATALOG: list[dict] = [
         'table': 'CMS_MSMU',
         'params': {
             'column': 'MSMU_ORIGIN',
-            'reference_table': 'CMS_DROURATE',
-            'reference_column': 'DROURATE_CODE',
+            'reference_table': 'ORA_BRANCH',
+            'reference_column': 'BRANCH_CODE',
             'cnote_column': 'MSMU_NO',
-            'reference_component': 'origin',
         },
         'impact_billing': '',
         'impact_operational': '',
-        'description': 'CMS_MSMU.MSMU_ORIGIN must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
+        'description': 'CMS_MSMU.MSMU_ORIGIN must be alphanumeric and exist in ORA_BRANCH.BRANCH_CODE',
     },
 
     {
@@ -6161,14 +6158,13 @@ CATALOG: list[dict] = [
         'table': 'CMS_MSMU',
         'params': {
             'column': 'MSMU_DESTINATION',
-            'reference_table': 'CMS_DROURATE',
-            'reference_column': 'DROURATE_CODE',
+            'reference_table': 'ORA_BRANCH',
+            'reference_column': 'BRANCH_CODE',
             'cnote_column': 'MSMU_NO',
-            'reference_component': 'destination',
         },
         'impact_billing': '',
         'impact_operational': '',
-        'description': 'CMS_MSMU.MSMU_DESTINATION must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
+        'description': 'CMS_MSMU.MSMU_DESTINATION must be alphanumeric and exist in ORA_BRANCH.BRANCH_CODE',
     },
 
     {
@@ -7394,6 +7390,7 @@ CATALOG: list[dict] = [
             'detail_value_column': 'DMBAG_WEIGHT',
             'cnote_column': 'MMBAG_NO',
             'decimals': 0,
+            'skip_partial_scope': True,
         },
         'impact_billing': 'Y',
         'impact_operational': '',
@@ -7456,6 +7453,7 @@ CATALOG: list[dict] = [
             'child_key': 'DSMU_NO',
             'count_column': 'DSMU_BAG_NO',
             'cnote_column': 'MSMU_NO',
+            'skip_partial_scope': True,
         },
         'impact_billing': '',
         'impact_operational': 'Y',
@@ -8266,6 +8264,7 @@ CATALOG: list[dict] = [
             'detail_value_column': 'MFCNOTE_WEIGHT',
             'cnote_column': 'MFBAG_NO',
             'decimals': 0,
+            'skip_partial_scope': True,
         },
         'impact_billing': 'Y',
         'impact_operational': '',
@@ -8287,6 +8286,7 @@ CATALOG: list[dict] = [
             'detail_value_column': 'MFCNOTE_WEIGHT',
             'cnote_column': 'MFBAG_NO',
             'decimals': 0,
+            'skip_partial_scope': True,
         },
         'impact_billing': 'Y',
         'impact_operational': '',
@@ -8320,6 +8320,7 @@ CATALOG: list[dict] = [
             ],
             'cnote_column': 'MSMU_NO',
             'decimals': 0,
+            'skip_partial_scope': True,
         },
         'impact_billing': 'Y',
         'impact_operational': '',
@@ -8347,6 +8348,7 @@ CATALOG: list[dict] = [
                 },
             ],
             'cnote_column': 'MMBAG_NO',
+            'skip_partial_scope': True,
         },
         'impact_billing': '',
         'impact_operational': 'Y',
