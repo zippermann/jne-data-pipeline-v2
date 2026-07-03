@@ -11,6 +11,7 @@ from governance.rules import RuleOutcome
 from governance.runner import (
     GovernanceSource,
     BronzeTable,
+    PACKAGE_JOURNEY_STAGE_BY_TABLE,
     _add_flat_cnote_rows,
     _entry_tables,
     _check_rows_frame,
@@ -21,6 +22,7 @@ from governance.runner import (
     _html_dashboard_frame,
     _result_cnote_rows,
     _missing_entry_columns,
+    _package_journey_stage,
     _list_minio_parquet_objects,
     _read_parquet_files,
     _required_tables,
@@ -209,6 +211,17 @@ def test_catalog_entries_include_analysis_metadata():
     assert by_code["ACCU4B15"]["impact_details"] == "Potential Revenue Loss"
 
 
+def test_package_journey_mapping_covers_enabled_catalog_tables():
+    enabled_tables = {entry["table"].upper() for entry in CATALOG if entry.get("enabled") is not False}
+
+    assert set(PACKAGE_JOURNEY_STAGE_BY_TABLE) == enabled_tables
+    assert _package_journey_stage({"table": "CMS_CNOTE"}) == "Shipper"
+    assert _package_journey_stage({"table": "CMS_DRCNOTE"}) == "Warehouse Receival"
+    assert _package_journey_stage({"table": "CMS_MANIFEST"}) == "Warehouse Manifest"
+    assert _package_journey_stage({"table": "CMS_DSJ"}) == "Cabang"
+    assert _package_journey_stage({"table": "CMS_DRSHEET"}) == "Receiver"
+
+
 def test_drsheet_pra_uses_existing_cnote_column_as_document_key():
     for entry in CATALOG:
         if entry.get("table") == "CMS_DRSHEET_PRA":
@@ -298,8 +311,8 @@ def test_flat_cnote_issue_rows_include_delivery_service_and_drop_passes():
     assert flat_row["cnote_no"] == "CNOTE1"
     assert flat_row["origin_region"] == "Jakarta"
     assert flat_row["destination_region"] == "JTBNN"
-    assert flat_row["delivery_service"] == "REG23"
-    assert flat_row["shipment_type"] == "Domestic"
+    assert flat_row["delivery_service"] == "REG"
+    assert flat_row["shipment_type"] == "Direct Domestic"
     assert flat_row["package_journey_stage"] == "Other"
     assert flat_row["element"] == "Consistency"
     assert flat_row["issue_description"] == "Weight Difference"
@@ -322,6 +335,32 @@ def test_cnote_flat_context_maps_unknown_region_to_other():
 
     assert cnote_contexts["CNOTE1"]["origin_region"] == "Other"
     assert cnote_contexts["CNOTE1"]["destination_region"] == "Sumbagut"
+
+
+def test_cnote_flat_context_uses_transformed_transit_delivery_type():
+    cnote_contexts = _cnote_flat_context({
+        "CMS_CNOTE": pd.DataFrame({
+            "CNOTE_NO": ["CNOTE1"],
+            "CNOTE_ORIGIN": ["CGK10000"],
+            "CNOTE_DESTINATION": ["SUB10000"],
+            "CNOTE_SERVICES_CODE": ["REG23"],
+        }),
+        "CMS_CNOTE_TRANSFORMED": pd.DataFrame({
+            "CNOTE_NO": ["CNOTE1", "CNOTE2", "CNOTE3", "CNOTE4"],
+            "CNOTE_ORIGIN": ["CGK10000", "CGK10000", "CGK10000", "CGK10000"],
+            "CNOTE_DESTINATION": ["SUB10000", "CGK20000", "CGK10209", "SUB10000"],
+            "CNOTE_SERVICES_CODE": ["REG23", "CTCYES23", "YES19", "INTL20"],
+            "shipment_scope": ["Domestic", "Intercity", "Intracity", "Domestic"],
+            "delivery_type": ["Transit", "Transit", "Transit", "Direct"],
+        })
+    })
+
+    assert cnote_contexts["CNOTE1"]["shipment_type"] == "Transit Domestic"
+    assert cnote_contexts["CNOTE1"]["delivery_service"] == "REG"
+    assert cnote_contexts["CNOTE2"]["shipment_type"] == "Intercity"
+    assert cnote_contexts["CNOTE2"]["delivery_service"] == "CTC"
+    assert cnote_contexts["CNOTE3"]["shipment_type"] == "Intracity"
+    assert cnote_contexts["CNOTE4"]["delivery_service"] == "Others"
 
 
 def test_flat_cnote_issue_rows_include_package_journey_stage():

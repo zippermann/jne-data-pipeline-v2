@@ -64,6 +64,15 @@ FLAT_CNOTE_CONTEXT_COLUMNS = {
     "CNOTE_DESTINATION",
     "CNOTE_SERVICES_CODE",
 }
+TRANSFORMED_CNOTE_CONTEXT_COLUMNS = {
+    "CNOTE_NO",
+    "CNOTE_ORIGIN",
+    "CNOTE_DESTINATION",
+    "CNOTE_SERVICES_CODE",
+    "shipment_scope",
+    "delivery_type",
+}
+DELIVERY_SERVICE_GROUPS = {"REG", "YES", "JTR", "CML", "CTC"}
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -794,11 +803,15 @@ def _cnote_universe(data: dict[str, pd.DataFrame]) -> set[str]:
 
 
 def _cnote_flat_context(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, str]]:
-    cnote = data.get("CMS_CNOTE")
+    cnote = data.get("CMS_CNOTE_TRANSFORMED")
+    context_columns = TRANSFORMED_CNOTE_CONTEXT_COLUMNS
+    if cnote is None or "CNOTE_NO" not in cnote.columns:
+        cnote = data.get("CMS_CNOTE")
+        context_columns = FLAT_CNOTE_CONTEXT_COLUMNS
     if cnote is None or "CNOTE_NO" not in cnote.columns:
         return {}
 
-    available = [column for column in FLAT_CNOTE_CONTEXT_COLUMNS if column in cnote.columns]
+    available = [column for column in context_columns if column in cnote.columns]
     work = cnote.loc[:, available].copy()
     work["CNOTE_NO"] = _string_key_values(work["CNOTE_NO"])
     work = work.loc[work["CNOTE_NO"].ne("")]
@@ -808,13 +821,28 @@ def _cnote_flat_context(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, st
     for _, row in work.iterrows():
         origin = _row_string(row, "CNOTE_ORIGIN")
         destination = _row_string(row, "CNOTE_DESTINATION")
+        scope = _row_string(row, "shipment_scope") or shipment_scope(origin, destination)
+        delivery_type = _row_string(row, "delivery_type")
         contexts[str(row["CNOTE_NO"])] = {
             "origin_region": _region_for_branch(origin),
             "destination_region": _region_for_branch(destination),
-            "shipment_type": shipment_scope(origin, destination),
-            "delivery_service": _row_string(row, "CNOTE_SERVICES_CODE"),
+            "shipment_type": _shipment_type(scope, delivery_type),
+            "delivery_service": _delivery_service_group(_row_string(row, "CNOTE_SERVICES_CODE")),
         }
     return contexts
+
+
+def _shipment_type(scope: str, delivery_type: str = "") -> str:
+    scope_text = str(scope or "").strip()
+    delivery_text = str(delivery_type or "").strip().lower()
+    if scope_text == "Domestic":
+        return "Transit Domestic" if delivery_text == "transit" else "Direct Domestic"
+    return scope_text
+
+
+def _delivery_service_group(value: str) -> str:
+    service = str(value or "").strip().upper()[:3]
+    return service if service in DELIVERY_SERVICE_GROUPS else "Others"
 
 
 def _region_for_branch(value: str) -> str:
@@ -883,22 +911,35 @@ DOCUMENT_STAGE_BY_TABLE = {
 PACKAGE_JOURNEY_STAGE_BY_TABLE = {
     "CMS_APICUST": "Shipper",
     "CMS_CNOTE": "Shipper",
-    "CMS_MRCNOTE": "Pick up/Drop Off",
-    "CMS_DRCNOTE": "Pick up/Drop Off",
-    "CMS_MHICNOTE": "Warehouse Receival",
-    "CMS_DHICNOTE": "Warehouse Receival",
+    "CMS_DHI_HOC": "Pick up/Drop Off",
+    "CMS_MHI_HOC": "Pick up/Drop Off",
+    "CMS_DRCNOTE": "Warehouse Receival",
+    "CMS_MRCNOTE": "Warehouse Receival",
     "CMS_MMBAG": "Warehouse Manifest",
     "CMS_DMBAG": "Warehouse Manifest",
+    "CMS_DSMU": "Warehouse Manifest",
+    "CMS_DSTATUS": "Warehouse Manifest",
+    "CMS_MANIFEST": "Warehouse Manifest",
     "CMS_MFBAG": "Warehouse Manifest",
-    "CMS_DFBAG": "Warehouse Manifest",
-    "CMS_MHOCNOTE": "Warehouse Manifest",
-    "CMS_DHOCNOTE": "Warehouse Manifest",
+    "CMS_MFCNOTE": "Warehouse Manifest",
+    "CMS_MSMU": "Warehouse Manifest",
+    "CMS_COST_DTRANSIT_AGEN": "Cabang",
+    "CMS_COST_MTRANSIT_AGEN": "Cabang",
     "CMS_DBAG_HO": "Cabang",
-    "CMS_DSTATUS": "Cabang",
-    "CMS_MSJ": "Receiver",
-    "CMS_DSJ": "Receiver",
-    "CMS_MRSHEET": "Receiver",
+    "CMS_DHICNOTE": "Cabang",
+    "CMS_DHOCNOTE": "Cabang",
+    "CMS_DSJ": "Cabang",
+    "CMS_MHICNOTE": "Cabang",
+    "CMS_MHOCNOTE": "Cabang",
+    "CMS_MSJ": "Cabang",
+    "CMS_RDSJ": "Cabang",
+    "CMS_CNOTE_POD": "Receiver",
+    "CMS_DHOUNDEL_POD": "Receiver",
+    "CMS_DHOV_RSHEET": "Receiver",
     "CMS_DRSHEET": "Receiver",
+    "CMS_DRSHEET_PRA": "Receiver",
+    "CMS_MHOUNDEL_POD": "Receiver",
+    "CMS_MRSHEET": "Receiver",
 }
 
 
@@ -1008,8 +1049,8 @@ def _add_flat_cnote_rows(
                 "index_code": str(entry.get("index_code", "")),
                 "level": str(row.get("level", "")),
                 "main_indicator": str(entry.get("indicator", "")),
-                "main_impact": str(entry.get("main_impact", "")),
-                "impact_details": str(entry.get("impact_details", "")),
+                "main_impact": str(entry.get("main_impact") or "TBD"),
+                "impact_details": str(entry.get("impact_details") or "TBD"),
             }
 
 
@@ -1315,6 +1356,8 @@ def run(
         required_columns = _required_columns(runnable)
         if "CMS_CNOTE" in bronze_source.tables:
             required_columns.setdefault("CMS_CNOTE", set()).update(FLAT_CNOTE_CONTEXT_COLUMNS)
+        if "CMS_CNOTE_TRANSFORMED" in bronze_source.tables:
+            required_columns.setdefault("CMS_CNOTE_TRANSFORMED", set()).update(TRANSFORMED_CNOTE_CONTEXT_COLUMNS)
         if DOCUMENT_LINKS_SOURCE_TABLE in bronze_source.tables:
             required_columns[DOCUMENT_LINKS_SOURCE_TABLE] = set(DOCUMENT_LINK_COLUMNS)
         else:
