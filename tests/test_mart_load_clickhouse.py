@@ -12,11 +12,12 @@ from loader.mart_load_clickhouse import (
     _load_unified_mart,
     _load_table_entries,
     _load_governance_csv,
-    _load_governance_results,
+    _load_governance_outputs,
     _render_unified_sql,
     _s3_url,
     _table_object_prefix,
     load_config,
+    run,
 )
 
 
@@ -34,9 +35,7 @@ def _config() -> MartClickHouseConfig:
         ),
         governance=GovernanceConfig(
             True,
-            Path("governance/outputs/R_TEST/governance_results.csv"),
-            Path("governance/outputs/R_TEST/governance_result_cnotes.csv"),
-            Path("governance/outputs/R_TEST/flat_cnote_issues.csv"),
+            Path("governance/outputs/R_TEST/tableau_dashboard.csv"),
             Path("governance/outputs/R_TEST/html_dashboard_summary.csv"),
             Path("governance/outputs/R_TEST/governance_rule_summary.csv"),
         ),
@@ -79,9 +78,7 @@ schemas:
   governance: "governance"
 governance:
   enabled: true
-  results_path: "governance/outputs/${RUN_ID}/governance_results.csv"
-  result_cnotes_path: "governance/outputs/${RUN_ID}/governance_result_cnotes.csv"
-  flat_cnote_path: "governance/outputs/${RUN_ID}/flat_cnote_issues.csv"
+  tableau_dashboard_path: "governance/outputs/${RUN_ID}/tableau_dashboard.csv"
   html_dashboard_path: "governance/outputs/${RUN_ID}/html_dashboard_summary.csv"
   summary_path: "governance/outputs/${RUN_ID}/governance_rule_summary.csv"
 unified_mart:
@@ -91,6 +88,7 @@ unified_mart:
   sql_path: "loader/sql/unified_shipments.sql"
 mart:
   load_mode: "latest_snapshot"
+  load_raw_data: false
   skip_stages: []
   reuse_existing_stages: ["reference"]
 """,
@@ -103,9 +101,8 @@ mart:
     assert config.clickhouse.password == "secret"
     assert config.skip_stages == ()
     assert config.reuse_existing_stages == ("reference",)
-    assert config.governance.results_path.as_posix() == "governance/outputs/R_TEST/governance_results.csv"
-    assert config.governance.result_cnotes_path.as_posix() == "governance/outputs/R_TEST/governance_result_cnotes.csv"
-    assert config.governance.flat_cnote_path.as_posix() == "governance/outputs/R_TEST/flat_cnote_issues.csv"
+    assert config.load_raw_data is False
+    assert config.governance.tableau_dashboard_path.as_posix() == "governance/outputs/R_TEST/tableau_dashboard.csv"
     assert config.governance.html_dashboard_path.as_posix() == "governance/outputs/R_TEST/html_dashboard_summary.csv"
     assert config.governance.summary_path.as_posix() == "governance/outputs/R_TEST/governance_rule_summary.csv"
     assert config.unified_mart.enabled is True
@@ -198,12 +195,12 @@ def test_clickhouse_governance_csv_rejects_mixed_column_counts(tmp_path):
         def insert(self, table, batch, column_names, database):
             self.inserts.append((table, batch, column_names, database))
 
-    csv_path = tmp_path / "governance_results.csv"
+    csv_path = tmp_path / "tableau_dashboard.csv"
     csv_path.write_text("cnote_no,index_code\nC1,COMP1\nC2,COMP2,extra\n", encoding="utf-8")
     client = Client()
 
     try:
-        _load_governance_csv(client, "governance", "governance_results", csv_path, batch_size=100)
+        _load_governance_csv(client, "governance", "tableau_dashboard", csv_path, batch_size=100)
     except ValueError as exc:
         message = str(exc)
     else:
@@ -214,7 +211,7 @@ def test_clickhouse_governance_csv_rejects_mixed_column_counts(tmp_path):
     assert client.inserts == []
 
 
-def test_clickhouse_governance_load_allows_summary_without_result_rows(tmp_path):
+def test_clickhouse_governance_load_allows_summary_without_dashboard_rows(tmp_path):
     tmp_path.mkdir(parents=True, exist_ok=True)
 
     class Client:
@@ -239,9 +236,7 @@ def test_clickhouse_governance_load_allows_summary_without_result_rows(tmp_path)
         base.schemas,
         GovernanceConfig(
             True,
-            tmp_path / "missing_governance_results.csv",
-            tmp_path / "missing_governance_result_cnotes.csv",
-            tmp_path / "missing_flat_cnote_issues.csv",
+            tmp_path / "missing_tableau_dashboard.csv",
             tmp_path / "missing_html_dashboard_summary.csv",
             summary_path,
         ),
@@ -252,12 +247,51 @@ def test_clickhouse_governance_load_allows_summary_without_result_rows(tmp_path)
     )
     client = Client()
 
-    row_count = _load_governance_results(client, config, batch_size=10)
+    row_count = _load_governance_outputs(client, config, batch_size=10)
 
     assert row_count == 1
     assert client.inserts == [
         ("governance_rule_summary", [["CONS_TEST", "FAIL"]], ["index_code", "status"], "governance")
     ]
+
+
+def test_clickhouse_governance_only_skips_raw_loads(monkeypatch):
+    config = _config()
+    calls = []
+
+    class Client:
+        pass
+
+    monkeypatch.setattr("loader.mart_load_clickhouse.load_config", lambda path: config)
+    monkeypatch.setattr("loader.mart_load_clickhouse._minio_client", lambda cfg: object())
+    monkeypatch.setattr(
+        "loader.mart_load_clickhouse._read_manifest",
+        lambda client, cfg: {"run_id": "R_TEST", "tables": [{"output_name": "cms_cnote"}], "derived": []},
+    )
+    monkeypatch.setattr("loader.mart_load_clickhouse._connect_clickhouse", lambda cfg: Client())
+    monkeypatch.setattr(
+        "loader.mart_load_clickhouse._load_table_entries",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("raw table load should be skipped")),
+    )
+    monkeypatch.setattr(
+        "loader.mart_load_clickhouse._publish_schema",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("raw publish should be skipped")),
+    )
+    monkeypatch.setattr(
+        "loader.mart_load_clickhouse._load_unified_mart",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unified mart load should be skipped")),
+    )
+    monkeypatch.setattr("loader.mart_load_clickhouse._load_governance_outputs", lambda client, cfg: 3)
+    monkeypatch.setattr(
+        "loader.mart_load_clickhouse._insert_load_run",
+        lambda client, cfg, manifest, table_count, row_count, status, error_message=None: calls.append(
+            (table_count, row_count, status, error_message)
+        ),
+    )
+
+    run("config/mart_clickhouse.yaml", governance_only=True)
+
+    assert calls == [(1, 3, "SUCCESS", None)]
 
 
 def test_unified_mart_sql_template_renders_qualified_names(tmp_path):

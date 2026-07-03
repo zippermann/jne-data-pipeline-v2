@@ -6,6 +6,8 @@ governance checks, and mart loading.
 
 Pass {"keep_scope": true} in dag_run.conf to leave Oracle scope tables in place
 for inspection after the run.
+Pass {"clickhouse_governance_only": true} to refresh only ClickHouse governance
+outputs during the mart load task.
 """
 
 from datetime import datetime, timedelta
@@ -89,7 +91,8 @@ with DAG(
         bash_command=(
             "cd /opt/airflow/project && "
             f"{run_context}"
-            '{{ "python -m loader.mart_load_clickhouse --config config/mart_clickhouse.yaml" '
+            '{{ "python -m loader.mart_load_clickhouse --config config/mart_clickhouse.yaml " '
+            '+ ("--governance-only" if dag_run.conf.get("clickhouse_governance_only", False) else "") '
             'if dag_run.conf.get("load_clickhouse", True) else '
             '"echo ClickHouse mart load disabled by dag_run.conf" }}'
         ),

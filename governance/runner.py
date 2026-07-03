@@ -9,7 +9,6 @@ rule tests and demos, but Airflow uses the bronze manifest path.
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack
 import json
 import os
 import re
@@ -26,10 +25,9 @@ import pandas as pd
 from extractor.bronze import MinioSettings, load_config
 from governance.catalog import CATALOG
 from governance.output import (
-    FLAT_CNOTE_COLUMNS,
     GovernanceResultWriter,
     HTML_DASHBOARD_COLUMNS,
-    RESULT_CNOTE_COLUMNS,
+    TABLEAU_DASHBOARD_COLUMNS,
     write_rule_summary,
     write_rule_summary_parquet,
 )
@@ -56,9 +54,14 @@ TABLE_PARAM_KEYS = (
     "reference_table",
     "master_table",
 )
+RETIRED_OUTPUT_STEMS = (
+    "governance_results",
+    "governance_result_cnotes",
+    "flat_cnote_issues",
+)
 DROURATE_TABLE = "CMS_DROURATE"
 DROURATE_CODE_PATTERN = re.compile(r"^([A-Z]{3}[0-9]{5})([A-Z]{3}[0-9]{5})$")
-FLAT_CNOTE_CONTEXT_COLUMNS = {
+TABLEAU_CNOTE_CONTEXT_COLUMNS = {
     "CNOTE_NO",
     "CNOTE_ORIGIN",
     "CNOTE_DESTINATION",
@@ -75,11 +78,6 @@ TRANSFORMED_CNOTE_CONTEXT_COLUMNS = {
 DELIVERY_SERVICE_GROUPS = {"REG", "YES", "JTR", "CML", "CTC"}
 
 
-def _env_bool(name: str, default: bool = False) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 REGION_BY_BRANCH = {
     "AMI": "JTBNN",
     "DPS": "JTBNN",
@@ -807,7 +805,7 @@ def _cnote_flat_context(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, st
     context_columns = TRANSFORMED_CNOTE_CONTEXT_COLUMNS
     if cnote is None or "CNOTE_NO" not in cnote.columns:
         cnote = data.get("CMS_CNOTE")
-        context_columns = FLAT_CNOTE_CONTEXT_COLUMNS
+        context_columns = TABLEAU_CNOTE_CONTEXT_COLUMNS
     if cnote is None or "CNOTE_NO" not in cnote.columns:
         return {}
 
@@ -999,25 +997,8 @@ def _check_rows_frame(
     return rows
 
 
-def _result_cnote_rows(rows: pd.DataFrame) -> pd.DataFrame:
-    link_rows: list[dict[str, str]] = []
-    for _, row in rows.iterrows():
-        result_id = str(row["result_id"])
-        link_method = str(row["_link_method"])
-        cnotes = row["_linked_cnotes"]
-        if not isinstance(cnotes, list):
-            continue
-        for cnote_no in cnotes:
-            link_rows.append({
-                "result_id": result_id,
-                "cnote_no": str(cnote_no),
-                "link_method": link_method,
-            })
-    return pd.DataFrame(link_rows, columns=RESULT_CNOTE_COLUMNS)
-
-
-def _add_flat_cnote_rows(
-    flat_rows: dict[tuple[str, str], dict[str, str]],
+def _add_tableau_dashboard_rows(
+    tableau_rows: dict[tuple[str, str], dict[str, str]],
     rows: pd.DataFrame,
     entry: dict,
     cnote_contexts: dict[str, dict[str, str]],
@@ -1034,10 +1015,10 @@ def _add_flat_cnote_rows(
             continue
         for cnote_no in linked_cnotes:
             key = (str(cnote_no), str(entry["index_code"]))
-            if key in flat_rows:
+            if key in tableau_rows:
                 continue
             context = cnote_contexts.get(str(cnote_no), {})
-            flat_rows[key] = {
+            tableau_rows[key] = {
                 "cnote_no": str(cnote_no),
                 "origin_region": context.get("origin_region", ""),
                 "destination_region": context.get("destination_region", ""),
@@ -1054,25 +1035,25 @@ def _add_flat_cnote_rows(
             }
 
 
-def _write_flat_cnote_output(
-    flat_rows: dict[tuple[str, str], dict[str, str]],
+def _write_tableau_dashboard_output(
+    tableau_rows: dict[tuple[str, str], dict[str, str]],
     csv_path: Path,
     parquet_path: Path,
 ) -> tuple[Path, Path, int]:
-    frame = pd.DataFrame(flat_rows.values(), columns=FLAT_CNOTE_COLUMNS)
-    with GovernanceResultWriter(csv_path, parquet_path, columns=FLAT_CNOTE_COLUMNS) as writer:
+    frame = pd.DataFrame(tableau_rows.values(), columns=TABLEAU_DASHBOARD_COLUMNS)
+    with GovernanceResultWriter(csv_path, parquet_path, columns=TABLEAU_DASHBOARD_COLUMNS) as writer:
         rows = writer.write(frame)
     return csv_path, parquet_path, rows
 
 
-def _html_dashboard_frame(flat_rows: dict[tuple[str, str], dict[str, str]]) -> pd.DataFrame:
-    flat_frame = pd.DataFrame(flat_rows.values(), columns=FLAT_CNOTE_COLUMNS)
-    if flat_frame.empty:
+def _html_dashboard_frame(tableau_rows: dict[tuple[str, str], dict[str, str]]) -> pd.DataFrame:
+    tableau_frame = pd.DataFrame(tableau_rows.values(), columns=TABLEAU_DASHBOARD_COLUMNS)
+    if tableau_frame.empty:
         return pd.DataFrame(columns=HTML_DASHBOARD_COLUMNS)
 
     group_columns = [column for column in HTML_DASHBOARD_COLUMNS if column != "cnote_count"]
     summary = (
-        flat_frame.groupby(group_columns, dropna=False, sort=True)["cnote_no"]
+        tableau_frame.groupby(group_columns, dropna=False, sort=True)["cnote_no"]
         .nunique()
         .reset_index(name="cnote_count")
     )
@@ -1080,11 +1061,11 @@ def _html_dashboard_frame(flat_rows: dict[tuple[str, str], dict[str, str]]) -> p
 
 
 def _write_html_dashboard_output(
-    flat_rows: dict[tuple[str, str], dict[str, str]],
+    tableau_rows: dict[tuple[str, str], dict[str, str]],
     csv_path: Path,
     parquet_path: Path,
 ) -> tuple[Path, Path, int]:
-    frame = _html_dashboard_frame(flat_rows)
+    frame = _html_dashboard_frame(tableau_rows)
     with GovernanceResultWriter(csv_path, parquet_path, columns=HTML_DASHBOARD_COLUMNS) as writer:
         rows = writer.write(frame)
     return csv_path, parquet_path, rows
@@ -1124,9 +1105,7 @@ def _run_entries(
     strict: bool,
     fail_on_skipped: bool = False,
     upload_source: GovernanceSource | None = None,
-    emit_result_rows: bool = True,
 ) -> None:
-    run_at = datetime.now(timezone.utc).isoformat()
     summary_rows: list[dict] = []
     status_counts: dict[str, int] = {}
     row_status_counts: dict[str, int] = {}
@@ -1134,147 +1113,99 @@ def _run_entries(
     error_count = 0
     disabled_count = 0
     skipped_count = 0
-    results_path = output_dir / "governance_results.csv"
-    results_parquet_path = output_dir / "governance_results.parquet"
-    result_cnotes_path = output_dir / "governance_result_cnotes.csv"
-    result_cnotes_parquet_path = output_dir / "governance_result_cnotes.parquet"
-    flat_cnote_path = output_dir / "flat_cnote_issues.csv"
-    flat_cnote_parquet_path = output_dir / "flat_cnote_issues.parquet"
+    tableau_dashboard_path = output_dir / "tableau_dashboard.csv"
+    tableau_dashboard_parquet_path = output_dir / "tableau_dashboard.parquet"
     html_dashboard_path = output_dir / "html_dashboard_summary.csv"
     html_dashboard_parquet_path = output_dir / "html_dashboard_summary.parquet"
+    for stem in RETIRED_OUTPUT_STEMS:
+        (output_dir / f"{stem}.csv").unlink(missing_ok=True)
+        (output_dir / f"{stem}.parquet").unlink(missing_ok=True)
     bridges = _document_bridges(data)
     cnotes = _cnote_universe(data)
     cnote_contexts = _cnote_flat_context(data)
-    flat_rows: dict[tuple[str, str], dict[str, str]] = {}
-    next_result_number = 1
+    tableau_rows: dict[tuple[str, str], dict[str, str]] = {}
 
-    if not emit_result_rows:
-        for stale_path in (results_path, results_parquet_path, result_cnotes_path, result_cnotes_parquet_path):
-            stale_path.unlink(missing_ok=True)
+    for entry in CATALOG:
+        if entry.get("enabled") is False:
+            disabled_count += 1
+            continue
+        if entry["index_code"] in skipped:
+            skipped_count += 1
+            summary_rows.append(_rule_summary_row(entry, "SKIPPED", skip_reason=skipped[entry["index_code"]]))
+            continue
+        if entry not in entries:
+            continue
 
-    with ExitStack() as stack:
-        result_writer = None
-        result_cnote_writer = None
-        if emit_result_rows:
-            result_writer = stack.enter_context(GovernanceResultWriter(results_path, results_parquet_path))
-            result_cnote_writer = stack.enter_context(
-                GovernanceResultWriter(
-                    result_cnotes_path,
-                    result_cnotes_parquet_path,
-                    columns=RESULT_CNOTE_COLUMNS,
-                )
+        params = dict(entry["params"])
+        params.setdefault("table", entry["table"])
+        params["_index_code"] = entry["index_code"]
+        params["_rule_family"] = entry["rule_family"]
+        try:
+            outcome = rule_function_for_entry(entry)(data, params)
+            if outcome.checks is None or len(outcome.checks) == 0:
+                status = "NO_ROWS"
+            else:
+                status = "FAIL" if outcome.total_failed else "PASS"
+            error_message = ""
+        except Exception as exc:
+            error_count += 1
+            status = "ERROR"
+            error_message = str(exc)
+            print(f"ERROR: {entry['index_code']} failed: {exc}", flush=True)
+            outcome = _error_outcome(error_message)
+
+        status_counts[status] = status_counts.get(status, 0) + 1
+        check_rows = _check_rows_frame(entry, outcome, bridges, cnotes)
+        result_rows = len(check_rows)
+        if not check_rows.empty:
+            _add_tableau_dashboard_rows(tableau_rows, check_rows, entry, cnote_contexts)
+            for row_status, count in check_rows["status"].value_counts().items():
+                row_status_counts[str(row_status)] = row_status_counts.get(str(row_status), 0) + int(count)
+            result_row_total += result_rows
+        summary_rows.append(
+            _rule_summary_row(
+                entry,
+                status,
+                total_checked=outcome.total_checked,
+                total_failed=outcome.total_failed,
+                result_rows=result_rows,
+                error_message=error_message,
             )
-        for entry in CATALOG:
-            if entry.get("enabled") is False:
-                disabled_count += 1
-                continue
-            if entry["index_code"] in skipped:
-                skipped_count += 1
-                summary_rows.append(_rule_summary_row(entry, "SKIPPED", skip_reason=skipped[entry["index_code"]]))
-                continue
-            if entry not in entries:
-                continue
-
-            params = dict(entry["params"])
-            params.setdefault("table", entry["table"])
-            params["_index_code"] = entry["index_code"]
-            params["_rule_family"] = entry["rule_family"]
-            try:
-                outcome = rule_function_for_entry(entry)(data, params)
-                if outcome.checks is None or len(outcome.checks) == 0:
-                    status = "NO_ROWS"
-                else:
-                    status = "FAIL" if outcome.total_failed else "PASS"
-                error_message = ""
-            except Exception as exc:
-                error_count += 1
-                status = "ERROR"
-                error_message = str(exc)
-                print(f"ERROR: {entry['index_code']} failed: {exc}", flush=True)
-                outcome = _error_outcome(error_message)
-
-            status_counts[status] = status_counts.get(status, 0) + 1
-            check_rows = _check_rows_frame(entry, outcome, bridges, cnotes)
-            result_rows = len(check_rows)
-            if not check_rows.empty:
-                _add_flat_cnote_rows(flat_rows, check_rows, entry, cnote_contexts)
-                for row_status, count in check_rows["status"].value_counts().items():
-                    row_status_counts[str(row_status)] = row_status_counts.get(str(row_status), 0) + int(count)
-                result_row_total += result_rows
-                if emit_result_rows:
-                    assert result_writer is not None and result_cnote_writer is not None
-                    result_ids = [
-                        f"R{result_number:012d}"
-                        for result_number in range(next_result_number, next_result_number + result_rows)
-                    ]
-                    next_result_number += result_rows
-                    check_rows.insert(0, "result_id", result_ids)
-                    result_cnote_rows = _result_cnote_rows(check_rows)
-                    check_rows = check_rows.drop(columns=["_linked_cnotes", "_link_method"])
-                    result_writer.write(check_rows)
-                    result_cnote_writer.write(result_cnote_rows)
-            summary_rows.append(
-                _rule_summary_row(
-                    entry,
-                    status,
-                    total_checked=outcome.total_checked,
-                    total_failed=outcome.total_failed,
-                    result_rows=result_rows,
-                    error_message=error_message,
-                )
-            )
+        )
 
     summary_frame = pd.DataFrame(summary_rows)
-    flat_cnote_path, flat_cnote_parquet_path, flat_row_total = _write_flat_cnote_output(
-        flat_rows,
-        flat_cnote_path,
-        flat_cnote_parquet_path,
+    tableau_dashboard_path, tableau_dashboard_parquet_path, tableau_row_total = _write_tableau_dashboard_output(
+        tableau_rows,
+        tableau_dashboard_path,
+        tableau_dashboard_parquet_path,
     )
     html_dashboard_path, html_dashboard_parquet_path, html_row_total = _write_html_dashboard_output(
-        flat_rows,
+        tableau_rows,
         html_dashboard_path,
         html_dashboard_parquet_path,
     )
     summary_path = write_rule_summary(summary_frame, output_dir / "governance_rule_summary.csv")
     summary_parquet_path = write_rule_summary_parquet(summary_frame, output_dir / "governance_rule_summary.parquet")
     output_paths = [
-        flat_cnote_path,
-        flat_cnote_parquet_path,
+        tableau_dashboard_path,
+        tableau_dashboard_parquet_path,
         html_dashboard_path,
         html_dashboard_parquet_path,
         summary_path,
         summary_parquet_path,
     ]
-    if emit_result_rows:
-        output_paths = [
-            results_path,
-            results_parquet_path,
-            result_cnotes_path,
-            result_cnotes_parquet_path,
-            *output_paths,
-        ]
     uploaded_paths = _upload_governance_outputs_to_minio(upload_source, output_paths) if upload_source is not None else []
 
     print(f"Catalog entries evaluated: {sum(status_counts.values())}")
     print(f"Rule status counts: {status_counts}")
     print(f"Disabled entries: {disabled_count}")
     print(f"Skipped entries: {skipped_count}")
-    if emit_result_rows:
-        print(f"CNOTE result rows: {result_row_total:,}")
-    else:
-        print(f"CNOTE result rows not emitted; would have written {result_row_total:,} rows")
-    print(f"Flat CNOTE issue rows: {flat_row_total:,}")
+    print(f"Checked result rows: {result_row_total:,}")
+    print(f"Tableau dashboard rows: {tableau_row_total:,}")
     print(f"HTML dashboard summary rows: {html_row_total:,}")
     print(f"CNOTE row status counts: {row_status_counts}")
-    if emit_result_rows:
-        print(f"Output: {results_path}")
-        print(f"Output parquet: {results_parquet_path}")
-        print(f"CNOTE bridge: {result_cnotes_path}")
-        print(f"CNOTE bridge parquet: {result_cnotes_parquet_path}")
-    else:
-        print("Skipped governance_results and governance_result_cnotes output")
-    print(f"Flat CNOTE issues: {flat_cnote_path}")
-    print(f"Flat CNOTE issues parquet: {flat_cnote_parquet_path}")
+    print(f"Tableau dashboard: {tableau_dashboard_path}")
+    print(f"Tableau dashboard parquet: {tableau_dashboard_parquet_path}")
     print(f"HTML dashboard summary: {html_dashboard_path}")
     print(f"HTML dashboard summary parquet: {html_dashboard_parquet_path}")
     print(f"Rule summary: {summary_path}")
@@ -1297,11 +1228,8 @@ def run(
     bronze_run_path: str | Path | None = None,
     strict: bool = True,
     fail_on_skipped: bool = False,
-    emit_result_rows: bool | None = None,
 ) -> None:
     output_dir = Path(output_dir)
-    if emit_result_rows is None:
-        emit_result_rows = not _env_bool("GOVERNANCE_SKIP_RESULT_ROWS")
     if source == "synthetic":
         data = load_tables(_required_tables() | set(BRIDGE_COLUMNS))
         runnable = []
@@ -1325,7 +1253,6 @@ def run(
             output_dir,
             strict,
             fail_on_skipped=fail_on_skipped,
-            emit_result_rows=emit_result_rows,
         )
         return
 
@@ -1355,7 +1282,7 @@ def run(
         streamed_reference_tables = _streamed_reference_tables(runnable, bronze_source)
         required_columns = _required_columns(runnable)
         if "CMS_CNOTE" in bronze_source.tables:
-            required_columns.setdefault("CMS_CNOTE", set()).update(FLAT_CNOTE_CONTEXT_COLUMNS)
+            required_columns.setdefault("CMS_CNOTE", set()).update(TABLEAU_CNOTE_CONTEXT_COLUMNS)
         if "CMS_CNOTE_TRANSFORMED" in bronze_source.tables:
             required_columns.setdefault("CMS_CNOTE_TRANSFORMED", set()).update(TRANSFORMED_CNOTE_CONTEXT_COLUMNS)
         if DOCUMENT_LINKS_SOURCE_TABLE in bronze_source.tables:
@@ -1389,7 +1316,6 @@ def run(
             strict,
             fail_on_skipped=fail_on_skipped,
             upload_source=bronze_source if source == "minio" else None,
-            emit_result_rows=emit_result_rows,
         )
 
 
@@ -1402,12 +1328,6 @@ def main() -> None:
     parser.add_argument("--bronze-run-path", default=None)
     parser.add_argument("--no-strict", action="store_true", help="Do not fail the process on rule implementation errors")
     parser.add_argument("--fail-on-skipped", action="store_true", help="Fail when any active rule is skipped")
-    parser.add_argument(
-        "--skip-result-rows",
-        action="store_true",
-        default=None,
-        help="Do not write governance_results or governance_result_cnotes; keep summary and dashboard outputs",
-    )
     args = parser.parse_args()
     run(
         output_dir=args.output_dir,
@@ -1417,7 +1337,6 @@ def main() -> None:
         bronze_run_path=args.bronze_run_path,
         strict=not args.no_strict,
         fail_on_skipped=args.fail_on_skipped,
-        emit_result_rows=None if args.skip_result_rows is None else not args.skip_result_rows,
     )
 
 

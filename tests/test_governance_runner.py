@@ -5,14 +5,14 @@ import pandas as pd
 
 import extractor.bronze as bronze
 from governance.catalog import CATALOG
-from governance.output import GovernanceResultWriter, RESULT_COLUMNS
+from governance.output import GovernanceResultWriter, TABLEAU_DASHBOARD_COLUMNS
 import governance.runner as runner
 from governance.rules import RuleOutcome
 from governance.runner import (
     GovernanceSource,
     BronzeTable,
     PACKAGE_JOURNEY_STAGE_BY_TABLE,
-    _add_flat_cnote_rows,
+    _add_tableau_dashboard_rows,
     _entry_tables,
     _check_rows_frame,
     _cnote_flat_context,
@@ -20,7 +20,6 @@ from governance.runner import (
     _document_stage,
     _document_bridges,
     _html_dashboard_frame,
-    _result_cnote_rows,
     _missing_entry_columns,
     _package_journey_stage,
     _list_minio_parquet_objects,
@@ -146,15 +145,15 @@ def test_governance_output_uploads_under_run_prefix(tmp_path):
         bucket="jne-bronze",
         prefix="bronze/jne/run_id=R_TEST",
     )
-    output = tmp_path / "governance_results.parquet"
+    output = tmp_path / "tableau_dashboard.parquet"
     output.write_bytes(b"parquet")
 
     uploaded = _upload_governance_outputs_to_minio(source, [output])
 
     assert client.uploads == [
-        ("jne-bronze", "bronze/jne/run_id=R_TEST/governance/governance_results.parquet", "governance_results.parquet")
+        ("jne-bronze", "bronze/jne/run_id=R_TEST/governance/tableau_dashboard.parquet", "tableau_dashboard.parquet")
     ]
-    assert uploaded == ["s3://jne-bronze/bronze/jne/run_id=R_TEST/governance/governance_results.parquet"]
+    assert uploaded == ["s3://jne-bronze/bronze/jne/run_id=R_TEST/governance/tableau_dashboard.parquet"]
 
 
 def test_governance_writer_replaces_existing_output_files(tmp_path):
@@ -163,31 +162,30 @@ def test_governance_writer_replaces_existing_output_files(tmp_path):
     except ModuleNotFoundError:
         return
 
-    csv_path = tmp_path / "governance_results.csv"
-    parquet_path = tmp_path / "governance_results.parquet"
+    csv_path = tmp_path / "tableau_dashboard.csv"
+    parquet_path = tmp_path / "tableau_dashboard.parquet"
     csv_path.write_text("old_header\nold_row\n", encoding="utf-8")
     parquet_path.write_bytes(b"old parquet")
 
     with GovernanceResultWriter(csv_path, parquet_path) as writer:
         writer.write(pd.DataFrame({
             "cnote_no": ["C1"],
-            "document_type": ["CNOTE"],
-            "document_id": ["C1"],
-            "level": ["index"],
-            "stage": [""],
+            "origin_region": ["Jakarta"],
+            "destination_region": ["Jawa Barat"],
+            "shipment_type": ["Direct Domestic"],
+            "delivery_service": ["REG"],
+            "package_journey_stage": ["Shipper"],
+            "element": ["Completeness"],
+            "issue_description": ["Missing cnote"],
             "index_code": ["COMP_TEST"],
+            "level": ["cnote"],
             "main_indicator": ["Completeness"],
-            "column_name": ["CNOTE_NO"],
-            "table_name": ["CMS_CNOTE"],
-            "status": ["PASS"],
-            "variable_1": ["C1"],
-            "variable_2": [""],
-            "impact_billing": ["Y"],
-            "impact_operational": ["Y"],
+            "main_impact": ["TBD"],
+            "impact_details": ["TBD"],
         }))
 
     lines = csv_path.read_text(encoding="utf-8").splitlines()
-    assert lines[0] == ",".join(RESULT_COLUMNS)
+    assert lines[0] == ",".join(TABLEAU_DASHBOARD_COLUMNS)
     assert "old_header" not in lines
     assert "old_row" not in lines
 
@@ -234,7 +232,7 @@ def test_mhi_hoc_uses_mhi_no_as_document_key():
             assert entry["params"].get("cnote_column") == "MHI_NO"
 
 
-def test_bag_governance_rows_keep_document_id_and_links_cnotes_separately():
+def test_bag_governance_rows_keep_document_id_and_links_cnotes_for_dashboard():
     data = {
         "CMS_MFCNOTE": pd.DataFrame({
             "MFCNOTE_NO": ["CNOTE1", "CNOTE2"],
@@ -253,31 +251,29 @@ def test_bag_governance_rows_keep_document_id_and_links_cnotes_separately():
     }
     outcome = RuleOutcome(
         total_checked=1,
-        total_failed=0,
+        total_failed=1,
         failures=pd.DataFrame(columns=["cnote_no", "failed_value", "failure_reason"]),
         checks=pd.DataFrame({
             "cnote_no": ["BAG1"],
-            "status": ["PASS"],
+            "status": ["FAIL"],
             "variable_1": ["BAG1"],
             "variable_2": [""],
         }),
     )
 
     rows = _check_rows_frame(entry, outcome, _document_bridges(data), {"CNOTE1", "CNOTE2"})
-    rows.insert(0, "result_id", ["R000000000001"])
-    link_rows = _result_cnote_rows(rows)
+    tableau_rows = {}
+    _add_tableau_dashboard_rows(tableau_rows, rows, entry, {})
 
     assert rows["cnote_no"].tolist() == [""]
     assert rows["document_id"].tolist() == ["BAG1"]
     assert rows["document_type"].tolist() == ["DMBAG"]
     assert rows["level"].tolist() == ["bag"]
     assert rows["stage"].tolist() == ["manifest"]
-    assert link_rows["result_id"].tolist() == ["R000000000001", "R000000000001"]
-    assert link_rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
-    assert link_rows.columns.tolist() == ["result_id", "cnote_no", "link_method"]
+    assert set(tableau_rows) == {("CNOTE1", "COMP_TEST"), ("CNOTE2", "COMP_TEST")}
 
 
-def test_flat_cnote_issue_rows_include_delivery_service_and_drop_passes():
+def test_tableau_dashboard_rows_include_delivery_service_and_drop_passes():
     cnote_contexts = _cnote_flat_context({
         "CMS_CNOTE": pd.DataFrame({
             "CNOTE_NO": ["CNOTE1"],
@@ -302,25 +298,25 @@ def test_flat_cnote_issue_rows_include_delivery_service_and_drop_passes():
         "status": ["FAIL", "PASS"],
         "_linked_cnotes": [["CNOTE1"], ["CNOTE1"]],
     })
-    flat_rows = {}
+    tableau_rows = {}
 
-    _add_flat_cnote_rows(flat_rows, rows, entry, cnote_contexts)
+    _add_tableau_dashboard_rows(tableau_rows, rows, entry, cnote_contexts)
 
-    assert list(flat_rows) == [("CNOTE1", "CONS_TEST")]
-    flat_row = next(iter(flat_rows.values()))
-    assert flat_row["cnote_no"] == "CNOTE1"
-    assert flat_row["origin_region"] == "Jakarta"
-    assert flat_row["destination_region"] == "JTBNN"
-    assert flat_row["delivery_service"] == "REG"
-    assert flat_row["shipment_type"] == "Direct Domestic"
-    assert flat_row["package_journey_stage"] == "Other"
-    assert flat_row["element"] == "Consistency"
-    assert flat_row["issue_description"] == "Weight Difference"
-    assert flat_row["index_code"] == "CONS_TEST"
-    assert flat_row["level"] == "bag"
-    assert flat_row["main_indicator"] == "Weight"
-    assert flat_row["main_impact"] == "Billing"
-    assert flat_row["impact_details"] == "Under-billing"
+    assert list(tableau_rows) == [("CNOTE1", "CONS_TEST")]
+    dashboard_row = next(iter(tableau_rows.values()))
+    assert dashboard_row["cnote_no"] == "CNOTE1"
+    assert dashboard_row["origin_region"] == "Jakarta"
+    assert dashboard_row["destination_region"] == "JTBNN"
+    assert dashboard_row["delivery_service"] == "REG"
+    assert dashboard_row["shipment_type"] == "Direct Domestic"
+    assert dashboard_row["package_journey_stage"] == "Other"
+    assert dashboard_row["element"] == "Consistency"
+    assert dashboard_row["issue_description"] == "Weight Difference"
+    assert dashboard_row["index_code"] == "CONS_TEST"
+    assert dashboard_row["level"] == "bag"
+    assert dashboard_row["main_indicator"] == "Weight"
+    assert dashboard_row["main_impact"] == "Billing"
+    assert dashboard_row["impact_details"] == "Under-billing"
 
 
 def test_cnote_flat_context_maps_unknown_region_to_other():
@@ -363,7 +359,7 @@ def test_cnote_flat_context_uses_transformed_transit_delivery_type():
     assert cnote_contexts["CNOTE4"]["delivery_service"] == "Others"
 
 
-def test_flat_cnote_issue_rows_include_package_journey_stage():
+def test_tableau_dashboard_rows_include_package_journey_stage():
     entry = {
         "index_code": "VALD_TEST",
         "element": "Validity",
@@ -377,16 +373,16 @@ def test_flat_cnote_issue_rows_include_package_journey_stage():
         "status": ["FAIL"],
         "_linked_cnotes": [["CNOTE1"]],
     })
-    flat_rows = {}
+    tableau_rows = {}
 
-    _add_flat_cnote_rows(flat_rows, rows, entry, {"CNOTE1": {"delivery_service": "REG23"}})
+    _add_tableau_dashboard_rows(tableau_rows, rows, entry, {"CNOTE1": {"delivery_service": "REG23"}})
 
-    flat_row = next(iter(flat_rows.values()))
-    assert flat_row["package_journey_stage"] == "Shipper"
+    dashboard_row = next(iter(tableau_rows.values()))
+    assert dashboard_row["package_journey_stage"] == "Shipper"
 
 
-def test_html_dashboard_frame_preaggregates_flat_cnote_issues():
-    flat_rows = {
+def test_html_dashboard_frame_preaggregates_tableau_dashboard():
+    tableau_rows = {
         ("CNOTE1", "VALD_TEST"): {
             "cnote_no": "CNOTE1",
             "origin_region": "Jakarta",
@@ -419,7 +415,7 @@ def test_html_dashboard_frame_preaggregates_flat_cnote_issues():
         },
     }
 
-    frame = _html_dashboard_frame(flat_rows)
+    frame = _html_dashboard_frame(tableau_rows)
 
     assert len(frame) == 1
     row = frame.iloc[0].to_dict()
@@ -478,25 +474,25 @@ def test_mmbag_links_to_cnotes_through_dmbag():
     }
     outcome = RuleOutcome(
         total_checked=1,
-        total_failed=0,
+        total_failed=1,
         failures=pd.DataFrame(columns=["cnote_no", "failed_value", "failure_reason"]),
         checks=pd.DataFrame({
             "cnote_no": ["MMBAG1"],
-            "status": ["PASS"],
+            "status": ["FAIL"],
             "variable_1": ["MMBAG1"],
             "variable_2": [""],
         }),
     )
 
     rows = _check_rows_frame(entry, outcome, _document_bridges(data), {"CNOTE1", "CNOTE2"})
-    rows.insert(0, "result_id", ["R000000000001"])
-    link_rows = _result_cnote_rows(rows)
+    tableau_rows = {}
+    _add_tableau_dashboard_rows(tableau_rows, rows, entry, {})
 
     assert rows.loc[0, "document_id"] == "MMBAG1"
     assert rows.loc[0, "cnote_no"] == ""
     assert rows.loc[0, "level"] == "bag"
     assert rows.loc[0, "stage"] == "manifest"
-    assert link_rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
+    assert set(tableau_rows) == {("CNOTE1", "COMP_TEST"), ("CNOTE2", "COMP_TEST")}
 
 
 def test_confirmed_operational_documents_bridge_to_cnotes():

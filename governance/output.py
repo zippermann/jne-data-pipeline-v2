@@ -8,31 +8,7 @@ from typing import Any
 import pandas as pd
 
 
-RESULT_COLUMNS = [
-    "result_id",
-    "cnote_no",
-    "document_type",
-    "document_id",
-    "level",
-    "stage",
-    "index_code",
-    "main_indicator",
-    "column_name",
-    "table_name",
-    "status",
-    "variable_1",
-    "variable_2",
-    "impact_billing",
-    "impact_operational",
-]
-
-RESULT_CNOTE_COLUMNS = [
-    "result_id",
-    "cnote_no",
-    "link_method",
-]
-
-FLAT_CNOTE_COLUMNS = [
+TABLEAU_DASHBOARD_COLUMNS = [
     "cnote_no",
     "origin_region",
     "destination_region",
@@ -81,10 +57,6 @@ RULE_SUMMARY_COLUMNS = [
 ]
 
 
-def _result_columns(results: pd.DataFrame) -> pd.DataFrame:
-    return _select_columns(results, RESULT_COLUMNS)
-
-
 class GovernanceResultWriter:
     def __init__(
         self,
@@ -94,7 +66,7 @@ class GovernanceResultWriter:
     ) -> None:
         self.csv_path = Path(csv_path)
         self.parquet_path = Path(parquet_path)
-        self.columns = columns or RESULT_COLUMNS
+        self.columns = columns or TABLEAU_DASHBOARD_COLUMNS
         self.csv_path.parent.mkdir(parents=True, exist_ok=True)
         self.parquet_path.parent.mkdir(parents=True, exist_ok=True)
         self.csv_path.unlink(missing_ok=True)
@@ -152,20 +124,6 @@ def _select_columns(results: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
         if column not in results.columns:
             results[column] = ""
     return results.loc[:, columns].astype("string").fillna("")
-
-
-def write_governance_results(results: pd.DataFrame, path: str | Path) -> Path:
-    output_path = Path(path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    _result_columns(results).to_csv(output_path, index=False)
-    return output_path
-
-
-def write_governance_results_parquet(results: pd.DataFrame, path: str | Path) -> Path:
-    output_path = Path(path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    _result_columns(results).to_parquet(output_path, index=False)
-    return output_path
 
 
 def write_rule_summary(summary: pd.DataFrame, path: str | Path) -> Path:

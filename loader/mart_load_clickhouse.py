@@ -75,9 +75,7 @@ class SchemaConfig:
 @dataclass(frozen=True)
 class GovernanceConfig:
     enabled: bool
-    results_path: Path
-    result_cnotes_path: Path
-    flat_cnote_path: Path
+    tableau_dashboard_path: Path
     html_dashboard_path: Path
     summary_path: Path
 
@@ -101,6 +99,7 @@ class MartClickHouseConfig:
     skip_stages: tuple[str, ...] = ()
     reuse_existing_stages: tuple[str, ...] = ()
     load_mode: str = "latest_snapshot"
+    load_raw_data: bool = True
 
 
 UNIFIED_REQUIRED_TABLES = (
@@ -152,9 +151,7 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
     unified_mart = raw.get("unified_mart", {})
     mart = raw.get("mart", {})
     run_id = os.getenv("RUN_ID", "")
-    default_governance_path = Path("governance/outputs") / run_id / "governance_results.csv"
-    default_result_cnotes_path = Path("governance/outputs") / run_id / "governance_result_cnotes.csv"
-    default_flat_cnote_path = Path("governance/outputs") / run_id / "flat_cnote_issues.csv"
+    default_tableau_dashboard_path = Path("governance/outputs") / run_id / "tableau_dashboard.csv"
     default_html_dashboard_path = Path("governance/outputs") / run_id / "html_dashboard_summary.csv"
     default_summary_path = Path("governance/outputs") / run_id / "governance_rule_summary.csv"
 
@@ -186,9 +183,7 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
         ),
         governance=GovernanceConfig(
             enabled=_as_bool(governance.get("enabled", True)),
-            results_path=Path(governance.get("results_path") or default_governance_path),
-            result_cnotes_path=Path(governance.get("result_cnotes_path") or default_result_cnotes_path),
-            flat_cnote_path=Path(governance.get("flat_cnote_path") or default_flat_cnote_path),
+            tableau_dashboard_path=Path(governance.get("tableau_dashboard_path") or default_tableau_dashboard_path),
             html_dashboard_path=Path(governance.get("html_dashboard_path") or default_html_dashboard_path),
             summary_path=Path(governance.get("summary_path") or default_summary_path),
         ),
@@ -201,6 +196,7 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
         skip_stages=tuple(str(stage).lower() for stage in mart.get("skip_stages", [])),
         reuse_existing_stages=tuple(str(stage).lower() for stage in mart.get("reuse_existing_stages", [])),
         load_mode=mart.get("load_mode", "latest_snapshot"),
+        load_raw_data=_as_bool(mart.get("load_raw_data", True)),
     )
     if config.load_mode != "latest_snapshot":
         raise ValueError(f"Unsupported mart.load_mode: {config.load_mode}")
@@ -492,44 +488,24 @@ def _load_governance_csv(
     return row_count
 
 
-def _load_governance_results(client: Any, config: MartClickHouseConfig, batch_size: int = 100_000) -> int:
+def _load_governance_outputs(client: Any, config: MartClickHouseConfig, batch_size: int = 100_000) -> int:
     if not config.governance.enabled:
-        _log("Skipping ClickHouse governance results load because governance.enabled=false")
+        _log("Skipping ClickHouse governance output load because governance.enabled=false")
         return 0
 
     _drop_database(client, config.schemas.governance)
     _create_database(client, config.schemas.governance)
     row_count = 0
-    if config.governance.results_path.exists():
+    if config.governance.tableau_dashboard_path.exists():
         row_count += _load_governance_csv(
             client,
             config.schemas.governance,
-            "governance_results",
-            config.governance.results_path,
+            "tableau_dashboard",
+            config.governance.tableau_dashboard_path,
             batch_size=batch_size,
         )
     else:
-        _log(f"Governance results file not found, skipping: {config.governance.results_path}")
-    if config.governance.result_cnotes_path.exists():
-        row_count += _load_governance_csv(
-            client,
-            config.schemas.governance,
-            "governance_result_cnotes",
-            config.governance.result_cnotes_path,
-            batch_size=batch_size,
-        )
-    else:
-        _log(f"Governance result CNOTE bridge file not found, skipping: {config.governance.result_cnotes_path}")
-    if config.governance.flat_cnote_path.exists():
-        row_count += _load_governance_csv(
-            client,
-            config.schemas.governance,
-            "flat_cnote_issues",
-            config.governance.flat_cnote_path,
-            batch_size=batch_size,
-        )
-    else:
-        _log(f"Flat CNOTE issue file not found, skipping: {config.governance.flat_cnote_path}")
+        _log(f"Tableau dashboard file not found, skipping: {config.governance.tableau_dashboard_path}")
     if config.governance.html_dashboard_path.exists():
         row_count += _load_governance_csv(
             client,
@@ -646,7 +622,7 @@ def _insert_load_run(
             _date_or_none(manifest.get("window_end")),
             config.bronze.bucket,
             config.bronze.run_prefix,
-            str(config.governance.results_path) if config.governance.enabled else "",
+            str(config.governance.tableau_dashboard_path) if config.governance.enabled else "",
             int(table_count),
             int(row_count),
             status,
@@ -670,13 +646,15 @@ def _insert_load_run(
     )
 
 
-def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
+def run(config_path: str = "config/mart_clickhouse.yaml", governance_only: bool = False) -> None:
     config = load_config(config_path)
+    load_raw_data = config.load_raw_data and not governance_only
     _log(
         "Starting ClickHouse mart load: "
         f"bronze=s3://{config.bronze.bucket}/{config.bronze.run_prefix}, "
         f"skip_stages={list(config.skip_stages)}, "
-        f"reuse_existing_stages={list(config.reuse_existing_stages)}"
+        f"reuse_existing_stages={list(config.reuse_existing_stages)}, "
+        f"load_raw_data={load_raw_data}"
     )
     minio_client = _minio_client(config)
     manifest = _read_manifest(minio_client, config)
@@ -691,32 +669,35 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
     unified_rows = 0
     governance_rows = 0
     try:
-        _drop_database(client, config.schemas.bronze_staging)
-        _drop_database(client, config.schemas.derived_staging)
-        _create_database(client, config.schemas.bronze_staging)
-        loaded_tables = _load_table_entries(
-            client,
-            config,
-            manifest.get("tables", []),
-            config.schemas.bronze_staging,
-            "bronze",
-            target_schema=config.schemas.bronze,
-        )
-        if manifest.get("derived"):
-            _log("Loading transformed CNOTE into ClickHouse bronze staging")
-            loaded_derived = _load_table_entries(
+        if load_raw_data:
+            _drop_database(client, config.schemas.bronze_staging)
+            _drop_database(client, config.schemas.derived_staging)
+            _create_database(client, config.schemas.bronze_staging)
+            loaded_tables = _load_table_entries(
                 client,
                 config,
-                manifest.get("derived", []),
+                manifest.get("tables", []),
                 config.schemas.bronze_staging,
                 "bronze",
-                default_parent="derived",
+                target_schema=config.schemas.bronze,
             )
-        _publish_schema(client, config.schemas.bronze_staging, config.schemas.bronze)
-        _drop_database(client, config.schemas.derived)
+            if manifest.get("derived"):
+                _log("Loading transformed CNOTE into ClickHouse bronze staging")
+                loaded_derived = _load_table_entries(
+                    client,
+                    config,
+                    manifest.get("derived", []),
+                    config.schemas.bronze_staging,
+                    "bronze",
+                    default_parent="derived",
+                )
+            _publish_schema(client, config.schemas.bronze_staging, config.schemas.bronze)
+            _drop_database(client, config.schemas.derived)
 
-        unified_rows = _load_unified_mart(client, config)
-        governance_rows = _load_governance_results(client, config)
+            unified_rows = _load_unified_mart(client, config)
+        else:
+            _log("Skipping raw bronze/derived/unified mart load; loading governance outputs only")
+        governance_rows = _load_governance_outputs(client, config)
         total_rows = sum(loaded_tables.values()) + sum(loaded_derived.values()) + unified_rows + governance_rows
         _insert_load_run(
             client,
@@ -753,17 +734,22 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
         _log(f"  {config.schemas.bronze}.{table}: {rows} rows")
     for table, rows in sorted(loaded_derived.items()):
         _log(f"  {config.schemas.derived}.{table}: {rows} rows")
-    if config.unified_mart.enabled:
+    if load_raw_data and config.unified_mart.enabled:
         _log(f"  {config.unified_mart.schema}.{config.unified_mart.table}: {unified_rows} rows")
     if config.governance.enabled:
-        _log(f"  {config.schemas.governance}.governance_results: {governance_rows} rows")
+        _log(f"  {config.schemas.governance} governance outputs: {governance_rows} rows")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Load bronze Parquet into ClickHouse.")
     parser.add_argument("--config", default="config/mart_clickhouse.yaml")
+    parser.add_argument(
+        "--governance-only",
+        action="store_true",
+        help="Load only governance outputs into ClickHouse; skip raw bronze, derived, and unified mart tables",
+    )
     args = parser.parse_args()
-    run(args.config)
+    run(args.config, governance_only=args.governance_only)
 
 
 if __name__ == "__main__":
