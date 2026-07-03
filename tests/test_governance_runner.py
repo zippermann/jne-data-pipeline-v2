@@ -19,7 +19,9 @@ from governance.runner import (
     _document_level,
     _document_stage,
     _document_bridges,
+    _html_dashboard_denominator_frame,
     _html_dashboard_frame,
+    _html_dashboard_rule_summary_frame,
     _missing_entry_columns,
     _package_journey_stage,
     _list_minio_parquet_objects,
@@ -423,6 +425,86 @@ def test_html_dashboard_frame_preaggregates_tableau_dashboard():
     assert row["index_code"] == "VALD_TEST"
     assert row["origin_region"] == "Jakarta"
     assert row["destination_region"] == "Jawa Barat"
+
+
+def test_html_dashboard_denominator_frame_writes_all_rollups():
+    cnote_contexts = {
+        "CNOTE1": {
+            "origin_region": "Jakarta",
+            "destination_region": "Jawa Barat",
+            "shipment_type": "Direct Domestic",
+            "delivery_service": "REG",
+        },
+        "CNOTE2": {
+            "origin_region": "Jakarta",
+            "destination_region": "Jawa Tengah",
+            "shipment_type": "Direct Domestic",
+            "delivery_service": "YES",
+        },
+        "CNOTE3": {
+            "origin_region": "Bodetabekcikcil",
+            "destination_region": "Jawa Barat",
+            "shipment_type": "Intracity",
+            "delivery_service": "REG",
+        },
+    }
+
+    frame = _html_dashboard_denominator_frame(cnote_contexts)
+
+    all_row = frame.loc[
+        frame["origin_region"].eq("ALL")
+        & frame["destination_region"].eq("ALL")
+        & frame["shipment_type"].eq("ALL")
+        & frame["delivery_service"].eq("ALL")
+    ].iloc[0]
+    direct_row = frame.loc[
+        frame["origin_region"].eq("ALL")
+        & frame["destination_region"].eq("ALL")
+        & frame["shipment_type"].eq("Direct Domestic")
+        & frame["delivery_service"].eq("ALL")
+    ].iloc[0]
+    lane_row = frame.loc[
+        frame["origin_region"].eq("Jakarta")
+        & frame["destination_region"].eq("Jawa Barat")
+        & frame["shipment_type"].eq("ALL")
+        & frame["delivery_service"].eq("ALL")
+    ].iloc[0]
+
+    assert all_row["total_cnotes"] == 3
+    assert direct_row["total_cnotes"] == 2
+    assert lane_row["total_cnotes"] == 1
+
+
+def test_html_dashboard_rule_summary_frame_adds_rule_and_cnote_impact_fields():
+    entry = CATALOG[0]
+    summary_frame = pd.DataFrame({
+        "index_code": [entry["index_code"]],
+        "element": [entry.get("element", "")],
+        "main_indicator": [entry.get("indicator", "")],
+        "rule_family": [entry.get("rule_family", "")],
+        "table_name": [entry.get("table", "")],
+        "status": ["FAIL"],
+        "total_checked": [10],
+        "total_failed": [4],
+        "result_rows": [10],
+        "skip_reason": [""],
+        "error_message": [""],
+        "impact_billing": [""],
+        "impact_operational": [""],
+    })
+    tableau_rows = {
+        ("CNOTE1", entry["index_code"]): {"cnote_no": "CNOTE1", "index_code": entry["index_code"]},
+        ("CNOTE2", entry["index_code"]): {"cnote_no": "CNOTE2", "index_code": entry["index_code"]},
+    }
+
+    frame = _html_dashboard_rule_summary_frame(summary_frame, tableau_rows)
+
+    row = frame.iloc[0].to_dict()
+    assert row["index_code"] == entry["index_code"]
+    assert row["issue_description"] == entry["description"]
+    assert row["level"] in {"cnote", "bag"}
+    assert row["rule_fail_rate"] == 0.4
+    assert row["affected_cnote_count"] == 2
 
 
 def test_bag_bridge_uses_mfcnote_bag_not_manifest_context():

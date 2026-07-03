@@ -27,6 +27,8 @@ from governance.catalog import CATALOG
 from governance.output import (
     GovernanceResultWriter,
     HTML_DASHBOARD_COLUMNS,
+    HTML_DASHBOARD_DENOMINATOR_COLUMNS,
+    HTML_DASHBOARD_RULE_SUMMARY_COLUMNS,
     TABLEAU_DASHBOARD_COLUMNS,
     write_rule_summary,
     write_rule_summary_parquet,
@@ -1071,6 +1073,100 @@ def _write_html_dashboard_output(
     return csv_path, parquet_path, rows
 
 
+def _html_dashboard_denominator_frame(cnote_contexts: dict[str, dict[str, str]]) -> pd.DataFrame:
+    if not cnote_contexts:
+        return pd.DataFrame(columns=HTML_DASHBOARD_DENOMINATOR_COLUMNS)
+
+    dimensions = ["origin_region", "destination_region", "shipment_type", "delivery_service"]
+    records = []
+    for cnote_no, context in cnote_contexts.items():
+        row = {"cnote_no": str(cnote_no)}
+        for dimension in dimensions:
+            row[dimension] = str(context.get(dimension) or "Unknown")
+        records.append(row)
+
+    cnotes = pd.DataFrame(records)
+    rollup_rows: list[dict[str, object]] = []
+    for mask in range(1 << len(dimensions)):
+        group_columns = [dimension for index, dimension in enumerate(dimensions) if mask & (1 << index)]
+        if group_columns:
+            grouped = cnotes.groupby(group_columns, dropna=False, sort=True)["cnote_no"].nunique().reset_index()
+            for _, row in grouped.iterrows():
+                output_row = {dimension: "ALL" for dimension in dimensions}
+                for dimension in group_columns:
+                    output_row[dimension] = str(row[dimension])
+                output_row["total_cnotes"] = int(row["cnote_no"])
+                rollup_rows.append(output_row)
+        else:
+            rollup_rows.append({**{dimension: "ALL" for dimension in dimensions}, "total_cnotes": int(cnotes["cnote_no"].nunique())})
+
+    return pd.DataFrame(rollup_rows, columns=HTML_DASHBOARD_DENOMINATOR_COLUMNS)
+
+
+def _write_html_dashboard_denominator_output(
+    cnote_contexts: dict[str, dict[str, str]],
+    csv_path: Path,
+    parquet_path: Path,
+) -> tuple[Path, Path, int]:
+    frame = _html_dashboard_denominator_frame(cnote_contexts)
+    with GovernanceResultWriter(csv_path, parquet_path, columns=HTML_DASHBOARD_DENOMINATOR_COLUMNS) as writer:
+        rows = writer.write(frame)
+    return csv_path, parquet_path, rows
+
+
+def _html_dashboard_rule_summary_frame(
+    summary_frame: pd.DataFrame,
+    tableau_rows: dict[tuple[str, str], dict[str, str]],
+) -> pd.DataFrame:
+    if summary_frame.empty:
+        return pd.DataFrame(columns=HTML_DASHBOARD_RULE_SUMMARY_COLUMNS)
+
+    catalog_by_index = {str(entry.get("index_code", "")): entry for entry in CATALOG}
+    affected_cnotes: dict[str, set[str]] = {}
+    for row in tableau_rows.values():
+        index_code = str(row.get("index_code", ""))
+        cnote_no = str(row.get("cnote_no", ""))
+        if index_code and cnote_no:
+            affected_cnotes.setdefault(index_code, set()).add(cnote_no)
+
+    records = []
+    for _, row in summary_frame.iterrows():
+        index_code = str(row.get("index_code", ""))
+        entry = catalog_by_index.get(index_code, {})
+        total_checked = int(row.get("total_checked") or 0)
+        total_failed = int(row.get("total_failed") or 0)
+        records.append({
+            "index_code": index_code,
+            "element": str(row.get("element", "")),
+            "main_indicator": str(row.get("main_indicator", "")),
+            "level": _document_level(entry) if entry else "",
+            "issue_description": str(entry.get("description", "")),
+            "table_name": str(row.get("table_name", "")),
+            "rule_family": str(row.get("rule_family", "")),
+            "status": str(row.get("status", "")),
+            "total_checked": total_checked,
+            "total_failed": total_failed,
+            "rule_fail_rate": (total_failed / total_checked) if total_checked else "",
+            "affected_cnote_count": len(affected_cnotes.get(index_code, set())),
+            "main_impact": str(entry.get("main_impact") or "TBD"),
+            "impact_details": str(entry.get("impact_details") or "TBD"),
+        })
+
+    return pd.DataFrame(records, columns=HTML_DASHBOARD_RULE_SUMMARY_COLUMNS)
+
+
+def _write_html_dashboard_rule_summary_output(
+    summary_frame: pd.DataFrame,
+    tableau_rows: dict[tuple[str, str], dict[str, str]],
+    csv_path: Path,
+    parquet_path: Path,
+) -> tuple[Path, Path, int]:
+    frame = _html_dashboard_rule_summary_frame(summary_frame, tableau_rows)
+    with GovernanceResultWriter(csv_path, parquet_path, columns=HTML_DASHBOARD_RULE_SUMMARY_COLUMNS) as writer:
+        rows = writer.write(frame)
+    return csv_path, parquet_path, rows
+
+
 def _rule_summary_row(
     entry: dict,
     status: str,
@@ -1117,6 +1213,10 @@ def _run_entries(
     tableau_dashboard_parquet_path = output_dir / "tableau_dashboard.parquet"
     html_dashboard_path = output_dir / "html_dashboard_summary.csv"
     html_dashboard_parquet_path = output_dir / "html_dashboard_summary.parquet"
+    html_dashboard_denominators_path = output_dir / "html_dashboard_denominators.csv"
+    html_dashboard_denominators_parquet_path = output_dir / "html_dashboard_denominators.parquet"
+    html_dashboard_rule_summary_path = output_dir / "html_dashboard_rule_summary.csv"
+    html_dashboard_rule_summary_parquet_path = output_dir / "html_dashboard_rule_summary.parquet"
     for stem in RETIRED_OUTPUT_STEMS:
         (output_dir / f"{stem}.csv").unlink(missing_ok=True)
         (output_dir / f"{stem}.parquet").unlink(missing_ok=True)
@@ -1184,6 +1284,25 @@ def _run_entries(
         html_dashboard_path,
         html_dashboard_parquet_path,
     )
+    (
+        html_dashboard_denominators_path,
+        html_dashboard_denominators_parquet_path,
+        html_denominator_row_total,
+    ) = _write_html_dashboard_denominator_output(
+        cnote_contexts,
+        html_dashboard_denominators_path,
+        html_dashboard_denominators_parquet_path,
+    )
+    (
+        html_dashboard_rule_summary_path,
+        html_dashboard_rule_summary_parquet_path,
+        html_rule_summary_row_total,
+    ) = _write_html_dashboard_rule_summary_output(
+        summary_frame,
+        tableau_rows,
+        html_dashboard_rule_summary_path,
+        html_dashboard_rule_summary_parquet_path,
+    )
     summary_path = write_rule_summary(summary_frame, output_dir / "governance_rule_summary.csv")
     summary_parquet_path = write_rule_summary_parquet(summary_frame, output_dir / "governance_rule_summary.parquet")
     output_paths = [
@@ -1191,6 +1310,10 @@ def _run_entries(
         tableau_dashboard_parquet_path,
         html_dashboard_path,
         html_dashboard_parquet_path,
+        html_dashboard_denominators_path,
+        html_dashboard_denominators_parquet_path,
+        html_dashboard_rule_summary_path,
+        html_dashboard_rule_summary_parquet_path,
         summary_path,
         summary_parquet_path,
     ]
@@ -1203,11 +1326,17 @@ def _run_entries(
     print(f"Checked result rows: {result_row_total:,}")
     print(f"Tableau dashboard rows: {tableau_row_total:,}")
     print(f"HTML dashboard summary rows: {html_row_total:,}")
+    print(f"HTML dashboard denominator rows: {html_denominator_row_total:,}")
+    print(f"HTML dashboard rule summary rows: {html_rule_summary_row_total:,}")
     print(f"CNOTE row status counts: {row_status_counts}")
     print(f"Tableau dashboard: {tableau_dashboard_path}")
     print(f"Tableau dashboard parquet: {tableau_dashboard_parquet_path}")
     print(f"HTML dashboard summary: {html_dashboard_path}")
     print(f"HTML dashboard summary parquet: {html_dashboard_parquet_path}")
+    print(f"HTML dashboard denominators: {html_dashboard_denominators_path}")
+    print(f"HTML dashboard denominators parquet: {html_dashboard_denominators_parquet_path}")
+    print(f"HTML dashboard rule summary: {html_dashboard_rule_summary_path}")
+    print(f"HTML dashboard rule summary parquet: {html_dashboard_rule_summary_parquet_path}")
     print(f"Rule summary: {summary_path}")
     print(f"Rule summary parquet: {summary_parquet_path}")
     for uploaded_path in uploaded_paths:

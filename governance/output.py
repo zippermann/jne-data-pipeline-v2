@@ -40,6 +40,31 @@ HTML_DASHBOARD_COLUMNS = [
     "cnote_count",
 ]
 
+HTML_DASHBOARD_DENOMINATOR_COLUMNS = [
+    "origin_region",
+    "destination_region",
+    "shipment_type",
+    "delivery_service",
+    "total_cnotes",
+]
+
+HTML_DASHBOARD_RULE_SUMMARY_COLUMNS = [
+    "index_code",
+    "element",
+    "main_indicator",
+    "level",
+    "issue_description",
+    "table_name",
+    "rule_family",
+    "status",
+    "total_checked",
+    "total_failed",
+    "rule_fail_rate",
+    "affected_cnote_count",
+    "main_impact",
+    "impact_details",
+]
+
 RULE_SUMMARY_COLUMNS = [
     "index_code",
     "element",

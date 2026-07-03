@@ -77,6 +77,8 @@ class GovernanceConfig:
     enabled: bool
     tableau_dashboard_path: Path
     html_dashboard_path: Path
+    html_denominators_path: Path
+    html_rule_summary_path: Path
     summary_path: Path
 
 
@@ -153,6 +155,8 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
     run_id = os.getenv("RUN_ID", "")
     default_tableau_dashboard_path = Path("governance/outputs") / run_id / "tableau_dashboard.csv"
     default_html_dashboard_path = Path("governance/outputs") / run_id / "html_dashboard_summary.csv"
+    default_html_denominators_path = Path("governance/outputs") / run_id / "html_dashboard_denominators.csv"
+    default_html_rule_summary_path = Path("governance/outputs") / run_id / "html_dashboard_rule_summary.csv"
     default_summary_path = Path("governance/outputs") / run_id / "governance_rule_summary.csv"
 
     config = MartClickHouseConfig(
@@ -185,6 +189,8 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
             enabled=_as_bool(governance.get("enabled", True)),
             tableau_dashboard_path=Path(governance.get("tableau_dashboard_path") or default_tableau_dashboard_path),
             html_dashboard_path=Path(governance.get("html_dashboard_path") or default_html_dashboard_path),
+            html_denominators_path=Path(governance.get("html_denominators_path") or default_html_denominators_path),
+            html_rule_summary_path=Path(governance.get("html_rule_summary_path") or default_html_rule_summary_path),
             summary_path=Path(governance.get("summary_path") or default_summary_path),
         ),
         unified_mart=UnifiedMartConfig(
@@ -516,6 +522,26 @@ def _load_governance_outputs(client: Any, config: MartClickHouseConfig, batch_si
         )
     else:
         _log(f"HTML dashboard summary file not found, skipping: {config.governance.html_dashboard_path}")
+    if config.governance.html_denominators_path.exists():
+        row_count += _load_governance_csv(
+            client,
+            config.schemas.governance,
+            "html_dashboard_denominators",
+            config.governance.html_denominators_path,
+            batch_size=batch_size,
+        )
+    else:
+        _log(f"HTML dashboard denominators file not found, skipping: {config.governance.html_denominators_path}")
+    if config.governance.html_rule_summary_path.exists():
+        row_count += _load_governance_csv(
+            client,
+            config.schemas.governance,
+            "html_dashboard_rule_summary",
+            config.governance.html_rule_summary_path,
+            batch_size=batch_size,
+        )
+    else:
+        _log(f"HTML dashboard rule summary file not found, skipping: {config.governance.html_rule_summary_path}")
     if config.governance.summary_path.exists():
         row_count += _load_governance_csv(
             client,
