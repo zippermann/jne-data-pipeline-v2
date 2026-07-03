@@ -27,8 +27,6 @@ governance:
   enabled: true
   tableau_dashboard_path: "governance/outputs/${RUN_ID}/tableau_dashboard.csv"
   html_dashboard_path: "governance/outputs/${RUN_ID}/html_dashboard_summary.csv"
-  html_denominators_path: "governance/outputs/${RUN_ID}/html_dashboard_denominators.csv"
-  html_rule_summary_path: "governance/outputs/${RUN_ID}/html_dashboard_rule_summary.csv"
   summary_path: "governance/outputs/${RUN_ID}/governance_rule_summary.csv"
 
 unified_mart:

@@ -37,8 +37,6 @@ def _config() -> MartClickHouseConfig:
             True,
             Path("governance/outputs/R_TEST/tableau_dashboard.csv"),
             Path("governance/outputs/R_TEST/html_dashboard_summary.csv"),
-            Path("governance/outputs/R_TEST/html_dashboard_denominators.csv"),
-            Path("governance/outputs/R_TEST/html_dashboard_rule_summary.csv"),
             Path("governance/outputs/R_TEST/governance_rule_summary.csv"),
         ),
         unified_mart=UnifiedMartConfig(
@@ -82,8 +80,6 @@ governance:
   enabled: true
   tableau_dashboard_path: "governance/outputs/${RUN_ID}/tableau_dashboard.csv"
   html_dashboard_path: "governance/outputs/${RUN_ID}/html_dashboard_summary.csv"
-  html_denominators_path: "governance/outputs/${RUN_ID}/html_dashboard_denominators.csv"
-  html_rule_summary_path: "governance/outputs/${RUN_ID}/html_dashboard_rule_summary.csv"
   summary_path: "governance/outputs/${RUN_ID}/governance_rule_summary.csv"
 unified_mart:
   enabled: true
@@ -108,8 +104,6 @@ mart:
     assert config.load_raw_data is False
     assert config.governance.tableau_dashboard_path.as_posix() == "governance/outputs/R_TEST/tableau_dashboard.csv"
     assert config.governance.html_dashboard_path.as_posix() == "governance/outputs/R_TEST/html_dashboard_summary.csv"
-    assert config.governance.html_denominators_path.as_posix() == "governance/outputs/R_TEST/html_dashboard_denominators.csv"
-    assert config.governance.html_rule_summary_path.as_posix() == "governance/outputs/R_TEST/html_dashboard_rule_summary.csv"
     assert config.governance.summary_path.as_posix() == "governance/outputs/R_TEST/governance_rule_summary.csv"
     assert config.unified_mart.enabled is True
     assert config.unified_mart.schema == "mart"
@@ -244,8 +238,6 @@ def test_clickhouse_governance_load_allows_summary_without_dashboard_rows(tmp_pa
             True,
             tmp_path / "missing_tableau_dashboard.csv",
             tmp_path / "missing_html_dashboard_summary.csv",
-            tmp_path / "missing_html_dashboard_denominators.csv",
-            tmp_path / "missing_html_dashboard_rule_summary.csv",
             summary_path,
         ),
         base.unified_mart,

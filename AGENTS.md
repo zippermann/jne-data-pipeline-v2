@@ -170,16 +170,6 @@ It also writes a CNOTE bridge file and one rule-level audit file:
 - `governance_result_cnotes.csv`
 - `governance_rule_summary.csv`
 
-Dashboard-oriented outputs include:
-
-- `tableau_dashboard.csv`: one failed CNOTE/index row for dashboard tools.
-- `html_dashboard_summary.csv`: affected CNOTE counts by route, shipment,
-  journey stage, DQ element, index, and impact.
-- `html_dashboard_denominators.csv`: total CNOTE denominators by origin,
-  destination, shipment type, and delivery service, including `ALL` rollup rows.
-- `html_dashboard_rule_summary.csv`: dashboard-friendly rule/index totals with
-  checked rows, failed rows, rule failure rate, and affected CNOTE count.
-
 `governance_results.csv` includes:
 
 - `result_id`: stable row id for joining to the CNOTE bridge in the same run.
