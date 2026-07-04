@@ -21,6 +21,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_NO must not be null or empty',
     },
 
@@ -36,6 +38,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRCNOTE.DRCNOTE_CNOTE_NO must not be null or empty',
     },
 
@@ -52,6 +56,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_SERVICES_CODE must look like a service code',
     },
 
@@ -70,6 +76,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_ORIGIN must match an origin component of CMS_DROURATE route codes.',
     },
 
@@ -85,6 +93,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_NO must be unique',
     },
 
@@ -106,6 +116,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': '',
+        'main_impact': 'Billing',
+        'impact_details': 'Seller & JNE Dispute',
         'description': 'API customer weight should match CNOTE weight when both are present',
     },
 
@@ -127,6 +139,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'API customer origin should match CNOTE origin when both are present',
     },
 
@@ -156,45 +170,9 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CNOTE date should occur before HOC approval timestamp through DHI_HOC.',
-    },
-
-    {
-        'index_code': 'INTG1D1',
-        'element': 'Integrity',
-        'indicator': '',
-        'enabled': False,
-        'rule_family': 'integrity_orphan',
-        'table': 'CMS_DRCNOTE',
-        'params': {
-            'child_table': 'CMS_DRCNOTE',
-            'child_column': 'DRCNOTE_CNOTE_NO',
-            'parent_table': 'CMS_CNOTE',
-            'parent_column': 'CNOTE_NO',
-            'cnote_column': 'DRCNOTE_CNOTE_NO',
-        },
-        'impact_billing': '',
-        'impact_operational': '',
-        'description': 'Every DRCNOTE CNOTE reference should exist in CMS_CNOTE',
-    },
-
-    {
-        'index_code': 'INTG1I1',
-        'element': 'Integrity',
-        'indicator': '',
-        'enabled': False,
-        'rule_family': 'integrity_orphan',
-        'table': 'CMS_MFCNOTE',
-        'params': {
-            'child_table': 'CMS_MFCNOTE',
-            'child_column': 'MFCNOTE_MAN_NO',
-            'parent_table': 'CMS_MANIFEST',
-            'parent_column': 'MANIFEST_NO',
-            'cnote_column': 'MFCNOTE_NO',
-        },
-        'impact_billing': '',
-        'impact_operational': '',
-        'description': 'Every MFCNOTE manifest reference should exist in CMS_MANIFEST',
     },
 
     {
@@ -215,6 +193,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'First three CNOTE_ORIGIN characters must match DCORRECT_ORIGIN.',
     },
 
@@ -236,6 +216,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CNOTE_ORIGIN suffix after first three characters must match DCORRECT_ORIGIN suffix.',
     },
 
@@ -257,6 +239,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'First three CNOTE_DESTINATION characters must match DCORRECT_DEST.',
     },
 
@@ -278,6 +262,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'Billing',
+        'impact_details': 'Over-billing/Under-billing',
         'description': 'CNOTE_DESTINATION suffix after first three characters must match DCORRECT_DEST suffix.',
     },
 
@@ -295,6 +281,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'MHOCNOTE_APP_DATE is mandatory when MHOCNOTE_APPROVE is Y.',
     },
 
@@ -312,6 +300,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'MHOCNOTE_SIGNDATE is mandatory when MHOCNOTE_APPROVE is Y.',
     },
 
@@ -329,6 +319,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'MSJ_SIGNDATE is mandatory when MSJ_APPROVE is Y.',
     },
 
@@ -346,6 +338,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'MANIFEST_ROUTE is mandatory when MANIFEST_APPROVED is Y.',
     },
 
@@ -363,6 +357,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'MANIFEST_THRU is mandatory when MANIFEST_APPROVED is Y.',
     },
 
@@ -380,6 +376,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'MANIFEST_ORIGIN is mandatory when MANIFEST_APPROVED is Y.',
     },
 
@@ -395,6 +393,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MMBAG.MMBAG_DATE_APPROVE must not be null or empty',
     },
 
@@ -416,6 +416,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': '',
+        'main_impact': 'Reporting',
+        'impact_details': 'Internal Dispute',
         'description': 'Rounded MFCNOTE_WEIGHT must match rounded CNOTE_WEIGHT.',
     },
 
@@ -436,6 +438,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'Outbound manifest must be created before manifest bag.',
     },
 
@@ -451,6 +455,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST.APICUST_ORDER_ID must not be null or empty',
     },
 
@@ -466,6 +472,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST.APICUST_CNOTE_NO must not be null or empty',
     },
 
@@ -481,6 +489,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST.APICUST_QTY must not be null or empty',
     },
 
@@ -496,6 +506,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'Billing',
+        'impact_details': 'Under-billing',
         'description': 'CMS_APICUST.APICUST_WEIGHT must not be null or empty',
     },
 
@@ -511,6 +523,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST.APICUST_ORIGIN must not be null or empty',
     },
 
@@ -526,6 +540,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST.APICUST_BRANCH must not be null or empty',
     },
 
@@ -541,6 +557,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST.APICUST_CUST_NO must not be null or empty',
     },
 
@@ -556,6 +574,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST.APICUST_SERVICES_CODE must not be null or empty',
     },
 
@@ -571,6 +591,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'Billing',
+        'impact_details': 'Over-billing/Under-billing',
         'description': 'CMS_APICUST.APICUST_DESTINATION must not be null or empty',
     },
 
@@ -586,6 +608,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_CUST_NO must not be null or empty',
     },
 
@@ -601,6 +625,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_ROUTE_CODE must not be null or empty',
     },
 
@@ -616,6 +642,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_ORIGIN must not be null or empty',
     },
 
@@ -631,6 +659,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_DESTINATION must not be null or empty',
     },
 
@@ -646,6 +676,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_QTY must not be null or empty',
     },
 
@@ -661,6 +693,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'Billing',
+        'impact_details': 'Under-billing',
         'description': 'CMS_CNOTE.CNOTE_WEIGHT must not be null or empty',
     },
 
@@ -676,6 +710,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_SHIPPER_NAME must not be null or empty',
     },
 
@@ -691,6 +727,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_SHIPPER_ADDR1 must not be null or empty',
     },
 
@@ -706,6 +744,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_DATE must not be null or empty',
     },
 
@@ -721,6 +761,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_BRANCH_ID must not be null or empty',
     },
 
@@ -736,6 +778,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_SERVICES_CODE must not be null or empty',
     },
 
@@ -751,6 +795,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_USER must not be null or empty',
     },
 
@@ -766,6 +812,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_CRDATE must not be null or empty',
     },
 
@@ -781,6 +829,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE_POD.CNOTE_POD_NO must not be null or empty',
     },
 
@@ -796,6 +846,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE_POD.CNOTE_POD_DATE must not be null or empty',
     },
 
@@ -811,6 +863,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE_POD.CNOTE_POD_STATUS must not be null or empty',
     },
 
@@ -826,6 +880,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE_POD.CNOTE_POD_DELIVERED must not be null or empty',
     },
 
@@ -841,6 +897,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE_POD.CNOTE_POD_DOC_NO must not be null or empty',
     },
 
@@ -856,6 +914,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE_POD.CNOTE_POD_CREATION_DATE must not be null or empty',
     },
 
@@ -873,6 +933,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CNOTE_POD_RECEIVER is mandatory when CNOTE_POD_DELIVERED is Y.',
     },
 
@@ -888,6 +950,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_DTRANSIT_AGEN.DMANIFEST_NO must not be null or empty',
     },
 
@@ -903,6 +967,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_DTRANSIT_AGEN.ESB_ID must not be null or empty',
     },
 
@@ -918,6 +984,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_DTRANSIT_AGEN.CNOTE_NO must not be null or empty',
     },
 
@@ -933,6 +1001,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_DTRANSIT_AGEN.COST_D_ORIGIN must not be null or empty',
     },
 
@@ -948,6 +1018,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_DTRANSIT_AGEN.COST_D_DESTINATION must not be null or empty',
     },
 
@@ -963,6 +1035,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_DTRANSIT_AGEN.COST_D_QTY must not be null or empty',
     },
 
@@ -978,6 +1052,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_DTRANSIT_AGEN.COST_D_WEIGHT must not be null or empty',
     },
 
@@ -993,6 +1069,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_DTRANSIT_AGEN.COST_D_SERVICES_CODE must not be null or empty',
     },
 
@@ -1008,6 +1086,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_DTRANSIT_AGEN.COST_D_ESB_TIME must not be null or empty',
     },
 
@@ -1023,6 +1103,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_MTRANSIT_AGEN.MANIFEST_NO must not be null or empty',
     },
 
@@ -1038,6 +1120,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_MTRANSIT_AGEN.MANIFEST_UID must not be null or empty',
     },
 
@@ -1053,6 +1137,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_MTRANSIT_AGEN.COST_M_ESB_TIME must not be null or empty',
     },
 
@@ -1068,6 +1154,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_MTRANSIT_AGEN.ESB_ID must not be null or empty',
     },
 
@@ -1083,6 +1171,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_MTRANSIT_AGEN.COST_M_MANIFEST_DATE must not be null or empty',
     },
 
@@ -1098,6 +1188,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_MTRANSIT_AGEN.COST_M_BRANCH_ID must not be null or empty',
     },
 
@@ -1113,6 +1205,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_MTRANSIT_AGEN.COST_M_DESTINATION must not be null or empty',
     },
 
@@ -1128,6 +1222,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_MTRANSIT_AGEN.COST_M_CTC_WEIGHT must not be null or empty',
     },
 
@@ -1143,6 +1239,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_MTRANSIT_AGEN.COST_M_ACT_WEIGHT must not be null or empty',
     },
 
@@ -1158,6 +1256,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DBAG_HO.DBAG_HO_NO must not be null or empty',
     },
 
@@ -1173,6 +1273,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DBAG_HO.DBAG_ZONE_DEST must not be null or empty',
     },
 
@@ -1188,6 +1290,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DBAG_HO.DBAG_NO must not be null or empty',
     },
 
@@ -1203,6 +1307,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DBAG_HO.DBAG_CNOTE_NO must not be null or empty',
     },
 
@@ -1218,6 +1324,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DBAG_HO.DBAG_CNOTE_QTY must not be null or empty',
     },
 
@@ -1233,6 +1341,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'Reporting',
+        'impact_details': 'Understated weight',
         'description': 'CMS_DBAG_HO.DBAG_CNOTE_WEIGHT must not be null or empty',
     },
 
@@ -1248,6 +1358,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'CMS_DBAG_HO.DBAG_CNOTE_DESTINATION must not be null or empty',
     },
 
@@ -1263,6 +1375,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DBAG_HO.DBAG_HO_CDATE must not be null or empty',
     },
 
@@ -1278,6 +1392,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DBAG_HO.DBAG_CNOTE_SERVICE must not be null or empty',
     },
 
@@ -1293,6 +1409,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DBAG_HO.DBAG_CNOTE_DATE must not be null or empty',
     },
 
@@ -1308,6 +1426,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHICNOTE.DHICNOTE_NO must not be null or empty',
     },
 
@@ -1323,6 +1443,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHICNOTE.DHICNOTE_CNOTE_NO must not be null or empty',
     },
 
@@ -1338,6 +1460,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHICNOTE.DHICNOTE_QTY must not be null or empty',
     },
 
@@ -1353,6 +1477,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHICNOTE.DHICNOTE_TDATE must not be null or empty',
     },
 
@@ -1368,6 +1494,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHI_HOC.DHI_NO must not be null or empty',
     },
 
@@ -1383,6 +1511,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHI_HOC.DHI_ONO must not be null or empty',
     },
 
@@ -1398,6 +1528,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHI_HOC.DHI_CNOTE_NO must not be null or empty',
     },
 
@@ -1413,6 +1545,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHI_HOC.DHI_CNOTE_QTY must not be null or empty',
     },
 
@@ -1428,6 +1562,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHI_HOC.DHI_HOC_CDATE must not be null or empty',
     },
 
@@ -1443,6 +1579,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOCNOTE.DHOCNOTE_NO must not be null or empty',
     },
 
@@ -1458,6 +1596,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOCNOTE.DHOCNOTE_CNOTE_NO must not be null or empty',
     },
 
@@ -1473,6 +1613,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOCNOTE.DHOCNOTE_QTY must not be null or empty',
     },
 
@@ -1488,6 +1630,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOCNOTE.DHOCNOTE_TDATE must not be null or empty',
     },
 
@@ -1503,6 +1647,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOUNDEL_POD.DHOUNDEL_NO must not be null or empty',
     },
 
@@ -1518,6 +1664,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOUNDEL_POD.DHOUNDEL_HRS must not be null or empty',
     },
 
@@ -1533,6 +1681,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOUNDEL_POD.DHOUNDEL_CREATE_DATE must not be null or empty',
     },
 
@@ -1548,6 +1698,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOUNDEL_POD.DHOUNDEL_CNOTE_NO must not be null or empty',
     },
 
@@ -1563,6 +1715,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOUNDEL_POD.DHOUNDEL_QTY must not be null or empty',
     },
 
@@ -1578,6 +1732,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET.DHOV_RSHEET_NO must not be null or empty',
     },
 
@@ -1593,6 +1749,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET.DHOV_RSHEET_UZONE must not be null or empty',
     },
 
@@ -1608,6 +1766,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET.DHOV_RSHEET_CYCLE must not be null or empty',
     },
 
@@ -1623,6 +1783,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET.DHOV_RSHEET_RSHEETNO must not be null or empty',
     },
 
@@ -1638,6 +1800,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET.DHOV_DRSHEET_EPAY_DEVICE must not be null or empty',
     },
 
@@ -1653,6 +1817,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET.DHOV_DRSHEET_STATUS must not be null or empty',
     },
 
@@ -1668,6 +1834,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET.DHOV_RSHEET_CNOTE must not be null or empty',
     },
 
@@ -1683,6 +1851,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET.DHOV_RSHEET_COD must not be null or empty',
     },
 
@@ -1698,6 +1868,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET.DHOV_RSHEET_QTY must not be null or empty',
     },
 
@@ -1713,6 +1885,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET.DHOV_CREATE_DATE must not be null or empty',
     },
 
@@ -1728,6 +1902,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DMBAG.DMBAG_NO must not be null or empty',
     },
 
@@ -1743,6 +1919,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DMBAG.DMBAG_ESB_TIME must not be null or empty',
     },
 
@@ -1758,6 +1936,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DMBAG.ESB_ID must not be null or empty',
     },
 
@@ -1773,6 +1953,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DMBAG.DMBAG_BAG_NO must not be null or empty',
     },
 
@@ -1788,6 +1970,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DMBAG.DMBAG_ORIGIN must not be null or empty',
     },
 
@@ -1803,6 +1987,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DMBAG.DMBAG_DESTINATION must not be null or empty',
     },
 
@@ -1818,6 +2004,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DMBAG.DMBAG_WEIGHT must not be null or empty',
     },
 
@@ -1833,6 +2021,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRCNOTE.DRCNOTE_NO must not be null or empty',
     },
 
@@ -1848,6 +2038,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRCNOTE.DRCNOTE_QTY must not be null or empty',
     },
 
@@ -1863,6 +2055,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRCNOTE.DRCNOTE_TDATE must not be null or empty',
     },
 
@@ -1878,6 +2072,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET.DRSHEET_NO must not be null or empty',
     },
 
@@ -1893,6 +2089,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET.DRSHEET_CNOTE_NO must not be null or empty',
     },
 
@@ -1908,6 +2106,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET.DRSHEET_DATE must not be null or empty',
     },
 
@@ -1923,6 +2123,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET.DRSHEET_STATUS must not be null or empty',
     },
 
@@ -1938,6 +2140,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET.DRSHEET_RECEIVER must not be null or empty',
     },
 
@@ -1953,6 +2157,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET.DRSHEET_UID must not be null or empty',
     },
 
@@ -1968,6 +2174,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET.DRSHEET_UDATE must not be null or empty',
     },
 
@@ -1983,6 +2191,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET.DRSHEET_CREATION_DATE must not be null or empty',
     },
 
@@ -1998,6 +2208,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET_PRA.DRSHEET_NO must not be null or empty',
     },
 
@@ -2013,6 +2225,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET_PRA.DRSHEET_CNOTE_NO must not be null or empty',
     },
 
@@ -2028,6 +2242,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET_PRA.DRSHEET_PRA_CREATION_DATE must not be null or empty',
     },
 
@@ -2043,6 +2259,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSJ.DSJ_NO must not be null or empty',
     },
 
@@ -2058,6 +2276,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSJ.DSJ_BAG_NO must not be null or empty',
     },
 
@@ -2073,6 +2293,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSJ.DSJ_HVO_NO must not be null or empty',
     },
 
@@ -2088,6 +2310,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSJ.DSJ_UID must not be null or empty',
     },
 
@@ -2103,6 +2327,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSJ.DSJ_CDATE must not be null or empty',
     },
 
@@ -2118,6 +2344,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSMU.DSMU_NO must not be null or empty',
     },
 
@@ -2133,6 +2361,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSMU.DSMU_ESB_TIME must not be null or empty',
     },
 
@@ -2148,6 +2378,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSMU.ESB_ID must not be null or empty',
     },
 
@@ -2163,6 +2395,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSMU.DSMU_FLIGHT_NO must not be null or empty',
     },
 
@@ -2178,6 +2412,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSMU.DSMU_FLIGHT_DATE must not be null or empty',
     },
 
@@ -2193,6 +2429,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSMU.DSMU_BAG_NO must not be null or empty',
     },
 
@@ -2208,6 +2446,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSMU.DSMU_WEIGHT must not be null or empty',
     },
 
@@ -2223,6 +2463,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSMU.DSMU_BAG_ORIGIN must not be null or empty',
     },
 
@@ -2238,6 +2480,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSMU.DSMU_BAG_DESTINATION must not be null or empty',
     },
 
@@ -2253,6 +2497,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MANIFEST.MANIFEST_NO must not be null or empty',
     },
 
@@ -2268,6 +2514,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MANIFEST.MANIFEST_CODE must not be null or empty',
     },
 
@@ -2283,6 +2531,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MANIFEST.MANIFEST_UID must not be null or empty',
     },
 
@@ -2298,6 +2548,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MANIFEST.MANIFEST_CRDATE must not be null or empty',
     },
 
@@ -2313,6 +2565,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MANIFEST.MANIFEST_CANCELED must not be null or empty',
     },
 
@@ -2328,6 +2582,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MANIFEST.MANIFEST_DATE must not be null or empty',
     },
 
@@ -2343,6 +2599,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MANIFEST.MANIFEST_FROM must not be null or empty',
     },
 
@@ -2358,6 +2616,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MANIFEST.MANIFEST_APPROVED must not be null or empty',
     },
 
@@ -2373,6 +2633,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MFBAG.MFBAG_MAN_NO must not be null or empty',
     },
 
@@ -2388,6 +2650,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MFBAG.MFBAG_ROUTE must not be null or empty',
     },
 
@@ -2403,6 +2667,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MFBAG.MFBAG_CRDATE must not be null or empty',
     },
 
@@ -2418,6 +2684,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MFBAG.MFBAG_NO must not be null or empty',
     },
 
@@ -2433,6 +2701,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MFBAG.MFBAG_ESB_TIME must not be null or empty',
     },
 
@@ -2448,6 +2718,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MFBAG.MFBAG_ESB_ID must not be null or empty',
     },
 
@@ -2463,6 +2735,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'Reporting',
+        'impact_details': 'Understated weight',
         'description': 'CMS_MFBAG.MFBAG_ACT_WEIGHT must not be null or empty',
     },
 
@@ -2478,6 +2752,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'Reporting',
+        'impact_details': 'Understated weight',
         'description': 'CMS_MFBAG.MFBAG_CTC_WEIGHT must not be null or empty',
     },
 
@@ -2495,6 +2771,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MFBAG.MFBAG_MAN_REF must be present for inbound manifest references.',
     },
 
@@ -2507,6 +2785,8 @@ CATALOG: list[dict] = [
         'params': {},
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'MFBAG_MAN_NO must contain TM when DSMU_BAG_ORIGIN prefix differs from MSMU_ORIGIN prefix.',
     },
 
@@ -2522,6 +2802,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MFCNOTE.MFCNOTE_MAN_NO must not be null or empty',
     },
 
@@ -2537,6 +2819,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MFCNOTE.MFCNOTE_CRDATE must not be null or empty',
     },
 
@@ -2552,6 +2836,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MFCNOTE.MFCNOTE_BAG_NO must not be null or empty',
     },
 
@@ -2567,6 +2853,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MFCNOTE.MFCNOTE_NO must not be null or empty',
     },
 
@@ -2582,6 +2870,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'Reporting',
+        'impact_details': 'Understated weight',
         'description': 'CMS_MFCNOTE.MFCNOTE_WEIGHT must not be null or empty',
     },
 
@@ -2597,6 +2887,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHICNOTE.MHICNOTE_BRANCH_ID must not be null or empty',
     },
 
@@ -2612,6 +2904,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHICNOTE.MHICNOTE_SIGNDATE must not be null or empty',
     },
 
@@ -2627,6 +2921,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHICNOTE.MHICNOTE_ZONE must not be null or empty',
     },
 
@@ -2642,6 +2938,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHICNOTE.MHICNOTE_NO must not be null or empty',
     },
 
@@ -2657,6 +2955,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHICNOTE.MHICNOTE_REF_NO must not be null or empty',
     },
 
@@ -2672,6 +2972,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHICNOTE.MHICNOTE_DATE must not be null or empty',
     },
 
@@ -2687,6 +2989,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHICNOTE.MHICNOTE_ZONE_ORIG must not be null or empty',
     },
 
@@ -2702,6 +3006,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHICNOTE.MHICNOTE_USER_ID must not be null or empty',
     },
 
@@ -2719,6 +3025,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'MHICNOTE_APPROVE is mandatory when MHICNOTE_SIGNDATE has a date.',
     },
 
@@ -2734,6 +3042,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHI_HOC.MHI_NO must not be null or empty',
     },
 
@@ -2749,6 +3059,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHI_HOC.MHI_ZONE must not be null or empty',
     },
 
@@ -2764,6 +3076,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHI_HOC.MHI_REF_NO must not be null or empty',
     },
 
@@ -2779,6 +3093,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHI_HOC.MHI_DATE must not be null or empty',
     },
 
@@ -2794,6 +3110,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHI_HOC.MHI_UID must not be null or empty',
     },
 
@@ -2809,6 +3127,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHI_HOC.MHI_APPROVE must not be null or empty',
     },
 
@@ -2824,6 +3144,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHI_HOC.MHI_HOC_BRANCH must not be null or empty',
     },
 
@@ -2839,6 +3161,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHI_HOC.MHI_APPROVE_DATE must not be null or empty',
     },
 
@@ -2854,6 +3178,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHI_HOC.MHI_USER1 must not be null or empty',
     },
 
@@ -2869,6 +3195,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOCNOTE.MHOCNOTE_BRANCH_ID must not be null or empty',
     },
 
@@ -2884,6 +3212,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOCNOTE.MHOCNOTE_APPROVE must not be null or empty',
     },
 
@@ -2899,6 +3229,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOCNOTE.MHOCNOTE_ZONE must not be null or empty',
     },
 
@@ -2914,6 +3246,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOCNOTE.MHOCNOTE_NO must not be null or empty',
     },
 
@@ -2929,6 +3263,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOCNOTE.MHOCNOTE_DATE must not be null or empty',
     },
 
@@ -2944,6 +3280,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOCNOTE.MHOCNOTE_ZONE_DEST must not be null or empty',
     },
 
@@ -2959,6 +3297,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOCNOTE.MHOCNOTE_USER_ID must not be null or empty',
     },
 
@@ -2974,6 +3314,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOUNDEL_POD.MHOUNDEL_BRANCH_ID must not be null or empty',
     },
 
@@ -2989,6 +3331,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOUNDEL_POD.MHOUNDEL_SIGNDATE must not be null or empty',
     },
 
@@ -3004,6 +3348,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOUNDEL_POD.MHOUNDEL_NO must not be null or empty',
     },
 
@@ -3019,6 +3365,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOUNDEL_POD.MHOUNDEL_DATE must not be null or empty',
     },
 
@@ -3034,6 +3382,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOUNDEL_POD.MHOUNDEL_USER_ID must not be null or empty',
     },
 
@@ -3049,6 +3399,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOUNDEL_POD.MHOUNDEL_ZONE must not be null or empty',
     },
 
@@ -3064,6 +3416,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOUNDEL_POD.MHOUNDEL_APPROVE must not be null or empty',
     },
 
@@ -3079,6 +3433,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOUNDEL_POD.MHOUNDEL_USER1 must not be null or empty',
     },
 
@@ -3094,6 +3450,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MMBAG.MMBAG_BRANCH must not be null or empty',
     },
 
@@ -3109,6 +3467,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MMBAG.MMBAG_USER_APPROVE must not be null or empty',
     },
 
@@ -3124,6 +3484,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MMBAG.MMBAG_NO must not be null or empty',
     },
 
@@ -3139,6 +3501,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MMBAG.MMBAG_ORIGIN must not be null or empty',
     },
 
@@ -3154,6 +3518,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MMBAG.MMBAG_DESTINATION must not be null or empty',
     },
 
@@ -3169,6 +3535,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MMBAG.MMBAG_DATE must not be null or empty',
     },
 
@@ -3184,6 +3552,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MMBAG.MMBAG_QTY must not be null or empty',
     },
 
@@ -3199,6 +3569,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MMBAG.MMBAG_WEIGHT must not be null or empty',
     },
 
@@ -3214,6 +3586,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MMBAG.MMBAG_USER must not be null or empty',
     },
 
@@ -3231,6 +3605,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'MMBAG_APPROVED is mandatory when MMBAG_DATE_APPROVE is filled.',
     },
 
@@ -3246,6 +3622,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRCNOTE.MRCNOTE_NO must not be null or empty',
     },
 
@@ -3261,6 +3639,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRCNOTE.MRCNOTE_DATE must not be null or empty',
     },
 
@@ -3276,6 +3656,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRCNOTE.MRCNOTE_BRANCH_ID must not be null or empty',
     },
 
@@ -3291,6 +3673,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRCNOTE.MRCNOTE_USER_ID must not be null or empty',
     },
 
@@ -3306,6 +3690,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRCNOTE.MRCNOTE_USER1 must not be null or empty',
     },
 
@@ -3321,6 +3707,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRCNOTE.MRCNOTE_USER2 must not be null or empty',
     },
 
@@ -3336,6 +3724,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRCNOTE.MRCNOTE_SIGNDATE must not be null or empty',
     },
 
@@ -3351,6 +3741,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRSHEET.MRSHEET_BRANCH must not be null or empty',
     },
 
@@ -3366,6 +3758,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRSHEET.MRSHEET_NO must not be null or empty',
     },
 
@@ -3381,6 +3775,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRSHEET.MRSHEET_DATE must not be null or empty',
     },
 
@@ -3396,6 +3792,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRSHEET.MRSHEET_COURIER_ID must not be null or empty',
     },
 
@@ -3411,6 +3809,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRSHEET.MRSHEET_UID must not be null or empty',
     },
 
@@ -3426,6 +3826,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRSHEET.MRSHEET_UDATE must not be null or empty',
     },
 
@@ -3441,6 +3843,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRSHEET.MRSHEET_APPROVED_DR must not be null or empty',
     },
 
@@ -3456,6 +3860,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRSHEET.MRSHEET_UID_DR must not be null or empty',
     },
 
@@ -3471,6 +3877,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSJ.MSJ_NO must not be null or empty',
     },
 
@@ -3486,6 +3894,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSJ.MSJ_DEST must not be null or empty',
     },
 
@@ -3501,6 +3911,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSJ.MSJ_ORIG must not be null or empty',
     },
 
@@ -3516,6 +3928,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSJ.MSJ_BRANCH_ID must not be null or empty',
     },
 
@@ -3531,6 +3945,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSJ.MSJ_DATE must not be null or empty',
     },
 
@@ -3546,6 +3962,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSJ.MSJ_USER1 must not be null or empty',
     },
 
@@ -3561,6 +3979,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSJ.MSJ_USER2 must not be null or empty',
     },
 
@@ -3576,6 +3996,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSJ.MSJ_APPROVE must not be null or empty',
     },
 
@@ -3591,6 +4013,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSJ.MSJ_CDATE must not be null or empty',
     },
 
@@ -3606,6 +4030,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSJ.MSJ_UID must not be null or empty',
     },
 
@@ -3621,6 +4047,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_NO must not be null or empty',
     },
 
@@ -3636,6 +4064,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_WEIGHT must not be null or empty',
     },
 
@@ -3651,6 +4081,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_USER must not be null or empty',
     },
 
@@ -3666,6 +4098,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_FLAG must not be null or empty',
     },
 
@@ -3681,6 +4115,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_STATUS must not be null or empty',
     },
 
@@ -3696,6 +4132,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_WRH_DATE must not be null or empty',
     },
 
@@ -3711,6 +4149,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_WRH_TIME must not be null or empty',
     },
 
@@ -3726,6 +4166,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_OFF_DATE must not be null or empty',
     },
 
@@ -3741,6 +4183,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_OFF_TIME must not be null or empty',
     },
 
@@ -3756,6 +4200,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_CONFIRM must not be null or empty',
     },
 
@@ -3771,6 +4217,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_DATE must not be null or empty',
     },
 
@@ -3786,6 +4234,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_MODA must not be null or empty',
     },
 
@@ -3801,6 +4251,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_HOURS must not be null or empty',
     },
 
@@ -3816,6 +4268,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_ORIGIN must not be null or empty',
     },
 
@@ -3831,6 +4285,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_DESTINATION must not be null or empty',
     },
 
@@ -3846,6 +4302,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_FLIGHT_NO must not be null or empty',
     },
 
@@ -3861,6 +4319,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_FLIGHT_DATE must not be null or empty',
     },
 
@@ -3876,6 +4336,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_ETD must not be null or empty',
     },
 
@@ -3891,6 +4353,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_ETA must not be null or empty',
     },
 
@@ -3906,6 +4370,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_QTY must not be null or empty',
     },
 
@@ -3921,6 +4387,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_RDSJ.RDSJ_NO must not be null or empty',
     },
 
@@ -3936,6 +4404,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_RDSJ.RDSJ_BAG_NO must not be null or empty',
     },
 
@@ -3951,6 +4421,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_RDSJ.RDSJ_HVO_NO must not be null or empty',
     },
 
@@ -3966,6 +4438,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_RDSJ.RDSJ_CDATE must not be null or empty',
     },
 
@@ -3981,6 +4455,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_RDSJ.RDSJ_HVI_NO must not be null or empty',
     },
 
@@ -3998,6 +4474,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST.APICUST_BRANCH must be alphanumeric and exist in ORA_BRANCH.BRANCH_CODE (confirm reference column)',
     },
 
@@ -4016,6 +4494,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'CMS_APICUST.APICUST_ORIGIN must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
     },
 
@@ -4033,6 +4513,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST.APICUST_BRANCH must be alphanumeric and exist in ORA_BRANCH.BRANCH_CODE (confirm reference column)',
     },
 
@@ -4050,6 +4532,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST.APICUST_SERVICES_CODE must be alphanumeric and exist in CMS_DROURATE.DROURATE_SERVICE (confirm reference column)',
     },
 
@@ -4068,6 +4552,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST.APICUST_DESTINATION must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
     },
 
@@ -4083,6 +4569,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'Billing',
+        'impact_details': 'Over-billing/Under-billing',
         'description': 'CMS_APICUST.APICUST_WEIGHT must be a whole number',
     },
 
@@ -4098,6 +4586,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST.APICUST_GOODS_VALUE must be a whole number',
     },
 
@@ -4113,6 +4603,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST.APICUST_QTY must be a whole number',
     },
 
@@ -4128,6 +4620,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST.APICUST_COD_AMOUNT must be a whole number',
     },
 
@@ -4143,6 +4637,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST.CREATE_DATE must parse as a timestamp',
     },
 
@@ -4159,6 +4655,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST.APICUST_SHIPPER_ZIP must be a five-digit number',
     },
 
@@ -4175,6 +4673,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST.APICUST_RECEIVER_ZIP must be a five-digit number',
     },
 
@@ -4192,6 +4692,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_BRANCH_ID must be alphanumeric and exist in ORA_BRANCH.BRANCH_CODE (confirm reference column)',
     },
 
@@ -4209,6 +4711,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_ROUTE_CODE must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
     },
 
@@ -4227,6 +4731,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_DESTINATION must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
     },
 
@@ -4242,6 +4748,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'Billing',
+        'impact_details': 'Over-billing/Under-billing',
         'description': 'CMS_CNOTE.CNOTE_WEIGHT must be a whole number',
     },
 
@@ -4257,6 +4765,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_QTY must be a whole number',
     },
 
@@ -4272,6 +4782,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_DATE must parse as a timestamp',
     },
 
@@ -4287,6 +4799,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_CRDATE must parse as a timestamp',
     },
 
@@ -4303,6 +4817,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_GOODS_TYPE must be 1 or 2',
     },
 
@@ -4319,6 +4835,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE_POD.CNOTE_POD_STATUS must be D or U followed by a number',
     },
 
@@ -4334,6 +4852,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE_POD.CNOTE_POD_DATE must parse as a timestamp',
     },
 
@@ -4349,6 +4869,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE_POD.CNOTE_POD_CREATION_DATE must parse as a timestamp',
     },
 
@@ -4365,6 +4887,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE_POD.CNOTE_POD_DELIVERED must be Y when present',
     },
 
@@ -4383,6 +4907,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_DTRANSIT_AGEN.COST_D_ORIGIN must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
     },
 
@@ -4401,6 +4927,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_DTRANSIT_AGEN.COST_D_DESTINATION must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
     },
 
@@ -4418,6 +4946,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_DTRANSIT_AGEN.COST_D_SERVICES_CODE must be alphanumeric and exist in CMS_DROURATE.DROURATE_SERVICE (confirm reference column)',
     },
 
@@ -4433,6 +4963,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_DTRANSIT_AGEN.COST_D_WEIGHT must be a whole number',
     },
 
@@ -4448,6 +4980,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_DTRANSIT_AGEN.COST_D_QTY must be a whole number',
     },
 
@@ -4463,6 +4997,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_DTRANSIT_AGEN.COST_D_ESB_TIME must parse as a timestamp',
     },
 
@@ -4480,6 +5016,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_MTRANSIT_AGEN.COST_M_BRANCH_ID must be alphanumeric and exist in ORA_BRANCH.BRANCH_CODE (confirm reference column)',
     },
 
@@ -4498,6 +5036,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_MTRANSIT_AGEN.COST_M_DESTINATION must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
     },
 
@@ -4513,6 +5053,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_MTRANSIT_AGEN.COST_M_CTC_WEIGHT must be a whole number',
     },
 
@@ -4528,6 +5070,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_MTRANSIT_AGEN.COST_M_ACT_WEIGHT must be a whole number',
     },
 
@@ -4543,6 +5087,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_MTRANSIT_AGEN.COST_M_ESB_TIME must parse as a timestamp',
     },
 
@@ -4558,6 +5104,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_MTRANSIT_AGEN.COST_M_MANIFEST_DATE must parse as a timestamp',
     },
 
@@ -4574,6 +5122,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_MTRANSIT_AGEN.MANIFEST_APPROVED must be Y when present',
     },
 
@@ -4591,6 +5141,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DBAG_HO.DBAG_ZONE_DEST must be alphanumeric and exist in ORA_ZONE.ZONE_CODE (confirm reference column)',
     },
 
@@ -4609,6 +5161,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DBAG_HO.DBAG_CNOTE_DESTINATION must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
     },
 
@@ -4626,6 +5180,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DBAG_HO.DBAG_CNOTE_SERVICE must be alphanumeric and exist in CMS_DROURATE.DROURATE_SERVICE (confirm reference column)',
     },
 
@@ -4641,6 +5197,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'Billing',
+        'impact_details': 'Over-billing/Under-billing',
         'description': 'CMS_DBAG_HO.DBAG_CNOTE_WEIGHT must be a whole number',
     },
 
@@ -4656,6 +5214,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DBAG_HO.DBAG_CNOTE_QTY must be a whole number',
     },
 
@@ -4671,6 +5231,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DBAG_HO.DBAG_HO_CDATE must parse as a timestamp',
     },
 
@@ -4686,6 +5248,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DBAG_HO.DBAG_CNOTE_DATE must parse as a timestamp',
     },
 
@@ -4701,6 +5265,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHICNOTE.DHICNOTE_TDATE must parse as a timestamp',
     },
 
@@ -4716,6 +5282,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHI_HOC.DHI_CNOTE_QTY must be a whole number',
     },
 
@@ -4731,6 +5299,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHI_HOC.DHI_HOC_CDATE must parse as a timestamp',
     },
 
@@ -4746,6 +5316,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOCNOTE.DHOCNOTE_QTY must be a whole number',
     },
 
@@ -4761,6 +5333,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOCNOTE.DHOCNOTE_TDATE must parse as a timestamp',
     },
 
@@ -4776,6 +5350,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOUNDEL_POD.DHOUNDEL_QTY must be a whole number',
     },
 
@@ -4791,6 +5367,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOUNDEL_POD.DHOUNDEL_CREATE_DATE must parse as a timestamp',
     },
 
@@ -4807,6 +5385,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET.DHOV_RSHEET_UNDEL must be 1 or 0',
     },
 
@@ -4823,6 +5403,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET.DHOV_DRSHEET_STATUS must be D or U followed by a number',
     },
 
@@ -4840,6 +5422,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET.DHOV_RSHEET_UZONE must be alphanumeric and exist in ORA_ZONE.ZONE_CODE (confirm reference column)',
     },
 
@@ -4855,6 +5439,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET.DHOV_DRSHEET_EPAY_AMOUNT must be a whole number',
     },
 
@@ -4870,6 +5456,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET.DHOV_RSHEET_COD must be a whole number',
     },
 
@@ -4885,6 +5473,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET.DHOV_RSHEET_QTY must be a whole number',
     },
 
@@ -4900,6 +5490,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET.DHOV_CREATE_DATE must parse as a timestamp',
     },
 
@@ -4916,6 +5508,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET.DHOV_RSHEET_CYCLE must be Y when present',
     },
 
@@ -4934,6 +5528,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'CMS_DMBAG.DMBAG_ORIGIN must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
     },
 
@@ -4952,6 +5548,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'CMS_DMBAG.DMBAG_DESTINATION must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
     },
 
@@ -4967,6 +5565,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'Billing',
+        'impact_details': 'Over-billing/Under-billing',
         'description': 'CMS_DMBAG.DMBAG_WEIGHT must be a whole number',
     },
 
@@ -4982,6 +5582,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DMBAG.DMBAG_ESB_TIME must parse as a timestamp',
     },
 
@@ -4997,6 +5599,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRCNOTE.DRCNOTE_QTY must be a whole number',
     },
 
@@ -5012,6 +5616,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRCNOTE.DRCNOTE_TDATE must parse as a timestamp',
     },
 
@@ -5028,6 +5634,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET.DRSHEET_STATUS must be D or U followed by two digits',
     },
 
@@ -5045,6 +5653,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET.DRSHEET_UID must be alphanumeric and exist in ORA_ZONE.ZONE_CODE (confirm reference column)',
     },
 
@@ -5060,6 +5670,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET.DRSHEET_DATE must parse as a timestamp',
     },
 
@@ -5075,6 +5687,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET.DRSHEET_UDATE must parse as a timestamp',
     },
 
@@ -5090,6 +5704,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET.DRSHEET_CREATION_DATE must parse as a timestamp',
     },
 
@@ -5106,6 +5722,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET.DRSHEET_FLAG must be Y when present',
     },
 
@@ -5121,6 +5739,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET_PRA.DRSHEET_PRA_CREATION_DATE must parse as a timestamp',
     },
 
@@ -5136,6 +5756,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSJ.DSJ_CDATE must parse as a timestamp',
     },
 
@@ -5154,6 +5776,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'CMS_DSMU.DSMU_BAG_ORIGIN must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
     },
 
@@ -5172,6 +5796,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'CMS_DSMU.DSMU_BAG_DESTINATION must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
     },
 
@@ -5187,6 +5813,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSMU.DSMU_WEIGHT must be a whole number',
     },
 
@@ -5202,6 +5830,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSMU.DSMU_ESB_TIME must parse as a timestamp',
     },
 
@@ -5217,6 +5847,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSMU.DSMU_FLIGHT_DATE must parse as a timestamp',
     },
 
@@ -5234,6 +5866,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSTATUS.DSTATUS_ZONE_CODE must be alphanumeric and exist in ORA_ZONE.ZONE_CODE (confirm reference column)',
     },
 
@@ -5249,6 +5883,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSTATUS.DSTATUS_CREATE_DATE must parse as a timestamp',
     },
 
@@ -5264,6 +5900,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSTATUS.DSTATUS_STATUS_DATE must parse as a timestamp',
     },
 
@@ -5281,6 +5919,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MANIFEST.MANIFEST_ROUTE must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
     },
 
@@ -5299,6 +5939,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'CMS_MANIFEST.MANIFEST_FROM must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
     },
 
@@ -5317,6 +5959,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'CMS_MANIFEST.MANIFEST_THRU must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
     },
 
@@ -5335,6 +5979,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'CMS_MANIFEST.MANIFEST_ORIGIN must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
     },
 
@@ -5350,6 +5996,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MANIFEST.MANIFEST_CRDATE must parse as a timestamp',
     },
 
@@ -5365,6 +6013,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MANIFEST.MANIFEST_DATE must parse as a timestamp',
     },
 
@@ -5381,6 +6031,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MANIFEST.MANIFEST_CODE must be a single digit 1-3',
     },
 
@@ -5398,6 +6050,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MFBAG.MFBAG_ROUTE must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
     },
 
@@ -5413,6 +6067,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MFBAG.MFBAG_ACT_WEIGHT must be a whole number',
     },
 
@@ -5428,6 +6084,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MFBAG.MFBAG_CTC_WEIGHT must be a whole number',
     },
 
@@ -5443,6 +6101,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MFBAG.MFBAG_CRDATE must parse as a timestamp',
     },
 
@@ -5458,6 +6118,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MFBAG.MFBAG_ESB_TIME must parse as a timestamp',
     },
 
@@ -5473,6 +6135,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'Billing',
+        'impact_details': 'Over-billing/Under-billing',
         'description': 'CMS_MFCNOTE.MFCNOTE_WEIGHT must be a whole number',
     },
 
@@ -5488,6 +6152,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MFCNOTE.MFCNOTE_CRDATE must parse as a timestamp',
     },
 
@@ -5505,6 +6171,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHICNOTE.MHICNOTE_BRANCH_ID must be alphanumeric and exist in ORA_BRANCH.BRANCH_CODE (confirm reference column)',
     },
 
@@ -5522,6 +6190,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHICNOTE.MHICNOTE_ZONE must be alphanumeric and exist in ORA_ZONE.ZONE_CODE (confirm reference column)',
     },
 
@@ -5537,6 +6207,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHICNOTE.MHICNOTE_SIGNDATE must parse as a timestamp',
     },
 
@@ -5552,6 +6224,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHICNOTE.MHICNOTE_DATE must parse as a timestamp',
     },
 
@@ -5568,6 +6242,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHICNOTE.MHICNOTE_APPROVE must be Y when present',
     },
 
@@ -5585,6 +6261,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHI_HOC.MHI_HOC_BRANCH must be alphanumeric and exist in ORA_BRANCH.BRANCH_CODE (confirm reference column)',
     },
 
@@ -5602,6 +6280,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHI_HOC.MHI_ZONE must be alphanumeric and exist in ORA_ZONE.ZONE_CODE (confirm reference column)',
     },
 
@@ -5617,6 +6297,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHI_HOC.MHI_DATE must parse as a timestamp',
     },
 
@@ -5632,6 +6314,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHI_HOC.MHI_APPROVE_DATE must parse as a timestamp',
     },
 
@@ -5649,6 +6333,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOCNOTE.MHOCNOTE_BRANCH_ID must be alphanumeric and exist in ORA_BRANCH.BRANCH_CODE (confirm reference column)',
     },
 
@@ -5666,6 +6352,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOCNOTE.MHOCNOTE_ZONE must be alphanumeric and exist in ORA_ZONE.ZONE_CODE (confirm reference column)',
     },
 
@@ -5683,6 +6371,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOCNOTE.MHOCNOTE_ZONE_DEST must be alphanumeric and exist in ORA_ZONE.ZONE_CODE (confirm reference column)',
     },
 
@@ -5698,6 +6388,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOCNOTE.MHOCNOTE_APP_DATE must parse as a timestamp',
     },
 
@@ -5713,6 +6405,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOCNOTE.MHOCNOTE_SIGNDATE must parse as a timestamp',
     },
 
@@ -5729,6 +6423,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOCNOTE.MHOCNOTE_APPROVE must be Y when present',
     },
 
@@ -5746,6 +6442,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOUNDEL_POD.MHOUNDEL_BRANCH_ID must be alphanumeric and exist in ORA_BRANCH.BRANCH_CODE (confirm reference column)',
     },
 
@@ -5763,6 +6461,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOUNDEL_POD.MHOUNDEL_ZONE must be alphanumeric and exist in ORA_ZONE.ZONE_CODE (confirm reference column)',
     },
 
@@ -5778,6 +6478,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOUNDEL_POD.MHOUNDEL_SIGNDATE must parse as a timestamp',
     },
 
@@ -5793,6 +6495,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOUNDEL_POD.MHOUNDEL_DATE must parse as a timestamp',
     },
 
@@ -5809,6 +6513,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOUNDEL_POD.MHOUNDEL_APPROVE must be Y when present',
     },
 
@@ -5826,6 +6532,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MMBAG.MMBAG_BRANCH must be alphanumeric and exist in ORA_BRANCH.BRANCH_CODE (confirm reference column)',
     },
 
@@ -5844,6 +6552,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'CMS_MMBAG.MMBAG_ORIGIN must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
     },
 
@@ -5862,6 +6572,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'CMS_MMBAG.MMBAG_DESTINATION must be alphanumeric and exist in CMS_DROURATE.DROURATE_CODE (confirm reference column)',
     },
 
@@ -5877,6 +6589,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MMBAG.MMBAG_DATE_APPROVE must parse as a timestamp',
     },
 
@@ -5892,6 +6606,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MMBAG.MMBAG_DATE must parse as a timestamp',
     },
 
@@ -5908,6 +6624,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MMBAG.MMBAG_APPROVED must be Y when present',
     },
 
@@ -5925,6 +6643,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRCNOTE.MRCNOTE_BRANCH_ID must be alphanumeric and exist in ORA_BRANCH.BRANCH_CODE (confirm reference column)',
     },
 
@@ -5940,6 +6660,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRCNOTE.MRCNOTE_DATE must parse as a timestamp',
     },
 
@@ -5955,6 +6677,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRCNOTE.MRCNOTE_SIGNDATE must parse as a timestamp',
     },
 
@@ -5972,6 +6696,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRSHEET.MRSHEET_BRANCH must be alphanumeric and exist in ORA_BRANCH.BRANCH_CODE (confirm reference column)',
     },
 
@@ -5987,6 +6713,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRSHEET.MRSHEET_DATE must parse as a timestamp',
     },
 
@@ -6002,6 +6730,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRSHEET.MRSHEET_UDATE must parse as a timestamp',
     },
 
@@ -6018,6 +6748,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRSHEET.MRSHEET_APPROVED_DR must be Y when present',
     },
 
@@ -6035,6 +6767,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSJ.MSJ_BRANCH_ID must be alphanumeric and exist in ORA_BRANCH.BRANCH_CODE (confirm reference column)',
     },
 
@@ -6052,6 +6786,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'CMS_MSJ.MSJ_DEST must be alphanumeric and exist in ORA_ZONE.ZONE_CODE',
     },
 
@@ -6069,6 +6805,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'CMS_MSJ.MSJ_ORIG must be alphanumeric and exist in ORA_ZONE.ZONE_CODE',
     },
 
@@ -6084,6 +6822,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSJ.MSJ_SIGNDATE must parse as a timestamp',
     },
 
@@ -6099,6 +6839,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSJ.MSJ_DATE must parse as a timestamp',
     },
 
@@ -6114,6 +6856,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSJ.MSJ_CDATE must parse as a timestamp',
     },
 
@@ -6130,6 +6874,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSJ.MSJ_APPROVE must be Y when present',
     },
 
@@ -6147,6 +6893,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'CMS_MSMU.MSMU_ORIGIN must be alphanumeric and exist in ORA_BRANCH.BRANCH_CODE',
     },
 
@@ -6164,6 +6912,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'CMS_MSMU.MSMU_DESTINATION must be alphanumeric and exist in ORA_BRANCH.BRANCH_CODE',
     },
 
@@ -6179,6 +6929,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_WEIGHT must be a whole number',
     },
 
@@ -6194,6 +6946,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_HOURS must be a whole number',
     },
 
@@ -6209,6 +6963,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_QTY must be a whole number',
     },
 
@@ -6224,6 +6980,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_WRH_DATE must parse as a timestamp',
     },
 
@@ -6239,6 +6997,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_OFF_DATE must parse as a timestamp',
     },
 
@@ -6254,6 +7014,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_DATE must parse as a timestamp',
     },
 
@@ -6269,6 +7031,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_FLIGHT_DATE must parse as a timestamp',
     },
 
@@ -6284,6 +7048,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_ETD must parse as a timestamp',
     },
 
@@ -6299,6 +7065,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU.MSMU_ETA must parse as a timestamp',
     },
 
@@ -6314,6 +7082,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_RDSJ.RDSJ_CDATE must parse as a timestamp',
     },
 
@@ -6329,6 +7099,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST: APICUST_CNOTE_NO value must appear exactly once',
     },
 
@@ -6344,6 +7116,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE: CNOTE_REFNO value must appear exactly once',
     },
 
@@ -6359,6 +7133,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE_POD: CNOTE_POD_NO value must appear exactly once',
     },
 
@@ -6374,6 +7150,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE_POD: CNOTE_POD_DOC_NO value must appear exactly once',
     },
 
@@ -6389,6 +7167,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_DTRANSIT_AGEN: CNOTE_NO value must appear exactly once',
     },
 
@@ -6404,6 +7184,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_COST_MTRANSIT_AGEN: MANIFEST_NO value must appear exactly once',
     },
 
@@ -6419,6 +7201,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DBAG_HO: DBAG_HO_NO, DBAG_NO, DBAG_CNOTE_NO combination of values must appear exactly once',
     },
 
@@ -6434,6 +7218,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHICNOTE: DHICNOTE_CNOTE_NO value must appear exactly once',
     },
 
@@ -6449,6 +7235,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHI_HOC: DHI_CNOTE_NO value must appear exactly once',
     },
 
@@ -6464,6 +7252,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHI_HOC: DHI_NO, DHI_ONO, DHI_CNOTE_NO combination of values must appear exactly once',
     },
 
@@ -6479,6 +7269,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOCNOTE: DHOCNOTE_CNOTE_NO value must appear exactly once',
     },
 
@@ -6494,6 +7286,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOUNDEL_POD: DHOUNDEL_NO, DHOUNDEL_CNOTE_NO, DHOUNDEL_HRS combination of values must appear exactly once',
     },
 
@@ -6509,6 +7303,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET: DHOV_RSHEET_NO value must appear exactly once',
     },
 
@@ -6524,6 +7320,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET: DHOV_RSHEET_RSHEETNO value must appear exactly once',
     },
 
@@ -6539,6 +7337,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DHOV_RSHEET: DHOV_RSHEET_CNOTE value must appear exactly once',
     },
 
@@ -6554,6 +7354,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DMBAG: DMBAG_BAG_NO value must appear exactly once',
     },
 
@@ -6569,6 +7371,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRCNOTE: DRCNOTE_NO, DRCNOTE_CNOTE_NO combination of values must appear exactly once',
     },
 
@@ -6584,6 +7388,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET: DRSHEET_NO value must appear exactly once',
     },
 
@@ -6599,6 +7405,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET: DRSHEET_CNOTE_NO value must appear exactly once',
     },
 
@@ -6614,6 +7422,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET_PRA: DRSHEET_NO value must appear exactly once',
     },
 
@@ -6629,6 +7439,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DRSHEET_PRA: DRSHEET_CNOTE_NO value must appear exactly once',
     },
 
@@ -6644,6 +7456,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSJ: DSJ_BAG_NO, DSJ_HVO_NO combination of values must appear exactly once',
     },
 
@@ -6659,6 +7473,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSMU: DSMU_BAG_NO value must appear exactly once',
     },
 
@@ -6674,6 +7490,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSTATUS: DSTATUS_NO value must appear exactly once',
     },
 
@@ -6689,6 +7507,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_DSTATUS: DSTATUS_CNOTE_NO value must appear exactly once',
     },
 
@@ -6704,6 +7524,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MANIFEST: MANIFEST_NO value must appear exactly once',
     },
 
@@ -6719,6 +7541,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MFBAG: MFBAG_MAN_NO, MFBAG_NO, MFBAG_ESB_ID combination of values must appear exactly once',
     },
 
@@ -6734,6 +7558,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MFCNOTE: MFCNOTE_MAN_NO value must appear exactly once',
     },
 
@@ -6749,6 +7575,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MHOUNDEL_POD: MHOUNDEL_NO value must appear exactly once',
     },
 
@@ -6764,6 +7592,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MMBAG: MMBAG_NO value must appear exactly once',
     },
 
@@ -6779,6 +7609,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MRCNOTE: MRCNOTE_NO value must appear exactly once',
     },
 
@@ -6794,6 +7626,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSJ: MSJ_NO value must appear exactly once',
     },
 
@@ -6809,6 +7643,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_MSMU: MSMU_NO value must appear exactly once',
     },
 
@@ -6824,6 +7660,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_RDSJ: RDSJ_NO value must appear exactly once',
     },
 
@@ -6839,6 +7677,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_RDSJ: RDSJ_BAG_NO value must appear exactly once',
     },
 
@@ -6854,6 +7694,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_RDSJ: RDSJ_HVO_NO value must appear exactly once',
     },
 
@@ -6869,6 +7711,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': '',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_RDSJ: RDSJ_HVI_NO value must appear exactly once',
     },
 
@@ -6889,6 +7733,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'Billing',
+        'impact_details': 'Over-billing/Under-billing',
         'description': 'API customer destination should match CNOTE destination when both are present',
     },
 
@@ -6909,6 +7755,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'API customer qty should match CNOTE qty when both are present',
     },
 
@@ -6929,6 +7777,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'API customer branch should match CNOTE branch when both are present',
     },
 
@@ -6949,6 +7799,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'POD date must match runsheet date',
     },
 
@@ -6969,6 +7821,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'POD status must match runsheet status',
     },
 
@@ -6989,6 +7843,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'Transit cost detail qty must match CNOTE qty',
     },
 
@@ -7010,6 +7866,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': '',
+        'main_impact': 'Reporting',
+        'impact_details': 'Internal Dispute',
         'description': 'Transit cost detail weight must match CNOTE weight (rounded)',
     },
 
@@ -7030,6 +7888,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'Transit cost detail service code must match CNOTE service code',
     },
 
@@ -7050,6 +7910,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'Bag handover qty must match CNOTE qty',
     },
 
@@ -7071,6 +7933,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': '',
+        'main_impact': 'Reporting',
+        'impact_details': 'Internal Dispute',
         'description': 'Bag handover weight must match CNOTE weight (rounded)',
     },
 
@@ -7091,6 +7955,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'Bag handover destination must match CNOTE destination',
     },
 
@@ -7111,6 +7977,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'Inbound cnote qty must match CNOTE qty',
     },
 
@@ -7131,6 +7999,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'Inbound handover qty must match CNOTE qty',
     },
 
@@ -7151,6 +8021,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'Outbound handover qty must match CNOTE qty',
     },
 
@@ -7171,6 +8043,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'Undelivered qty must match CNOTE qty',
     },
 
@@ -7191,6 +8065,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'Handover runsheet qty must match CNOTE qty',
     },
 
@@ -7211,6 +8087,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'DRCNOTE qty must match CNOTE qty',
     },
 
@@ -7231,6 +8109,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'SMU detail flight number must match SMU master flight number',
     },
 
@@ -7251,6 +8131,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'SMU detail flight date must match SMU master flight date',
     },
 
@@ -7272,6 +8154,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': '',
+        'main_impact': 'Reporting',
+        'impact_details': 'Internal Dispute',
         'description': 'SMU detail weight must match detail bag weight (rounded)',
     },
 
@@ -7292,6 +8176,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'SMU bag origin must match detail bag origin',
     },
 
@@ -7312,6 +8198,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'SMU bag destination must match detail bag destination',
     },
 
@@ -7332,6 +8220,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'Manifest bag route must match manifest route',
     },
 
@@ -7352,6 +8242,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'Master bag origin must match detail bag origin',
     },
 
@@ -7372,6 +8264,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'Master bag destination must match detail bag destination',
     },
 
@@ -7394,6 +8288,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': '',
+        'main_impact': 'Reporting',
+        'impact_details': 'Internal Dispute',
         'description': 'Master bag weight must equal the sum of detail bag weights grouped by DMBAG_NO.',
     },
 
@@ -7415,6 +8311,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'SMU master origin prefix must match SMU detail bag origin prefix',
     },
 
@@ -7436,6 +8334,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'SMU master destination prefix must match SMU detail bag destination prefix',
     },
 
@@ -7457,216 +8357,9 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'MSMU_QTY must equal the distinct bag count in CMS_DSMU per SMU',
-    },
-
-    {
-        'index_code': 'INTG1Y',
-        'element': 'Integrity',
-        'indicator': '',
-        'enabled': False,
-        'rule_family': 'integrity_orphan',
-        'table': 'CMS_COST_DTRANSIT_AGEN',
-        'params': {
-            'child_table': 'CMS_COST_DTRANSIT_AGEN',
-            'child_column': 'COST_D_MANIFEST_NO',
-            'parent_table': 'CMS_COST_MTRANSIT_AGEN',
-            'parent_column': 'COST_M_MANIFEST_NO',
-            'cnote_column': 'COST_D_CNOTE_NO',
-        },
-        'impact_billing': '',
-        'impact_operational': '',
-        'description': 'Every CMS_COST_DTRANSIT_AGEN.COST_D_MANIFEST_NO must exist in CMS_COST_MTRANSIT_AGEN.COST_M_MANIFEST_NO (flag orphans)',
-    },
-
-    {
-        'index_code': 'INTG1AC',
-        'element': 'Integrity',
-        'indicator': '',
-        'enabled': False,
-        'rule_family': 'integrity_orphan',
-        'table': 'CMS_DHICNOTE',
-        'params': {
-            'child_table': 'CMS_DHICNOTE',
-            'child_column': 'DHICNOTE_NO',
-            'parent_table': 'CMS_MHICNOTE',
-            'parent_column': 'MHICNOTE_NO',
-            'cnote_column': 'DHICNOTE_CNOTE_NO',
-        },
-        'impact_billing': '',
-        'impact_operational': '',
-        'description': 'Every CMS_DHICNOTE.DHICNOTE_NO must exist in CMS_MHICNOTE.MHICNOTE_NO (flag orphans)',
-    },
-
-    {
-        'index_code': 'INTG1F',
-        'element': 'Integrity',
-        'indicator': '',
-        'enabled': False,
-        'rule_family': 'integrity_orphan',
-        'table': 'CMS_DHI_HOC',
-        'params': {
-            'child_table': 'CMS_DHI_HOC',
-            'child_column': 'DHI_NO',
-            'parent_table': 'CMS_MHI_HOC',
-            'parent_column': 'MHI_HOC_NO',
-            'cnote_column': 'DHI_HOC_CNOTE_NO',
-        },
-        'impact_billing': '',
-        'impact_operational': '',
-        'description': 'Every CMS_DHI_HOC.DHI_NO must exist in CMS_MHI_HOC.MHI_HOC_NO (flag orphans)',
-    },
-
-    {
-        'index_code': 'INTG1W',
-        'element': 'Integrity',
-        'indicator': '',
-        'enabled': False,
-        'rule_family': 'integrity_orphan',
-        'table': 'CMS_DHOCNOTE',
-        'params': {
-            'child_table': 'CMS_DHOCNOTE',
-            'child_column': 'DHOCNOTE_NO',
-            'parent_table': 'CMS_MHOCNOTE',
-            'parent_column': 'MHOCNOTE_NO',
-            'cnote_column': 'DHOCNOTE_CNOTE_NO',
-        },
-        'impact_billing': '',
-        'impact_operational': '',
-        'description': 'Every CMS_DHOCNOTE.DHOCNOTE_NO must exist in CMS_MHOCNOTE.MHOCNOTE_NO (flag orphans)',
-    },
-
-    {
-        'index_code': 'INTG1U',
-        'element': 'Integrity',
-        'indicator': '',
-        'enabled': False,
-        'rule_family': 'integrity_orphan',
-        'table': 'CMS_DHOUNDEL_POD',
-        'params': {
-            'child_table': 'CMS_DHOUNDEL_POD',
-            'child_column': 'DHOUNDEL_NO',
-            'parent_table': 'CMS_MHOUNDEL_POD',
-            'parent_column': 'MHOUNDEL_NO',
-            'cnote_column': 'DHOUNDEL_CNOTE_NO',
-        },
-        'impact_billing': '',
-        'impact_operational': '',
-        'description': 'Every CMS_DHOUNDEL_POD.DHOUNDEL_NO must exist in CMS_MHOUNDEL_POD.MHOUNDEL_NO (flag orphans)',
-    },
-
-    {
-        'index_code': 'INTG1K',
-        'element': 'Integrity',
-        'indicator': '',
-        'enabled': False,
-        'rule_family': 'integrity_orphan',
-        'table': 'CMS_DMBAG',
-        'params': {
-            'child_table': 'CMS_DMBAG',
-            'child_column': 'DMBAG_NO',
-            'parent_table': 'CMS_MMBAG',
-            'parent_column': 'MMBAG_NO',
-            'cnote_column': 'DMBAG_BAG_NO',
-        },
-        'impact_billing': '',
-        'impact_operational': '',
-        'description': 'Every CMS_DMBAG.DMBAG_NO must exist in CMS_MMBAG.MMBAG_NO (flag orphans)',
-    },
-
-    {
-        'index_code': 'INTG1D',
-        'element': 'Integrity',
-        'indicator': '',
-        'enabled': False,
-        'rule_family': 'integrity_orphan',
-        'table': 'CMS_DRCNOTE',
-        'params': {
-            'child_table': 'CMS_DRCNOTE',
-            'child_column': 'DRCNOTE_NO',
-            'parent_table': 'CMS_MRCNOTE',
-            'parent_column': 'MRCNOTE_NO',
-            'cnote_column': 'DRCNOTE_CNOTE_NO',
-        },
-        'impact_billing': '',
-        'impact_operational': '',
-        'description': 'Every CMS_DRCNOTE.DRCNOTE_NO must exist in CMS_MRCNOTE.MRCNOTE_NO (flag orphans)',
-    },
-
-    {
-        'index_code': 'INTG1P',
-        'element': 'Integrity',
-        'indicator': '',
-        'enabled': False,
-        'rule_family': 'integrity_orphan',
-        'table': 'CMS_DRSHEET',
-        'params': {
-            'child_table': 'CMS_DRSHEET',
-            'child_column': 'DRSHEET_NO',
-            'parent_table': 'CMS_MRSHEET',
-            'parent_column': 'MRSHEET_NO',
-            'cnote_column': 'DRSHEET_CNOTE_NO',
-        },
-        'impact_billing': '',
-        'impact_operational': '',
-        'description': 'Every CMS_DRSHEET.DRSHEET_NO must exist in CMS_MRSHEET.MRSHEET_NO (flag orphans)',
-    },
-
-    {
-        'index_code': 'INTG1AA',
-        'element': 'Integrity',
-        'indicator': '',
-        'enabled': False,
-        'rule_family': 'integrity_orphan',
-        'table': 'CMS_DSJ',
-        'params': {
-            'child_table': 'CMS_DSJ',
-            'child_column': 'DSJ_NO',
-            'parent_table': 'CMS_MSJ',
-            'parent_column': 'MSJ_NO',
-            'cnote_column': 'DSJ_NO',
-        },
-        'impact_billing': '',
-        'impact_operational': '',
-        'description': 'Every CMS_DSJ.DSJ_NO must exist in CMS_MSJ.MSJ_NO (flag orphans)',
-    },
-
-    {
-        'index_code': 'INTG1M',
-        'element': 'Integrity',
-        'indicator': '',
-        'enabled': False,
-        'rule_family': 'integrity_orphan',
-        'table': 'CMS_DSMU',
-        'params': {
-            'child_table': 'CMS_DSMU',
-            'child_column': 'DSMU_NO',
-            'parent_table': 'CMS_MSMU',
-            'parent_column': 'MSMU_NO',
-            'cnote_column': 'DSMU_NO',
-        },
-        'impact_billing': '',
-        'impact_operational': '',
-        'description': 'Every CMS_DSMU.DSMU_NO must exist in CMS_MSMU.MSMU_NO (flag orphans)',
-    },
-
-    {
-        'index_code': 'INTG1J',
-        'element': 'Integrity',
-        'indicator': '',
-        'enabled': False,
-        'rule_family': 'integrity_orphan',
-        'table': 'CMS_MFBAG',
-        'params': {
-            'child_table': 'CMS_MFBAG',
-            'child_column': 'MFBAG_MAN_NO',
-            'parent_table': 'CMS_MANIFEST',
-            'parent_column': 'MANIFEST_NO',
-            'cnote_column': 'MFBAG_NO',
-        },
-        'impact_billing': '',
-        'impact_operational': '',
-        'description': 'Every CMS_MFBAG.MFBAG_MAN_NO must exist in CMS_MANIFEST.MANIFEST_NO (flag orphans)',
     },
 
     {
@@ -7681,6 +8374,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST.APICUST_WEIGHT must be zero or greater',
     },
 
@@ -7698,6 +8393,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_APICUST.APICUST_SERVICES_CODE must exist as a service code in CMS_DROURATE (confirm reference column)',
     },
 
@@ -7715,6 +8412,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'Billing',
+        'impact_details': 'Potential Revenue Loss',
         'description': 'CNOTE_WEIGHT must be zero or greater and the cnote must not appear in T_CORRECT_AWB (confirm reference column)',
     },
 
@@ -7732,6 +8431,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'CMS_CNOTE.CNOTE_SERVICES_CODE must exist as a service code in CMS_DROURATE (confirm reference column)',
     },
 
@@ -7766,6 +8467,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'HOC approval timestamp should occur before MRCNOTE sign timestamp through DHI_HOC and DRCNOTE.',
     },
 
@@ -7784,6 +8487,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'DRSHEET_FLAG is mandatory when the runsheet CNOTE exists in CMS_CNOTE_POD.CNOTE_POD_NO.',
     },
 
@@ -7818,6 +8523,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'MRCNOTE sign date must occur before manifest bag creation via CNOTE and bag bridge.',
     },
 
@@ -7847,6 +8554,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'Runsheet master date must occur before POD creation date.',
     },
 
@@ -7877,6 +8586,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'First outbound handover sign date must occur before MSJ sign date.',
     },
 
@@ -7911,6 +8622,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'MSJ sign date must occur before inbound handover date via DSJ and RDSJ.',
     },
 
@@ -7945,6 +8658,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'Inbound handover date must occur before runsheet date via CNOTE and DRSHEET.',
     },
 
@@ -7963,6 +8678,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'For each CNOTE, outbound manifest creation must occur before transit manifest creation.',
     },
 
@@ -7981,6 +8698,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'For each CNOTE, transit manifests must progress sequentially and occur before inbound manifest creation.',
     },
 
@@ -7999,6 +8718,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'For each CNOTE, inbound manifest creation must occur after transit manifest creation.',
     },
 
@@ -8016,6 +8737,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'For each CNOTE, inbound manifest date must occur before MSJ sign date.',
     },
 
@@ -8045,6 +8768,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'MRCNOTE branch must match CNOTE branch through DRCNOTE.',
     },
 
@@ -8076,6 +8801,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'Manifest route letters 9-11 must match CNOTE destination through MFCNOTE.',
     },
 
@@ -8105,6 +8832,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'Detail bag origin must match manifest from through manifest bag.',
     },
 
@@ -8134,6 +8863,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'Detail bag destination must match manifest thru through manifest bag.',
     },
 
@@ -8157,6 +8888,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': '',
+        'main_impact': 'Reporting',
+        'impact_details': 'Internal Dispute',
         'description': 'Detail bag weight must match manifest bag CTC weight, aggregating duplicate DMBAG_NO rows with the same weight above 50.',
     },
 
@@ -8186,6 +8919,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'Operation',
+        'impact_details': 'Internal Dispute',
         'description': 'Transit cost manifest destination must match CNOTE destination through cost detail.',
     },
 
@@ -8216,6 +8951,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': '',
+        'main_impact': 'Reporting',
+        'impact_details': 'Internal Dispute',
         'description': 'Transit cost manifest CTC weight must match manifest CNOTE weight through cost detail.',
     },
 
@@ -8246,6 +8983,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': '',
+        'main_impact': 'Reporting',
+        'impact_details': 'Internal Dispute',
         'description': 'Transit cost manifest actual weight must match CNOTE weight through cost detail.',
     },
 
@@ -8268,6 +9007,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': '',
+        'main_impact': 'Reporting',
+        'impact_details': 'Internal Dispute',
         'description': 'Manifest bag actual weight must equal the sum of package weights in the bag.',
     },
 
@@ -8290,6 +9031,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': '',
+        'main_impact': 'Reporting',
+        'impact_details': 'Internal Dispute',
         'description': 'Manifest bag CTC weight must equal the sum of package weights in the bag.',
     },
 
@@ -8324,6 +9067,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': 'Y',
         'impact_operational': '',
+        'main_impact': 'Reporting',
+        'impact_details': 'Internal Dispute',
         'description': 'SMU master weight must equal the sum of package weights bridged through bag detail.',
     },
 
@@ -8352,6 +9097,8 @@ CATALOG: list[dict] = [
         },
         'impact_billing': '',
         'impact_operational': 'Y',
+        'main_impact': 'TBD',
+        'impact_details': 'TBD',
         'description': 'Master bag quantity must equal the distinct package count bridged through detail bags.',
     },
 ]

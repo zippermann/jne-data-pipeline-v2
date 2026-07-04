@@ -37,6 +37,7 @@ from transform.document_links import (
     DOCUMENT_LINKS_SOURCE_TABLE,
     build_document_bridges,
 )
+from transform.transform_data import shipment_scope
 
 
 RUN_WINDOW_START = "2026-06-01"
@@ -54,6 +55,12 @@ TABLE_PARAM_KEYS = (
 )
 DROURATE_TABLE = "CMS_DROURATE"
 DROURATE_CODE_PATTERN = re.compile(r"^([A-Z]{3}[0-9]{5})([A-Z]{3}[0-9]{5})$")
+CNOTE_CONTEXT_COLUMNS = {
+    "CNOTE_NO",
+    "CNOTE_ORIGIN",
+    "CNOTE_DESTINATION",
+    "CNOTE_SERVICES_CODE",
+}
 
 
 @dataclass(frozen=True)
@@ -325,6 +332,8 @@ def _required_columns(entries: Iterable[dict]) -> dict[str, set[str]]:
     for entry in entries:
         for table, columns in _entry_columns(entry).items():
             required.setdefault(table, set()).update(columns)
+    if "CMS_CNOTE" in required:
+        required["CMS_CNOTE"].update(CNOTE_CONTEXT_COLUMNS)
     return required
 
 
@@ -761,6 +770,32 @@ DOCUMENT_STAGE_BY_TABLE = {
     "CMS_DHOUNDEL_POD": "runsheet",
 }
 
+PACKAGE_JOURNEY_BY_TABLE = {
+    "CMS_APICUST": "Shipper",
+    "CMS_CNOTE": "Shipper",
+    "CMS_MRCNOTE": "Pick up/Drop Off",
+    "CMS_DRCNOTE": "Pick up/Drop Off",
+    "CMS_MHICNOTE": "Warehouse Receival",
+    "CMS_DHICNOTE": "Warehouse Receival",
+    "CMS_MMBAG": "Warehouse Manifest",
+    "CMS_DMBAG": "Warehouse Manifest",
+    "CMS_MFBAG": "Warehouse Manifest",
+    "CMS_DFBAG": "Warehouse Manifest",
+    "CMS_MANIFEST": "Warehouse Manifest",
+    "CMS_MFCNOTE": "Warehouse Manifest",
+    "CMS_DSMU": "Warehouse Manifest",
+    "CMS_MSMU": "Warehouse Manifest",
+    "CMS_MHOCNOTE": "Warehouse Manifest",
+    "CMS_DHOCNOTE": "Warehouse Manifest",
+    "CMS_DBAG_HO": "Cabang",
+    "CMS_DSTATUS": "Cabang",
+    "CMS_MSJ": "Receiver",
+    "CMS_DSJ": "Receiver",
+    "CMS_MRSHEET": "Receiver",
+    "CMS_DRSHEET": "Receiver",
+    "CMS_CNOTE_POD": "Receiver",
+}
+
 
 def _document_level(entry: dict) -> str:
     table_name = str(entry.get("table", "")).upper()
@@ -772,11 +807,60 @@ def _document_stage(entry: dict) -> str:
     return DOCUMENT_STAGE_BY_TABLE.get(table_name, "")
 
 
+def _package_journey(entry: dict) -> str:
+    table_name = str(entry.get("table", "")).upper()
+    return PACKAGE_JOURNEY_BY_TABLE.get(table_name, "Other")
+
+
+def _row_string(row: pd.Series, column: str) -> str:
+    value = row.get(column, "")
+    if pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
+def _cnote_contexts(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, str]]:
+    cnote = data.get("CMS_CNOTE")
+    if cnote is None or "CNOTE_NO" not in cnote.columns:
+        return {}
+
+    available = [column for column in CNOTE_CONTEXT_COLUMNS if column in cnote.columns]
+    work = cnote.loc[:, available].copy()
+    work["CNOTE_NO"] = _string_key_values(work["CNOTE_NO"])
+    work = work.loc[work["CNOTE_NO"].ne("")]
+    work = work.drop_duplicates(subset=["CNOTE_NO"], keep="first")
+
+    contexts: dict[str, dict[str, str]] = {}
+    for _, row in work.iterrows():
+        origin = _row_string(row, "CNOTE_ORIGIN")
+        destination = _row_string(row, "CNOTE_DESTINATION")
+        origin_region = ""
+        destination_region = ""
+        contexts[str(row["CNOTE_NO"])] = {
+            "service_type": _row_string(row, "CNOTE_SERVICES_CODE"),
+            "shipment_type": shipment_scope(origin, destination),
+            "origin_region": origin_region,
+            "destination_region": destination_region,
+            "origin_destination_region": (
+                f"{origin_region} x {destination_region}" if origin_region and destination_region else ""
+            ),
+        }
+    return contexts
+
+
+def _single_cnote_context(row: pd.Series, contexts: dict[str, dict[str, str]]) -> dict[str, str]:
+    cnote_no = str(row.get("cnote_no", "") or "")
+    if not cnote_no:
+        return {}
+    return contexts.get(cnote_no, {})
+
+
 def _check_rows_frame(
     entry: dict,
     outcome: RuleOutcome,
     document_bridges: dict[str, dict[str, list[str]]] | None = None,
     cnote_universe: set[str] | None = None,
+    cnote_contexts: dict[str, dict[str, str]] | None = None,
 ) -> pd.DataFrame:
     checks = outcome.checks
     if checks is None or checks.empty:
@@ -788,6 +872,7 @@ def _check_rows_frame(
     rows["document_type"] = _document_type(entry)
     rows["level"] = _document_level(entry)
     rows["stage"] = _document_stage(entry)
+    rows["package_journey"] = _package_journey(entry)
     cnotes = cnote_universe or set()
 
     bridge_map = document_bridges or {}
@@ -803,9 +888,20 @@ def _check_rows_frame(
         rows["_link_method"] = "direct_cnote_value"
 
     rows["cnote_no"] = rows["_linked_cnotes"].map(lambda values: values[0] if len(values) == 1 else "")
+    contexts = cnote_contexts or {}
+    row_contexts = rows.apply(lambda row: _single_cnote_context(row, contexts), axis=1)
+    rows["service_type"] = row_contexts.map(lambda context: context.get("service_type", ""))
+    rows["shipment_type"] = row_contexts.map(lambda context: context.get("shipment_type", ""))
+    rows["origin_region"] = row_contexts.map(lambda context: context.get("origin_region", ""))
+    rows["destination_region"] = row_contexts.map(lambda context: context.get("destination_region", ""))
+    rows["origin_destination_region"] = row_contexts.map(lambda context: context.get("origin_destination_region", ""))
 
     rows["index_code"] = entry["index_code"]
+    rows["element"] = entry.get("element", "")
     rows["main_indicator"] = entry.get("indicator", "")
+    rows["main_impact"] = entry.get("main_impact", "")
+    rows["impact_details"] = entry.get("impact_details", "")
+    rows["issue_description"] = entry.get("description", "")
     rows["column_name"] = _entry_column_name(entry)
     rows["table_name"] = entry["table"]
     rows["impact_billing"] = entry.get("impact_billing", "")
@@ -879,6 +975,7 @@ def _run_entries(
     result_cnotes_parquet_path = output_dir / "governance_result_cnotes.parquet"
     bridges = _document_bridges(data)
     cnotes = _cnote_universe(data)
+    contexts = _cnote_contexts(data)
     next_result_number = 1
 
     with (
@@ -919,7 +1016,7 @@ def _run_entries(
                 outcome = _error_outcome(error_message)
 
             status_counts[status] = status_counts.get(status, 0) + 1
-            check_rows = _check_rows_frame(entry, outcome, bridges, cnotes)
+            check_rows = _check_rows_frame(entry, outcome, bridges, cnotes, contexts)
             result_rows = len(check_rows)
             if not check_rows.empty:
                 result_ids = [

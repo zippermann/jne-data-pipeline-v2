@@ -13,6 +13,7 @@ from governance.runner import (
     BronzeTable,
     _entry_tables,
     _check_rows_frame,
+    _cnote_contexts,
     _document_level,
     _document_stage,
     _document_bridges,
@@ -193,6 +194,8 @@ def test_catalog_entries_include_analysis_metadata():
     assert all("indicator" in entry for entry in CATALOG)
     assert all("impact_billing" in entry for entry in CATALOG)
     assert all("impact_operational" in entry for entry in CATALOG)
+    assert all("main_impact" in entry for entry in CATALOG)
+    assert all("impact_details" in entry for entry in CATALOG)
     assert all("impact" not in entry for entry in CATALOG)
     assert all("impact_none" not in entry for entry in CATALOG)
     assert by_code["COMP1V19"]["indicator"] == "Timestamp"
@@ -202,6 +205,60 @@ def test_catalog_entries_include_analysis_metadata():
     assert by_code["COMP1V19"]["impact_operational"] == "Y"
     assert by_code["ACCU1A25"]["impact_billing"] == "Y"
     assert by_code["ACCU1A25"]["impact_operational"] == "Y"
+    assert by_code["ACCU4B15"]["main_impact"] == "Billing"
+    assert by_code["ACCU4B15"]["impact_details"] == "Potential Revenue Loss"
+    assert by_code["ACCU3B13B"]["main_impact"] == "Billing"
+    assert by_code["ACCU3B13B"]["impact_details"] == "Over-billing/Under-billing"
+    assert by_code["COMP1B1"]["main_impact"] == "TBD"
+    assert by_code["COMP1B1"]["impact_details"] == "TBD"
+
+
+def test_governance_results_enrich_pass_rows_with_dashboard_context():
+    data = {
+        "CMS_CNOTE": pd.DataFrame({
+            "CNOTE_NO": ["CNOTE1"],
+            "CNOTE_ORIGIN": ["CGK10000"],
+            "CNOTE_DESTINATION": ["BDO10000"],
+            "CNOTE_SERVICES_CODE": ["REG"],
+        }),
+    }
+    entry = {
+        "index_code": "COMP_TEST",
+        "element": "Completeness",
+        "indicator": "Service Code",
+        "table": "CMS_CNOTE",
+        "params": {"column": "CNOTE_SERVICES_CODE", "cnote_column": "CNOTE_NO"},
+        "description": "Service code should be present",
+        "main_impact": "Operational",
+        "impact_details": "Routing visibility",
+        "impact_billing": "",
+        "impact_operational": "Y",
+    }
+    outcome = RuleOutcome(
+        total_checked=1,
+        total_failed=0,
+        failures=pd.DataFrame(columns=["cnote_no", "failed_value", "failure_reason"]),
+        checks=pd.DataFrame({
+            "cnote_no": ["CNOTE1"],
+            "status": ["PASS"],
+            "variable_1": ["REG"],
+            "variable_2": [""],
+        }),
+    )
+
+    rows = _check_rows_frame(entry, outcome, {}, {"CNOTE1"}, _cnote_contexts(data))
+
+    assert rows.loc[0, "status"] == "PASS"
+    assert rows.loc[0, "element"] == "Completeness"
+    assert rows.loc[0, "main_impact"] == "Operational"
+    assert rows.loc[0, "impact_details"] == "Routing visibility"
+    assert rows.loc[0, "issue_description"] == "Service code should be present"
+    assert rows.loc[0, "package_journey"] == "Shipper"
+    assert rows.loc[0, "service_type"] == "REG"
+    assert rows.loc[0, "shipment_type"] == "Domestic"
+    assert rows.loc[0, "origin_region"] == ""
+    assert rows.loc[0, "destination_region"] == ""
+    assert rows.loc[0, "origin_destination_region"] == ""
 
 
 def test_drsheet_pra_uses_existing_cnote_column_as_document_key():
@@ -520,9 +577,9 @@ def test_deleted_and_disabled_index_checks_are_not_active():
 
     assert "UNIQ1D1" not in by_code
     assert "TIME1P3" not in by_code
-    assert by_code["INTG1D1"]["enabled"] is False
-    assert by_code["INTG1I1"]["enabled"] is False
-    assert by_code["INTG1J"]["enabled"] is False
+    assert "INTG1D1" not in by_code
+    assert "INTG1I1" not in by_code
+    assert "INTG1J" not in by_code
 
 
 def test_parquet_loader_ignores_missing_requested_columns_for_later_skip():
