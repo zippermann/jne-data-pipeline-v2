@@ -37,7 +37,7 @@ from transform.document_links import (
     DOCUMENT_LINKS_SOURCE_TABLE,
     build_document_bridges,
 )
-from transform.transform_data import shipment_scope
+from transform.transform_data import delivery_category, shipment_scope
 
 
 RUN_WINDOW_START = "2026-06-01"
@@ -60,6 +60,9 @@ CNOTE_CONTEXT_COLUMNS = {
     "CNOTE_ORIGIN",
     "CNOTE_DESTINATION",
     "CNOTE_SERVICES_CODE",
+    "delivery_category",
+    "delivery_type",
+    "shipment_scope",
 }
 
 BRANCH_REGION_BY_CODE = {
@@ -698,7 +701,18 @@ def _load_table_from_minio(source: GovernanceSource, table: BronzeTable, columns
 
 def _load_table_from_local(source: GovernanceSource, table: BronzeTable, columns: set[str]) -> pd.DataFrame:
     assert source.run_path is not None
-    table_path = source.run_path / (table.source_prefix.rstrip("/") if table.source_prefix else table.output_name)
+    candidates: list[Path] = []
+    if table.source_prefix:
+        source_prefix = table.source_prefix.strip("/")
+        candidates.append(source.run_path / source_prefix)
+        derived_marker = f"/derived/{table.output_name}"
+        if derived_marker in f"/{source_prefix}":
+            candidates.append(source.run_path / "derived" / table.output_name)
+    candidates.extend([
+        source.run_path / table.output_name,
+        source.run_path / "derived" / table.output_name,
+    ])
+    table_path = next((candidate for candidate in candidates if candidate.exists()), candidates[0])
     paths = sorted(table_path.glob("part-*.parquet"))
     return _read_parquet_files(paths, sorted(columns))
 
@@ -707,13 +721,17 @@ def _load_bronze_tables(source: GovernanceSource, required_columns: dict[str, se
     data = {}
     for table_name, columns in sorted(required_columns.items()):
         table = source.tables[table_name]
+        load_label = table_name
+        if table_name == "CMS_CNOTE" and "CMS_CNOTE_TRANSFORMED" in source.tables:
+            table = source.tables["CMS_CNOTE_TRANSFORMED"]
+            load_label = "CMS_CNOTE_TRANSFORMED"
         started = time.monotonic()
         if source.run_path is not None:
             data[table_name] = _load_table_from_local(source, table, columns)
         else:
             data[table_name] = _load_table_from_minio(source, table, columns)
         print(
-            f"Loaded {table_name} from bronze as {table.output_name}: "
+            f"Loaded {table_name} from {load_label} as {table.output_name}: "
             f"{len(data[table_name]):,} rows, {len(data[table_name].columns)} columns "
             f"in {time.monotonic() - started:.1f}s",
             flush=True,
@@ -876,7 +894,7 @@ DOCUMENT_LEVEL_TABLES = {
 
 def _document_level(entry: dict) -> str:
     table_name = str(entry.get("table", "")).upper()
-    return "bag" if table_name in DOCUMENT_LEVEL_TABLES else "index"
+    return "bag" if table_name in DOCUMENT_LEVEL_TABLES else "cnote"
 
 
 def _document_stage(entry: dict) -> str:
@@ -898,6 +916,13 @@ def _branch_region(value: Any) -> str:
     return BRANCH_REGION_BY_CODE.get(branch, "Other")
 
 
+def _service_type(value: Any) -> str:
+    service_code = str(value or "").strip().upper()[:3]
+    if service_code in {"YES", "OKE", "JTR", "REG"}:
+        return service_code
+    return "Other"
+
+
 def _cnote_contexts(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, str]]:
     cnote = data.get("CMS_CNOTE")
     if cnote is None or "CNOTE_NO" not in cnote.columns:
@@ -913,9 +938,16 @@ def _cnote_contexts(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, str]]:
     for _, row in work.iterrows():
         origin = _row_string(row, "CNOTE_ORIGIN")
         destination = _row_string(row, "CNOTE_DESTINATION")
+        category = _row_string(row, "delivery_category")
+        if not category:
+            category = delivery_category(_row_string(row, "delivery_type"), _row_string(row, "shipment_scope"))
+        if category == "Unknown" and "shipment_scope" not in row.index and "delivery_type" not in row.index:
+            category = shipment_scope(origin, destination)
         contexts[str(row["CNOTE_NO"])] = {
-            "service_type": _row_string(row, "CNOTE_SERVICES_CODE"),
-            "shipment_type": shipment_scope(origin, destination),
+            "cnote_origin": origin,
+            "cnote_destination": destination,
+            "cnote_service_code": _service_type(_row_string(row, "CNOTE_SERVICES_CODE")),
+            "shipment_type": category,
             "origin_region": _branch_region(origin),
             "destination_region": _branch_region(destination),
         }
@@ -963,7 +995,9 @@ def _check_rows_frame(
     rows["cnote_no"] = rows["_linked_cnotes"].map(lambda values: values[0] if len(values) == 1 else "")
     contexts = cnote_contexts or {}
     row_contexts = rows.apply(lambda row: _single_cnote_context(row, contexts), axis=1)
-    rows["service_type"] = row_contexts.map(lambda context: context.get("service_type", ""))
+    rows["cnote_origin"] = row_contexts.map(lambda context: context.get("cnote_origin", ""))
+    rows["cnote_destination"] = row_contexts.map(lambda context: context.get("cnote_destination", ""))
+    rows["cnote_service_code"] = row_contexts.map(lambda context: context.get("cnote_service_code", ""))
     rows["shipment_type"] = row_contexts.map(lambda context: context.get("shipment_type", ""))
     rows["origin_region"] = row_contexts.map(lambda context: context.get("origin_region", ""))
     rows["destination_region"] = row_contexts.map(lambda context: context.get("destination_region", ""))
@@ -973,11 +1007,10 @@ def _check_rows_frame(
     rows["main_indicator"] = entry.get("indicator", "")
     rows["main_impact"] = entry.get("main_impact", "")
     rows["impact_details"] = entry.get("impact_details", "")
-    rows["issue_description"] = entry.get("description", "")
+    rows["logic_description"] = entry.get("description", "")
+    rows["issue_description"] = entry.get("issue_description", "")
     rows["column_name"] = _entry_column_name(entry)
     rows["table_name"] = entry["table"]
-    rows["impact_billing"] = entry.get("impact_billing", "")
-    rows["impact_operational"] = entry.get("impact_operational", "")
     return rows
 
 
@@ -1019,8 +1052,6 @@ def _rule_summary_row(
         "result_rows": result_rows,
         "skip_reason": skip_reason,
         "error_message": error_message,
-        "impact_billing": entry.get("impact_billing", ""),
-        "impact_operational": entry.get("impact_operational", ""),
     }
 
 

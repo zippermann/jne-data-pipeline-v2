@@ -169,7 +169,7 @@ def test_governance_writer_replaces_existing_output_files(tmp_path):
             "cnote_no": ["C1"],
             "document_type": ["CNOTE"],
             "document_id": ["C1"],
-            "level": ["index"],
+            "level": ["cnote"],
             "stage": [""],
             "index_code": ["COMP_TEST"],
             "main_indicator": ["Completeness"],
@@ -178,8 +178,6 @@ def test_governance_writer_replaces_existing_output_files(tmp_path):
             "status": ["PASS"],
             "variable_1": ["C1"],
             "variable_2": [""],
-            "impact_billing": ["Y"],
-            "impact_operational": ["Y"],
         }))
 
     lines = csv_path.read_text(encoding="utf-8").splitlines()
@@ -188,12 +186,39 @@ def test_governance_writer_replaces_existing_output_files(tmp_path):
     assert "old_row" not in lines
 
 
+def test_governance_result_columns_match_dashboard_order():
+    assert RESULT_COLUMNS == [
+        "result_id",
+        "cnote_no",
+        "cnote_origin",
+        "cnote_destination",
+        "origin_region",
+        "destination_region",
+        "cnote_service_code",
+        "index_code",
+        "element",
+        "logic_description",
+        "table_name",
+        "level",
+        "stage",
+        "variable_1",
+        "variable_2",
+        "column_name",
+        "main_indicator",
+        "main_impact",
+        "impact_details",
+        "issue_description",
+        "status",
+    ]
+
+
 def test_catalog_entries_include_analysis_metadata():
     by_code = {entry["index_code"]: entry for entry in CATALOG}
 
     assert all("indicator" in entry for entry in CATALOG)
-    assert all("impact_billing" in entry for entry in CATALOG)
-    assert all("impact_operational" in entry for entry in CATALOG)
+    assert all("issue_description" in entry for entry in CATALOG)
+    assert all("impact_billing" not in entry for entry in CATALOG)
+    assert all("impact_operational" not in entry for entry in CATALOG)
     assert all("main_impact" in entry for entry in CATALOG)
     assert all("impact_details" in entry for entry in CATALOG)
     assert all("impact" not in entry for entry in CATALOG)
@@ -202,15 +227,15 @@ def test_catalog_entries_include_analysis_metadata():
     assert by_code["COMP1E11"]["indicator"] == "Zone Code"
     assert by_code["COMP1J9"]["indicator"] == "Unique Identifier"
     assert by_code["COMP2P6"]["indicator"] == "Flag"
-    assert by_code["COMP1V19"]["impact_operational"] == "Y"
-    assert by_code["ACCU1A25"]["impact_billing"] == "Y"
-    assert by_code["ACCU1A25"]["impact_operational"] == "Y"
     assert by_code["ACCU4B15"]["main_impact"] == "Billing"
     assert by_code["ACCU4B15"]["impact_details"] == "Potential Revenue Loss"
+    assert by_code["ACCU4B15"]["issue_description"] == "Package is weighted again due to volumetric weight issues"
     assert by_code["ACCU3B13B"]["main_impact"] == "Billing"
     assert by_code["ACCU3B13B"]["impact_details"] == "Over-billing/Under-billing"
+    assert by_code["ACCU3B13B"]["issue_description"] == "Prefix Destination Code Difference (CMS Cnote vs DCorrect Destination)"
     assert by_code["COMP1B1"]["main_impact"] == "TBD"
     assert by_code["COMP1B1"]["impact_details"] == "TBD"
+    assert by_code["COMP1B1"]["issue_description"] == "TBD"
 
 
 def test_governance_results_enrich_pass_rows_with_dashboard_context():
@@ -219,7 +244,8 @@ def test_governance_results_enrich_pass_rows_with_dashboard_context():
             "CNOTE_NO": ["CNOTE1"],
             "CNOTE_ORIGIN": ["CGK10000"],
             "CNOTE_DESTINATION": ["BDO10000"],
-            "CNOTE_SERVICES_CODE": ["REG"],
+            "CNOTE_SERVICES_CODE": ["REGULAR"],
+            "delivery_category": ["Direct Domestic"],
         }),
     }
     entry = {
@@ -229,10 +255,9 @@ def test_governance_results_enrich_pass_rows_with_dashboard_context():
         "table": "CMS_CNOTE",
         "params": {"column": "CNOTE_SERVICES_CODE", "cnote_column": "CNOTE_NO"},
         "description": "Service code should be present",
+        "issue_description": "Missing service code affects routing checks",
         "main_impact": "Operational",
         "impact_details": "Routing visibility",
-        "impact_billing": "",
-        "impact_operational": "Y",
     }
     outcome = RuleOutcome(
         total_checked=1,
@@ -252,11 +277,29 @@ def test_governance_results_enrich_pass_rows_with_dashboard_context():
     assert rows.loc[0, "element"] == "Completeness"
     assert rows.loc[0, "main_impact"] == "Operational"
     assert rows.loc[0, "impact_details"] == "Routing visibility"
-    assert rows.loc[0, "issue_description"] == "Service code should be present"
-    assert rows.loc[0, "service_type"] == "REG"
-    assert rows.loc[0, "shipment_type"] == "Domestic"
+    assert rows.loc[0, "logic_description"] == "Service code should be present"
+    assert rows.loc[0, "issue_description"] == "Missing service code affects routing checks"
+    assert rows.loc[0, "cnote_origin"] == "CGK10000"
+    assert rows.loc[0, "cnote_destination"] == "BDO10000"
+    assert rows.loc[0, "cnote_service_code"] == "REG"
+    assert rows.loc[0, "shipment_type"] == "Direct Domestic"
     assert rows.loc[0, "origin_region"] == "Jakarta"
     assert rows.loc[0, "destination_region"] == "Jawa Barat"
+
+
+def test_cnote_contexts_bucket_service_type_from_first_three_characters():
+    data = {
+        "CMS_CNOTE": pd.DataFrame({
+            "CNOTE_NO": ["CNOTE1", "CNOTE2", "CNOTE3"],
+            "CNOTE_SERVICES_CODE": ["YES19", "jtr-heavy", "BAD"],
+        }),
+    }
+
+    contexts = _cnote_contexts(data)
+
+    assert contexts["CNOTE1"]["cnote_service_code"] == "YES"
+    assert contexts["CNOTE2"]["cnote_service_code"] == "JTR"
+    assert contexts["CNOTE3"]["cnote_service_code"] == "Other"
 
 
 def test_drsheet_pra_uses_existing_cnote_column_as_document_key():
@@ -504,7 +547,7 @@ def test_non_cnote_document_only_populates_cnote_when_in_sample():
     assert rows["stage"].tolist() == ["Warehouse Manifest", "Warehouse Manifest"]
 
 
-def test_regular_cnote_governance_rows_are_index_level_with_stage():
+def test_regular_cnote_governance_rows_are_cnote_level_with_stage():
     entry = {
         "index_code": "COMP_TEST",
         "indicator": "Completeness",
@@ -525,14 +568,14 @@ def test_regular_cnote_governance_rows_are_index_level_with_stage():
 
     rows = _check_rows_frame(entry, outcome, {}, {"CNOTE1"})
 
-    assert rows.loc[0, "level"] == "index"
+    assert rows.loc[0, "level"] == "cnote"
     assert rows.loc[0, "stage"] == "Pick up/Drop Off"
 
 
 def test_document_tags_cover_level_and_operational_stage():
     examples = {
-        "CMS_APICUST": ("index", "Shipper"),
-        "CMS_CNOTE": ("index", "Pick up/Drop Off"),
+        "CMS_APICUST": ("cnote", "Shipper"),
+        "CMS_CNOTE": ("cnote", "Pick up/Drop Off"),
         "CMS_DRCNOTE": ("bag", "Warehouse Receival"),
         "CMS_MFCNOTE": ("bag", "Warehouse Manifest"),
         "CMS_DHOCNOTE": ("bag", "Cabang"),
@@ -692,8 +735,6 @@ def test_rule_summary_records_skipped_and_no_row_rules(monkeypatch, tmp_path):
         "rule_family": "fake_rule",
         "table": "MISSING_TABLE",
         "params": {},
-        "impact_billing": "N",
-        "impact_operational": "Y",
     }
     no_rows_entry = {
         "index_code": "CONS_TEST_EMPTY",
@@ -702,8 +743,6 @@ def test_rule_summary_records_skipped_and_no_row_rules(monkeypatch, tmp_path):
         "rule_family": "fake_rule",
         "table": "BASE_TABLE",
         "params": {},
-        "impact_billing": "Y",
-        "impact_operational": "Y",
     }
 
     def fake_rule(data, params):
@@ -742,8 +781,6 @@ def test_skipped_rules_only_fail_when_requested(monkeypatch, tmp_path):
         "rule_family": "fake_rule",
         "table": "MISSING_TABLE",
         "params": {},
-        "impact_billing": "N",
-        "impact_operational": "Y",
     }
     monkeypatch.setattr(runner, "CATALOG", [skipped_entry])
 

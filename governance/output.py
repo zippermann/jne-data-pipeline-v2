@@ -11,26 +11,25 @@ import pandas as pd
 RESULT_COLUMNS = [
     "result_id",
     "cnote_no",
-    "document_id",
-    "level",
-    "stage",
-    "service_type",
-    "shipment_type",
+    "cnote_origin",
+    "cnote_destination",
     "origin_region",
     "destination_region",
+    "cnote_service_code",
     "index_code",
     "element",
+    "logic_description",
+    "table_name",
+    "level",
+    "stage",
+    "variable_1",
+    "variable_2",
+    "column_name",
     "main_indicator",
     "main_impact",
     "impact_details",
     "issue_description",
-    "column_name",
-    "table_name",
     "status",
-    "variable_1",
-    "variable_2",
-    "impact_billing",
-    "impact_operational",
 ]
 
 RESULT_CNOTE_COLUMNS = [
@@ -51,8 +50,6 @@ RULE_SUMMARY_COLUMNS = [
     "result_rows",
     "skip_reason",
     "error_message",
-    "impact_billing",
-    "impact_operational",
 ]
 
 
