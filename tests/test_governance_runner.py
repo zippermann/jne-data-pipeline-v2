@@ -253,12 +253,10 @@ def test_governance_results_enrich_pass_rows_with_dashboard_context():
     assert rows.loc[0, "main_impact"] == "Operational"
     assert rows.loc[0, "impact_details"] == "Routing visibility"
     assert rows.loc[0, "issue_description"] == "Service code should be present"
-    assert rows.loc[0, "package_journey"] == "Shipper"
     assert rows.loc[0, "service_type"] == "REG"
     assert rows.loc[0, "shipment_type"] == "Domestic"
-    assert rows.loc[0, "origin_region"] == ""
-    assert rows.loc[0, "destination_region"] == ""
-    assert rows.loc[0, "origin_destination_region"] == ""
+    assert rows.loc[0, "origin_region"] == "Jakarta"
+    assert rows.loc[0, "destination_region"] == "Jawa Barat"
 
 
 def test_drsheet_pra_uses_existing_cnote_column_as_document_key():
@@ -310,7 +308,7 @@ def test_bag_governance_rows_keep_document_id_and_links_cnotes_separately():
     assert rows["document_id"].tolist() == ["BAG1"]
     assert rows["document_type"].tolist() == ["DMBAG"]
     assert rows["level"].tolist() == ["bag"]
-    assert rows["stage"].tolist() == ["manifest"]
+    assert rows["stage"].tolist() == ["Warehouse Manifest"]
     assert link_rows["result_id"].tolist() == ["R000000000001", "R000000000001"]
     assert link_rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
     assert link_rows.columns.tolist() == ["result_id", "cnote_no", "link_method"]
@@ -382,7 +380,7 @@ def test_mmbag_links_to_cnotes_through_dmbag():
     assert rows.loc[0, "document_id"] == "MMBAG1"
     assert rows.loc[0, "cnote_no"] == ""
     assert rows.loc[0, "level"] == "bag"
-    assert rows.loc[0, "stage"] == "manifest"
+    assert rows.loc[0, "stage"] == "Warehouse Manifest"
     assert link_rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
 
 
@@ -503,10 +501,10 @@ def test_non_cnote_document_only_populates_cnote_when_in_sample():
     assert rows["document_id"].tolist() == ["MANIFEST1", "CNOTE1"]
     assert rows["cnote_no"].tolist() == ["", "CNOTE1"]
     assert rows["level"].tolist() == ["bag", "bag"]
-    assert rows["stage"].tolist() == ["manifest", "manifest"]
+    assert rows["stage"].tolist() == ["Warehouse Manifest", "Warehouse Manifest"]
 
 
-def test_regular_cnote_governance_rows_are_index_level_without_stage():
+def test_regular_cnote_governance_rows_are_index_level_with_stage():
     entry = {
         "index_code": "COMP_TEST",
         "indicator": "Completeness",
@@ -528,16 +526,17 @@ def test_regular_cnote_governance_rows_are_index_level_without_stage():
     rows = _check_rows_frame(entry, outcome, {}, {"CNOTE1"})
 
     assert rows.loc[0, "level"] == "index"
-    assert rows.loc[0, "stage"] == ""
+    assert rows.loc[0, "stage"] == "Pick up/Drop Off"
 
 
 def test_document_tags_cover_level_and_operational_stage():
     examples = {
-        "CMS_DRCNOTE": ("bag", "receival"),
-        "CMS_MFCNOTE": ("bag", "manifest"),
-        "CMS_DHOCNOTE": ("bag", "handover"),
-        "CMS_DRSHEET": ("bag", "runsheet"),
-        "CMS_CNOTE": ("index", ""),
+        "CMS_APICUST": ("index", "Shipper"),
+        "CMS_CNOTE": ("index", "Pick up/Drop Off"),
+        "CMS_DRCNOTE": ("bag", "Warehouse Receival"),
+        "CMS_MFCNOTE": ("bag", "Warehouse Manifest"),
+        "CMS_DHOCNOTE": ("bag", "Cabang"),
+        "CMS_DRSHEET": ("bag", "Receiver"),
     }
 
     for table_name, (expected_level, expected_stage) in examples.items():

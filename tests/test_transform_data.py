@@ -4,6 +4,7 @@ from transform.transform_data import (
     DERIVED_TABLE,
     _derived_manifest_entry,
     _update_manifest,
+    delivery_category,
     shipment_scope,
 )
 
@@ -14,6 +15,14 @@ def test_shipment_scope_classification_cases():
     assert shipment_scope("CGK10000", "BKI10044") == "Domestic"
     assert shipment_scope("CGK", "BKI10044") == "Unknown"
     assert shipment_scope("CGKA0000", "BKI10044") == "Unknown"
+
+
+def test_delivery_category_combines_domestic_only():
+    assert delivery_category("Direct", "Domestic") == "Direct Domestic"
+    assert delivery_category("Transit", "Domestic") == "Transit Domestic"
+    assert delivery_category("Direct", "Intracity") == "Intracity"
+    assert delivery_category("Transit", "Intercity") == "Intercity"
+    assert delivery_category("Direct", "Unknown") == "Unknown"
 
 
 def test_update_manifest_replaces_existing_derived_entry(tmp_path):

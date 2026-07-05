@@ -62,6 +62,74 @@ CNOTE_CONTEXT_COLUMNS = {
     "CNOTE_SERVICES_CODE",
 }
 
+BRANCH_REGION_BY_CODE = {
+    "AMI": "JTBNN",
+    "DPS": "JTBNN",
+    "KOE": "JTBNN",
+    "LBJ": "JTBNN",
+    "BKI": "Bodetabekcikcil",
+    "BOO": "Bodetabekcikcil",
+    "CKR": "Bodetabekcikcil",
+    "DPK": "Bodetabekcikcil",
+    "TGR": "Bodetabekcikcil",
+    "CLG": "Bodetabekcikcil",
+    "CGK": "Jakarta",
+    "BDO": "Jawa Barat",
+    "CBN": "Jawa Barat",
+    "KRW": "Jawa Barat",
+    "PWT": "Jawa Barat",
+    "SMI": "Jawa Barat",
+    "TSM": "Jawa Barat",
+    "GRT": "Jawa Barat",
+    "CXP": "Jawa Tengah",
+    "JOG": "Jawa Tengah",
+    "MGL": "Jawa Tengah",
+    "SOC": "Jawa Tengah",
+    "SRG": "Jawa Tengah",
+    "TGL": "Jawa Tengah",
+    "JBR": "JTBNN",
+    "KDR": "JTBNN",
+    "MDN": "JTBNN",
+    "MJK": "JTBNN",
+    "MXG": "JTBNN",
+    "PBL": "JTBNN",
+    "PSR": "JTBNN",
+    "SDA": "JTBNN",
+    "SUB": "JTBNN",
+    "BDJ": "Kalimantan",
+    "BPN": "Kalimantan",
+    "BTG": "Kalimantan",
+    "PKY": "Kalimantan",
+    "PNK": "Kalimantan",
+    "SMD": "Kalimantan",
+    "TRK": "Kalimantan",
+    "AMQ": "Sulampapua",
+    "DJJ": "Sulampapua",
+    "GTO": "Sulampapua",
+    "KDI": "Sulampapua",
+    "MDC": "Sulampapua",
+    "MKQ": "Sulampapua",
+    "PLW": "Sulampapua",
+    "SOQ": "Sulampapua",
+    "TIM": "Sulampapua",
+    "TTE": "Sulampapua",
+    "UPG": "Sulampapua",
+    "MKW": "Sulampapua",
+    "BKS": "Sumbagsel",
+    "DJB": "Sumbagsel",
+    "PGK": "Sumbagsel",
+    "PLM": "Sumbagsel",
+    "TJQ": "Sumbagsel",
+    "TKG": "Sumbagsel",
+    "BTH": "Sumbagut",
+    "BTJ": "Sumbagut",
+    "DTB": "Sumbagut",
+    "MES": "Sumbagut",
+    "PDG": "Sumbagut",
+    "PKU": "Sumbagut",
+    "TNJ": "Sumbagut",
+}
+
 
 @dataclass(frozen=True)
 class BronzeTable:
@@ -740,66 +808,75 @@ def _document_type(entry: dict) -> str:
 
 
 DOCUMENT_STAGE_BY_TABLE = {
-    "CMS_DRCNOTE": "receival",
-    "CMS_MRCNOTE": "receival",
-    "CMS_MHI_HOC": "receival",
-    "CMS_DHI_HOC": "receival",
-    "CMS_MANIFEST": "manifest",
-    "CMS_MFCNOTE": "manifest",
-    "CMS_MFBAG": "manifest",
-    "CMS_DMBAG": "manifest",
-    "CMS_MMBAG": "manifest",
-    "CMS_DSMU": "manifest",
-    "CMS_MSMU": "manifest",
-    "CMS_DHOCNOTE": "handover",
-    "CMS_MHOCNOTE": "handover",
-    "CMS_DBAG": "handover",
-    "CMS_DBAG_HO": "handover",
-    "CMS_COST_DTRANSIT_AGEN": "handover",
-    "CMS_COST_MTRANSIT_AGEN": "handover",
-    "CMS_DSJ": "handover",
-    "CMS_MSJ": "handover",
-    "CMS_RDSJ": "handover",
-    "CMS_DHICNOTE": "handover",
-    "CMS_MHICNOTE": "handover",
-    "CMS_MRSHEET": "runsheet",
-    "CMS_DRSHEET": "runsheet",
-    "CMS_CNOTE_POD": "runsheet",
-    "CMS_DHOV_RSHEET": "runsheet",
-    "CMS_MHOUNDEL_POD": "runsheet",
-    "CMS_DHOUNDEL_POD": "runsheet",
-}
-
-PACKAGE_JOURNEY_BY_TABLE = {
     "CMS_APICUST": "Shipper",
-    "CMS_CNOTE": "Shipper",
-    "CMS_MRCNOTE": "Pick up/Drop Off",
-    "CMS_DRCNOTE": "Pick up/Drop Off",
-    "CMS_MHICNOTE": "Warehouse Receival",
-    "CMS_DHICNOTE": "Warehouse Receival",
-    "CMS_MMBAG": "Warehouse Manifest",
+    "CMS_CNOTE": "Pick up/Drop Off",
+    "CMS_DHI_HOC": "Pick up/Drop Off",
+    "CMS_MHI_HOC": "Pick up/Drop Off",
+    "CMS_DRCNOTE": "Warehouse Receival",
+    "CMS_MRCNOTE": "Warehouse Receival",
     "CMS_DMBAG": "Warehouse Manifest",
-    "CMS_MFBAG": "Warehouse Manifest",
-    "CMS_DFBAG": "Warehouse Manifest",
-    "CMS_MANIFEST": "Warehouse Manifest",
-    "CMS_MFCNOTE": "Warehouse Manifest",
     "CMS_DSMU": "Warehouse Manifest",
+    "CMS_DSTATUS": "Warehouse Manifest",
+    "CMS_MANIFEST": "Warehouse Manifest",
+    "CMS_MFBAG": "Warehouse Manifest",
+    "CMS_MFCNOTE": "Warehouse Manifest",
+    "CMS_MMBAG": "Warehouse Manifest",
     "CMS_MSMU": "Warehouse Manifest",
-    "CMS_MHOCNOTE": "Warehouse Manifest",
-    "CMS_DHOCNOTE": "Warehouse Manifest",
+    "CMS_COST_DTRANSIT_AGEN": "Cabang",
+    "CMS_COST_MTRANSIT_AGEN": "Cabang",
     "CMS_DBAG_HO": "Cabang",
-    "CMS_DSTATUS": "Cabang",
-    "CMS_MSJ": "Receiver",
-    "CMS_DSJ": "Receiver",
-    "CMS_MRSHEET": "Receiver",
-    "CMS_DRSHEET": "Receiver",
+    "CMS_DHICNOTE": "Cabang",
+    "CMS_DHOCNOTE": "Cabang",
+    "CMS_DSJ": "Cabang",
+    "CMS_MHICNOTE": "Cabang",
+    "CMS_MHOCNOTE": "Cabang",
+    "CMS_MSJ": "Cabang",
+    "CMS_RDSJ": "Cabang",
     "CMS_CNOTE_POD": "Receiver",
+    "CMS_DHOUNDEL_POD": "Receiver",
+    "CMS_DHOV_RSHEET": "Receiver",
+    "CMS_DRSHEET": "Receiver",
+    "CMS_DRSHEET_PRA": "Receiver",
+    "CMS_MHOUNDEL_POD": "Receiver",
+    "CMS_MRSHEET": "Receiver",
 }
 
+DOCUMENT_LEVEL_TABLES = {
+    "CMS_DRCNOTE",
+    "CMS_MRCNOTE",
+    "CMS_MANIFEST",
+    "CMS_MFCNOTE",
+    "CMS_MFBAG",
+    "CMS_DMBAG",
+    "CMS_MMBAG",
+    "CMS_DSMU",
+    "CMS_MSMU",
+    "CMS_DHOCNOTE",
+    "CMS_MHOCNOTE",
+    "CMS_DBAG",
+    "CMS_DBAG_HO",
+    "CMS_COST_DTRANSIT_AGEN",
+    "CMS_COST_MTRANSIT_AGEN",
+    "CMS_DSJ",
+    "CMS_MSJ",
+    "CMS_RDSJ",
+    "CMS_DHICNOTE",
+    "CMS_MHICNOTE",
+    "CMS_MRSHEET",
+    "CMS_DRSHEET",
+    "CMS_DRSHEET_PRA",
+    "CMS_CNOTE_POD",
+    "CMS_DHOV_RSHEET",
+    "CMS_MHOUNDEL_POD",
+    "CMS_DHOUNDEL_POD",
+    "CMS_DHI_HOC",
+    "CMS_MHI_HOC",
+    "CMS_DSTATUS",
+}
 
 def _document_level(entry: dict) -> str:
     table_name = str(entry.get("table", "")).upper()
-    return "bag" if table_name in DOCUMENT_STAGE_BY_TABLE else "index"
+    return "bag" if table_name in DOCUMENT_LEVEL_TABLES else "index"
 
 
 def _document_stage(entry: dict) -> str:
@@ -807,16 +884,18 @@ def _document_stage(entry: dict) -> str:
     return DOCUMENT_STAGE_BY_TABLE.get(table_name, "")
 
 
-def _package_journey(entry: dict) -> str:
-    table_name = str(entry.get("table", "")).upper()
-    return PACKAGE_JOURNEY_BY_TABLE.get(table_name, "Other")
-
-
 def _row_string(row: pd.Series, column: str) -> str:
     value = row.get(column, "")
     if pd.isna(value):
         return ""
     return str(value).strip()
+
+
+def _branch_region(value: Any) -> str:
+    branch = str(value or "").strip().upper()[:3]
+    if len(branch) < 3:
+        return "Other"
+    return BRANCH_REGION_BY_CODE.get(branch, "Other")
 
 
 def _cnote_contexts(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, str]]:
@@ -834,16 +913,11 @@ def _cnote_contexts(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, str]]:
     for _, row in work.iterrows():
         origin = _row_string(row, "CNOTE_ORIGIN")
         destination = _row_string(row, "CNOTE_DESTINATION")
-        origin_region = ""
-        destination_region = ""
         contexts[str(row["CNOTE_NO"])] = {
             "service_type": _row_string(row, "CNOTE_SERVICES_CODE"),
             "shipment_type": shipment_scope(origin, destination),
-            "origin_region": origin_region,
-            "destination_region": destination_region,
-            "origin_destination_region": (
-                f"{origin_region} x {destination_region}" if origin_region and destination_region else ""
-            ),
+            "origin_region": _branch_region(origin),
+            "destination_region": _branch_region(destination),
         }
     return contexts
 
@@ -872,7 +946,6 @@ def _check_rows_frame(
     rows["document_type"] = _document_type(entry)
     rows["level"] = _document_level(entry)
     rows["stage"] = _document_stage(entry)
-    rows["package_journey"] = _package_journey(entry)
     cnotes = cnote_universe or set()
 
     bridge_map = document_bridges or {}
@@ -894,7 +967,6 @@ def _check_rows_frame(
     rows["shipment_type"] = row_contexts.map(lambda context: context.get("shipment_type", ""))
     rows["origin_region"] = row_contexts.map(lambda context: context.get("origin_region", ""))
     rows["destination_region"] = row_contexts.map(lambda context: context.get("destination_region", ""))
-    rows["origin_destination_region"] = row_contexts.map(lambda context: context.get("origin_destination_region", ""))
 
     rows["index_code"] = entry["index_code"]
     rows["element"] = entry.get("element", "")

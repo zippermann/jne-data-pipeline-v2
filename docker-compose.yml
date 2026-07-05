@@ -43,7 +43,7 @@ x-minio-env: &minio-env
 x-mart-clickhouse-env: &mart-clickhouse-env
   MART_CLICKHOUSE_HOST: mart-clickhouse
   MART_CLICKHOUSE_PORT: "8123"
-  MART_CLICKHOUSE_DB: ${MART_CLICKHOUSE_DB:-jne_mart}
+  MART_CLICKHOUSE_DB: ${MART_CLICKHOUSE_DB:-mart}
   MART_CLICKHOUSE_USER: ${MART_CLICKHOUSE_USER:-default}
   MART_CLICKHOUSE_PASSWORD: ${MART_CLICKHOUSE_PASSWORD:-jne_mart}
   MART_CLICKHOUSE_SECURE: "false"
@@ -109,7 +109,7 @@ services:
     image: clickhouse/clickhouse-server:25.3
     restart: unless-stopped
     environment:
-      CLICKHOUSE_DB: ${MART_CLICKHOUSE_DB:-jne_mart}
+      CLICKHOUSE_DB: ${MART_CLICKHOUSE_DB:-mart}
       CLICKHOUSE_USER: ${MART_CLICKHOUSE_USER:-default}
       CLICKHOUSE_PASSWORD: ${MART_CLICKHOUSE_PASSWORD:-jne_mart}
     ports:

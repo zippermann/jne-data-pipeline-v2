@@ -11,7 +11,7 @@ bronze:
 clickhouse:
   host: "${MART_CLICKHOUSE_HOST:-mart-clickhouse}"
   port: "${MART_CLICKHOUSE_PORT:-8123}"
-  database: "${MART_CLICKHOUSE_DB:-jne_mart}"
+  database: "${MART_CLICKHOUSE_DB:-mart}"
   user: "${MART_CLICKHOUSE_USER:-default}"
   password: "${MART_CLICKHOUSE_PASSWORD:-jne_mart}"
   secure: "${MART_CLICKHOUSE_SECURE:-false}"

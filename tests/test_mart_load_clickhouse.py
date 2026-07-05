@@ -23,7 +23,7 @@ def _config() -> MartClickHouseConfig:
     return MartClickHouseConfig(
         minio=MinioConfig("minio:9000", "minioadmin", "minioadmin123", False),
         bronze=BronzeConfig("jne-bronze", "bronze/jne/run_id=R_TEST"),
-        clickhouse=ClickHouseConfig("mart-clickhouse", 8123, "jne_mart", "default", "jne_mart", False),
+        clickhouse=ClickHouseConfig("mart-clickhouse", 8123, "mart", "default", "jne_mart", False),
         schemas=SchemaConfig(
             bronze="bronze",
             bronze_staging="bronze_staging",
@@ -65,7 +65,7 @@ bronze:
 clickhouse:
   host: "${MART_CLICKHOUSE_HOST:-mart-clickhouse}"
   port: "${MART_CLICKHOUSE_PORT:-8123}"
-  database: "${MART_CLICKHOUSE_DB:-jne_mart}"
+  database: "${MART_CLICKHOUSE_DB:-mart}"
   user: "${MART_CLICKHOUSE_USER:-default}"
   password: "${MART_CLICKHOUSE_PASSWORD:-jne_mart}"
 schemas:

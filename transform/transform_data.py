@@ -78,6 +78,19 @@ def shipment_scope(origin: Any, destination: Any) -> str:
     return "Domestic"
 
 
+def delivery_category(delivery_type: Any, scope: Any) -> str:
+    """Combine delivery type and shipment scope for dashboard grouping."""
+    delivery_text = str(delivery_type or "").strip()
+    scope_text = str(scope or "").strip()
+    if scope_text in {"Intracity", "Intercity"}:
+        return scope_text
+    if scope_text == "Domestic" and delivery_text == "Transit":
+        return "Transit Domestic"
+    if scope_text == "Domestic" and delivery_text == "Direct":
+        return "Direct Domestic"
+    return scope_text or "Unknown"
+
+
 def _duckdb_connection(config: dict):
     try:
         import duckdb
@@ -269,39 +282,49 @@ def _build_cnote_transform_query(
             LEFT JOIN handover_out_events ho ON c.CNOTE_NO = ho.cnote_no
             LEFT JOIN runsheet_events rs ON c.CNOTE_NO = rs.cnote_no
             LEFT JOIN pod_events pod ON c.CNOTE_NO = pod.cnote_no
+        ),
+        classified AS (
+            SELECT * EXCLUDE (
+                    o_code, d_code, o_digit, d_digit, has_transit, transit_leg_count,
+                    first_manifest_ts, pickup_ts, handover_in_ts, handover_out_ts, runsheet_ts, pod_ts
+                ),
+                CASE WHEN has_transit THEN 'Transit' ELSE 'Direct' END AS delivery_type,
+                CASE
+                    WHEN o_code = '' OR d_code = '' OR o_digit = '' OR d_digit = '' THEN 'Unknown'
+                    WHEN o_code = d_code AND o_digit = d_digit THEN 'Intracity'
+                    WHEN o_code = d_code THEN 'Intercity'
+                    ELSE 'Domestic'
+                END AS shipment_scope,
+                transit_leg_count AS transit_manifest_count,
+                transit_leg_count
+                    + CASE WHEN pickup_ts IS NOT NULL THEN 1 ELSE 0 END
+                    + CASE WHEN handover_in_ts IS NOT NULL THEN 1 ELSE 0 END
+                    + CASE WHEN handover_out_ts IS NOT NULL THEN 1 ELSE 0 END
+                    + CASE WHEN runsheet_ts IS NOT NULL THEN 1 ELSE 0 END AS handover_count,
+                CASE WHEN pickup_ts IS NOT NULL AND pod_ts IS NOT NULL
+                     THEN (epoch(pod_ts) - epoch(pickup_ts)) / 3600.0
+                END AS sla_total_hours,
+                CASE WHEN pickup_ts IS NOT NULL AND first_manifest_ts IS NOT NULL
+                     THEN (epoch(first_manifest_ts) - epoch(pickup_ts)) / 3600.0
+                END AS sla_pickup_to_firstmanifest_hours,
+                to_json(struct_pack(
+                    pickup := pickup_ts,
+                    first_manifest := first_manifest_ts,
+                    handover_in := handover_in_ts,
+                    handover_out := handover_out_ts,
+                    delivery := runsheet_ts,
+                    pod := pod_ts
+                )) AS sla_per_step
+            FROM parts
         )
-        SELECT * EXCLUDE (
-                o_code, d_code, o_digit, d_digit, has_transit, transit_leg_count,
-                first_manifest_ts, pickup_ts, handover_in_ts, handover_out_ts, runsheet_ts, pod_ts
-            ),
-            CASE WHEN has_transit THEN 'Transit' ELSE 'Direct' END AS delivery_type,
+        SELECT *,
             CASE
-                WHEN o_code = '' OR d_code = '' OR o_digit = '' OR d_digit = '' THEN 'Unknown'
-                WHEN o_code = d_code AND o_digit = d_digit THEN 'Intracity'
-                WHEN o_code = d_code THEN 'Intercity'
-                ELSE 'Domestic'
-            END AS shipment_scope,
-            transit_leg_count AS transit_manifest_count,
-            transit_leg_count
-                + CASE WHEN pickup_ts IS NOT NULL THEN 1 ELSE 0 END
-                + CASE WHEN handover_in_ts IS NOT NULL THEN 1 ELSE 0 END
-                + CASE WHEN handover_out_ts IS NOT NULL THEN 1 ELSE 0 END
-                + CASE WHEN runsheet_ts IS NOT NULL THEN 1 ELSE 0 END AS handover_count,
-            CASE WHEN pickup_ts IS NOT NULL AND pod_ts IS NOT NULL
-                 THEN (epoch(pod_ts) - epoch(pickup_ts)) / 3600.0
-            END AS sla_total_hours,
-            CASE WHEN pickup_ts IS NOT NULL AND first_manifest_ts IS NOT NULL
-                 THEN (epoch(first_manifest_ts) - epoch(pickup_ts)) / 3600.0
-            END AS sla_pickup_to_firstmanifest_hours,
-            to_json(struct_pack(
-                pickup := pickup_ts,
-                first_manifest := first_manifest_ts,
-                handover_in := handover_in_ts,
-                handover_out := handover_out_ts,
-                delivery := runsheet_ts,
-                pod := pod_ts
-            )) AS sla_per_step
-        FROM parts
+                WHEN shipment_scope IN ('Intracity', 'Intercity') THEN shipment_scope
+                WHEN shipment_scope = 'Domestic' AND delivery_type = 'Transit' THEN 'Transit Domestic'
+                WHEN shipment_scope = 'Domestic' AND delivery_type = 'Direct' THEN 'Direct Domestic'
+                ELSE shipment_scope
+            END AS delivery_category
+        FROM classified
     """
 
 
@@ -316,15 +339,15 @@ def _copy_to_parquet(con: Any, query: str, output_dir: Path) -> int:
     return row_count
 
 
-def _classification_matrix(con: Any) -> list[tuple[str, str, int]]:
+def _classification_matrix(con: Any) -> list[tuple[str, str, str, int]]:
     return [
-        (str(row[0]), str(row[1]), int(row[2]))
+        (str(row[0]), str(row[1]), str(row[2]), int(row[3]))
         for row in con.execute(
             """
-            SELECT delivery_type, shipment_scope, count(*) AS cnotes
+            SELECT delivery_category, delivery_type, shipment_scope, count(*) AS cnotes
             FROM cms_cnote_transformed
-            GROUP BY 1, 2
-            ORDER BY 1, 2
+            GROUP BY 1, 2, 3
+            ORDER BY 1, 2, 3
             """
         ).fetchall()
     ]
@@ -337,13 +360,13 @@ def _log_quality_summary(con: Any, input_rows: int, output_rows: int) -> None:
 
     _log(f"{DERIVED_TABLE} classification matrix:")
     matrix = _classification_matrix(con)
-    counts = {(delivery, scope): count for delivery, scope, count in matrix}
-    for delivery, scope, count in matrix:
-        _log(f"  {delivery} / {scope}: {count:,}")
+    counts = {(delivery, scope): count for _category, delivery, scope, count in matrix}
+    for category, delivery, scope, count in matrix:
+        _log(f"  {category} ({delivery} / {scope}): {count:,}")
 
     transit_intracity = counts.get(("Transit", "Intracity"), 0)
     transit_intercity = counts.get(("Transit", "Intercity"), 0)
-    unknown = sum(count for _delivery, scope, count in matrix if scope == "Unknown")
+    unknown = sum(count for _category, _delivery, scope, count in matrix if scope == "Unknown")
     _log(f"Transit Intracity anomaly count: {transit_intracity:,}")
     _log(f"Transit Intercity anomaly count: {transit_intercity:,}")
     _log(f"Unknown shipment_scope count: {unknown:,}")
