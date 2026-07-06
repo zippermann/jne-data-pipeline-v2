@@ -188,6 +188,7 @@ def test_governance_writer_replaces_existing_output_files(tmp_path):
 
 def test_governance_result_columns_match_dashboard_order():
     assert RESULT_COLUMNS == [
+        "shipment_type",
         "result_id",
         "cnote_no",
         "cnote_origin",

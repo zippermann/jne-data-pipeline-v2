@@ -9,6 +9,7 @@ import pandas as pd
 
 
 RESULT_COLUMNS = [
+    "shipment_type",
     "result_id",
     "cnote_no",
     "cnote_origin",
