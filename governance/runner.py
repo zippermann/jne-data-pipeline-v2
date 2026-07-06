@@ -993,6 +993,7 @@ def _check_rows_frame(
         rows["_link_method"] = "direct_cnote_value"
 
     rows["cnote_no"] = rows["_linked_cnotes"].map(lambda values: values[0] if len(values) == 1 else "")
+    rows["document_no"] = rows["document_id"].where(rows["document_id"].ne(rows["cnote_no"]), "")
     contexts = cnote_contexts or {}
     row_contexts = rows.apply(lambda row: _single_cnote_context(row, contexts), axis=1)
     rows["cnote_origin"] = row_contexts.map(lambda context: context.get("cnote_origin", ""))
@@ -1021,6 +1022,8 @@ def _result_cnote_rows(rows: pd.DataFrame) -> pd.DataFrame:
         link_method = str(row["_link_method"])
         cnotes = row["_linked_cnotes"]
         if not isinstance(cnotes, list):
+            continue
+        if len(cnotes) <= 1:
             continue
         for cnote_no in cnotes:
             link_rows.append({

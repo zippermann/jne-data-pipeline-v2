@@ -167,6 +167,7 @@ def test_governance_writer_replaces_existing_output_files(tmp_path):
     with GovernanceResultWriter(csv_path, parquet_path) as writer:
         writer.write(pd.DataFrame({
             "cnote_no": ["C1"],
+            "document_no": [""],
             "document_type": ["CNOTE"],
             "document_id": ["C1"],
             "level": ["cnote"],
@@ -191,6 +192,7 @@ def test_governance_result_columns_match_dashboard_order():
         "shipment_type",
         "result_id",
         "cnote_no",
+        "document_no",
         "cnote_origin",
         "cnote_destination",
         "origin_region",
@@ -275,6 +277,7 @@ def test_governance_results_enrich_pass_rows_with_dashboard_context():
     rows = _check_rows_frame(entry, outcome, {}, {"CNOTE1"}, _cnote_contexts(data))
 
     assert rows.loc[0, "status"] == "PASS"
+    assert rows.loc[0, "document_no"] == ""
     assert rows.loc[0, "element"] == "Completeness"
     assert rows.loc[0, "main_impact"] == "Operational"
     assert rows.loc[0, "impact_details"] == "Routing visibility"
@@ -301,6 +304,35 @@ def test_cnote_contexts_bucket_service_type_from_first_three_characters():
     assert contexts["CNOTE1"]["cnote_service_code"] == "YES"
     assert contexts["CNOTE2"]["cnote_service_code"] == "JTR"
     assert contexts["CNOTE3"]["cnote_service_code"] == "Other"
+
+
+def test_result_cnote_bridge_only_keeps_multi_cnote_links():
+    entry = {
+        "index_code": "COMP_TEST",
+        "indicator": "Unique Identifier",
+        "table": "CMS_CNOTE",
+        "params": {"column": "CNOTE_NO", "cnote_column": "CNOTE_NO"},
+    }
+    outcome = RuleOutcome(
+        total_checked=1,
+        total_failed=0,
+        failures=pd.DataFrame(columns=["cnote_no", "failed_value", "failure_reason"]),
+        checks=pd.DataFrame({
+            "cnote_no": ["CNOTE1"],
+            "status": ["PASS"],
+            "variable_1": ["CNOTE1"],
+            "variable_2": [""],
+        }),
+    )
+
+    rows = _check_rows_frame(entry, outcome, {}, {"CNOTE1"})
+    rows.insert(0, "result_id", ["R000000000001"])
+    link_rows = _result_cnote_rows(rows)
+
+    assert rows.loc[0, "cnote_no"] == "CNOTE1"
+    assert rows.loc[0, "document_no"] == ""
+    assert link_rows.empty
+    assert link_rows.columns.tolist() == ["result_id", "cnote_no", "link_method"]
 
 
 def test_drsheet_pra_uses_existing_cnote_column_as_document_key():
@@ -349,6 +381,7 @@ def test_bag_governance_rows_keep_document_id_and_links_cnotes_separately():
     link_rows = _result_cnote_rows(rows)
 
     assert rows["cnote_no"].tolist() == [""]
+    assert rows["document_no"].tolist() == ["BAG1"]
     assert rows["document_id"].tolist() == ["BAG1"]
     assert rows["document_type"].tolist() == ["DMBAG"]
     assert rows["level"].tolist() == ["bag"]
@@ -422,6 +455,7 @@ def test_mmbag_links_to_cnotes_through_dmbag():
     link_rows = _result_cnote_rows(rows)
 
     assert rows.loc[0, "document_id"] == "MMBAG1"
+    assert rows.loc[0, "document_no"] == "MMBAG1"
     assert rows.loc[0, "cnote_no"] == ""
     assert rows.loc[0, "level"] == "bag"
     assert rows.loc[0, "stage"] == "Warehouse Manifest"
@@ -517,6 +551,7 @@ def test_unmapped_bag_document_does_not_masquerade_as_cnote():
     rows = _check_rows_frame(entry, outcome, {"CMS_MFBAG": {}})
 
     assert rows.loc[0, "cnote_no"] == ""
+    assert rows.loc[0, "document_no"] == "BAG_ONLY"
     assert rows.loc[0, "document_id"] == "BAG_ONLY"
     assert rows.loc[0, "document_type"] == "MFBAG"
 
@@ -544,6 +579,7 @@ def test_non_cnote_document_only_populates_cnote_when_in_sample():
 
     assert rows["document_id"].tolist() == ["MANIFEST1", "CNOTE1"]
     assert rows["cnote_no"].tolist() == ["", "CNOTE1"]
+    assert rows["document_no"].tolist() == ["MANIFEST1", ""]
     assert rows["level"].tolist() == ["bag", "bag"]
     assert rows["stage"].tolist() == ["Warehouse Manifest", "Warehouse Manifest"]
 
@@ -570,6 +606,7 @@ def test_regular_cnote_governance_rows_are_cnote_level_with_stage():
     rows = _check_rows_frame(entry, outcome, {}, {"CNOTE1"})
 
     assert rows.loc[0, "level"] == "cnote"
+    assert rows.loc[0, "document_no"] == ""
     assert rows.loc[0, "stage"] == "Pick up/Drop Off"
 
 
@@ -612,6 +649,7 @@ def test_bridge_cnote_outside_sample_keeps_document_but_blanks_cnote():
     rows = _check_rows_frame(entry, outcome, {"CMS_MFBAG": {"BAG1": ["OUTSIDE_SAMPLE"]}}, {"CNOTE1"})
 
     assert rows.loc[0, "document_id"] == "BAG1"
+    assert rows.loc[0, "document_no"] == "BAG1"
     assert rows.loc[0, "cnote_no"] == ""
 
 

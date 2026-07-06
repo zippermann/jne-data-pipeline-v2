@@ -12,6 +12,7 @@ RESULT_COLUMNS = [
     "shipment_type",
     "result_id",
     "cnote_no",
+    "document_no",
     "cnote_origin",
     "cnote_destination",
     "origin_region",
