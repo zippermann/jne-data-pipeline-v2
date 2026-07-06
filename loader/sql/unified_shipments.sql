@@ -3,6 +3,34 @@ ENGINE = MergeTree
 ORDER BY tuple()
 AS
 WITH
+ref_zone_user_raw AS (
+    SELECT
+        trim(toString(`USER_ID`)) AS `USER_ZONE`,
+        trim(toString(`USER_ZONE_CODE`)) AS `ZONE_CODE`,
+        0 AS `source_priority`
+    FROM {bronze_schema}.`ora_user`
+    WHERE `USER_ID` IS NOT NULL
+      AND trim(toString(`USER_ID`)) != ''
+      AND `USER_ZONE_CODE` IS NOT NULL
+      AND trim(toString(`USER_ZONE_CODE`)) != ''
+    UNION ALL
+    SELECT
+        trim(toString(`COURIER_ID`)) AS `USER_ZONE`,
+        trim(toString(`COURIER_ZONE`)) AS `ZONE_CODE`,
+        1 AS `source_priority`
+    FROM {bronze_schema}.`lastmile_courier`
+    WHERE `COURIER_ID` IS NOT NULL
+      AND trim(toString(`COURIER_ID`)) != ''
+      AND `COURIER_ZONE` IS NOT NULL
+      AND trim(toString(`COURIER_ZONE`)) != ''
+),
+ref_zone_user AS (
+    SELECT
+        `USER_ZONE`,
+        argMin(`ZONE_CODE`, `source_priority`) AS `ZONE_CODE`
+    FROM ref_zone_user_raw
+    GROUP BY `USER_ZONE`
+),
 api_ranked AS (
     SELECT
         *,
@@ -43,7 +71,7 @@ cnote_api AS (
         c.`CNOTE_WEIGHT`,
         c.`CNOTE_AMOUNT`,
         c.`CNOTE_CANCEL`,
-        CAST(NULL AS Nullable(String)) AS `CNOTE_USER_ZONE`,
+        z.`ZONE_CODE` AS `CNOTE_USER_ZONE`,
         a.`CREATE_DATE` AS `API_DATE`,
         a.`APICUST_CUST_NO` AS `API_CUST_ID`,
         a.`APICUST_ORIGIN` AS `API_ORIGIN`,
@@ -59,6 +87,8 @@ cnote_api AS (
     LEFT JOIN cancel_api_ranked t
         ON a.`APICUST_CNOTE_NO` = t.`API_CNOTE_NO`
        AND t.`rn` = 1
+    LEFT JOIN ref_zone_user z
+        ON trim(toString(c.`CNOTE_USER`)) = z.`USER_ZONE`
 ),
 recv_events AS (
     SELECT
@@ -66,26 +96,30 @@ recv_events AS (
         d.`DRCNOTE_NO` AS `RECV_NO`,
         d.`DRCNOTE_TDATE` AS `RECV_SCAN_DATE`,
         m.`MRCNOTE_USER_ID` AS `RECV_USER_ID`,
-        CAST(NULL AS Nullable(String)) AS `RECV_ZONE`,
+        z.`ZONE_CODE` AS `RECV_ZONE`,
         m.`MRCNOTE_DATE` AS `RECV_DATE`,
         m.`MRCNOTE_SIGNDATE` AS `RECV_SIGN_DATE`,
         0 AS `source_priority`
     FROM {bronze_schema}.`cms_drcnote` d
     LEFT JOIN {bronze_schema}.`cms_mrcnote` m
         ON d.`DRCNOTE_NO` = m.`MRCNOTE_NO`
+    LEFT JOIN ref_zone_user z
+        ON trim(toString(m.`MRCNOTE_USER_ID`)) = z.`USER_ZONE`
     UNION ALL
     SELECT
         d.`DHI_CNOTE_NO` AS `RECV_CNOTE_NO`,
         d.`DHI_NO` AS `RECV_NO`,
         d.`CDATE` AS `RECV_SCAN_DATE`,
         m.`MHI_UID` AS `RECV_USER_ID`,
-        CAST(NULL AS Nullable(String)) AS `RECV_ZONE`,
+        z.`ZONE_CODE` AS `RECV_ZONE`,
         m.`MHI_DATE` AS `RECV_DATE`,
         m.`MHI_APPROVE_DATE` AS `RECV_SIGN_DATE`,
         1 AS `source_priority`
     FROM {bronze_schema}.`cms_dhi_hoc` d
     LEFT JOIN {bronze_schema}.`cms_mhi_hoc` m
         ON d.`DHI_NO` = m.`MHI_NO`
+    LEFT JOIN ref_zone_user z
+        ON trim(toString(m.`MHI_UID`)) = z.`USER_ZONE`
 ),
 stg_recv AS (
     SELECT * EXCEPT (`rn`, `source_priority`)
@@ -114,10 +148,13 @@ manifest_asset AS (
         m.`MANIFEST_THRU` AS `MF_THRU`,
         toString(m.`MANIFEST_CODE`) AS `MF_CODE`,
         m.`MANIFEST_UID` AS `MF_USER`,
+        z.`ZONE_CODE` AS `MF_ZONE`,
         m.`MANIFEST_APPROVED` AS `MF_APPROVED`
     FROM {bronze_schema}.`cms_mfcnote` f
     LEFT JOIN {bronze_schema}.`cms_manifest` m
         ON f.`MFCNOTE_MAN_NO` = m.`MANIFEST_NO`
+    LEFT JOIN ref_zone_user z
+        ON trim(toString(m.`MANIFEST_UID`)) = z.`USER_ZONE`
 ),
 pra_runsheet_events AS (
     SELECT
@@ -125,10 +162,12 @@ pra_runsheet_events AS (
         d.`DRSHEET_NO` AS `DRI_PRA_EVENT_NO`,
         m.`MRSHEET_DATE` AS `DRI_PRA_EVENT_DATE`,
         m.`MRSHEET_UID` AS `DRI_PRA_EVENT_USER`,
-        CAST(NULL AS Nullable(String)) AS `DRI_PRA_EVENT_ZONE`
+        z.`ZONE_CODE` AS `DRI_PRA_EVENT_ZONE`
     FROM {bronze_schema}.`cms_drsheet_pra` d
     LEFT JOIN {bronze_schema}.`cms_mrsheet_pra` m
         ON d.`DRSHEET_NO` = m.`MRSHEET_NO`
+    LEFT JOIN ref_zone_user z
+        ON trim(toString(m.`MRSHEET_UID`)) = z.`USER_ZONE`
 ),
 pra_runsheet AS (
     SELECT
@@ -149,23 +188,23 @@ manifest_grouped AS (
         minIf(`MF_SCAN_DATE`, `MF_CODE` = '1') AS `OM_SCAN_DATE`,
         argMinIf(`MF_DATE`, `MF_SCAN_DATE`, `MF_CODE` = '1') AS `OM_DATE`,
         argMinIf(`MF_USER`, `MF_SCAN_DATE`, `MF_CODE` = '1') AS `OM_USER`,
-        CAST(NULL AS Nullable(String)) AS `OM_ZONE`,
+        argMinIf(`MF_ZONE`, `MF_SCAN_DATE`, `MF_CODE` = '1') AS `OM_ZONE`,
         countIf(`MF_CODE` = '2') AS `TM_COUNT`,
         argMinIf(`MF_NO`, `MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_FIRST_NO`,
         minIf(`MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_FIRST_SCAN_DATE`,
         argMinIf(`MF_DATE`, `MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_FIRST_DATE`,
         argMinIf(`MF_USER`, `MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_FIRST_USER`,
-        CAST(NULL AS Nullable(String)) AS `TM_FIRST_ZONE`,
+        argMinIf(`MF_ZONE`, `MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_FIRST_ZONE`,
         argMaxIf(`MF_NO`, `MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_LAST_NO`,
         maxIf(`MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_LAST_SCAN_DATE`,
         argMaxIf(`MF_DATE`, `MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_LAST_DATE`,
         argMaxIf(`MF_USER`, `MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_LAST_USER`,
-        CAST(NULL AS Nullable(String)) AS `TM_LAST_ZONE`,
+        argMaxIf(`MF_ZONE`, `MF_SCAN_DATE`, `MF_CODE` = '2') AS `TM_LAST_ZONE`,
         argMinIf(`MF_NO`, `MF_SCAN_DATE`, `MF_CODE` = '3') AS `IM_NO`,
         minIf(`MF_SCAN_DATE`, `MF_CODE` = '3') AS `IM_SCAN_DATE`,
         argMinIf(`MF_DATE`, `MF_SCAN_DATE`, `MF_CODE` = '3') AS `IM_DATE`,
         argMinIf(`MF_USER`, `MF_SCAN_DATE`, `MF_CODE` = '3') AS `IM_USER`,
-        CAST(NULL AS Nullable(String)) AS `IM_ZONE`,
+        argMinIf(`MF_ZONE`, `MF_SCAN_DATE`, `MF_CODE` = '3') AS `IM_ZONE`,
         CASE
             WHEN countIf(`MF_CODE` = '1') = 0 THEN 'Null OM'
             WHEN countIf(`MF_CODE` = '3') = 0 THEN 'Null OM-IM'
@@ -311,7 +350,7 @@ mts_mti_events AS (
         d.`DMANIFEST_NO` AS `MTS_NO`,
         d.`ESB_TIME` AS `MTS_DATE`,
         m.`MANIFEST_UID` AS `MTS_USER`,
-        CAST(NULL AS Nullable(String)) AS `MTS_ZONE`,
+        z.`ZONE_CODE` AS `MTS_ZONE`,
         CAST(NULL AS Nullable(String)) AS `MTI_NO`,
         CAST(NULL AS Nullable(DateTime)) AS `MTI_DATE`,
         CAST(NULL AS Nullable(String)) AS `MTI_USER`,
@@ -320,6 +359,8 @@ mts_mti_events AS (
     FROM {bronze_schema}.`cms_cost_dtransit_agen` d
     LEFT JOIN {bronze_schema}.`cms_cost_mtransit_agen` m
         ON d.`DMANIFEST_NO` = m.`MANIFEST_NO`
+    LEFT JOIN ref_zone_user z
+        ON trim(toString(m.`MANIFEST_UID`)) = z.`USER_ZONE`
     WHERE d.`DMANIFEST_DOC_REF` IS NULL
     UNION ALL
     SELECT
@@ -331,11 +372,13 @@ mts_mti_events AS (
         d.`DMANIFEST_NO` AS `MTI_NO`,
         d.`ESB_TIME` AS `MTI_DATE`,
         m.`MANIFEST_UID` AS `MTI_USER`,
-        CAST(NULL AS Nullable(String)) AS `MTI_ZONE`,
+        z.`ZONE_CODE` AS `MTI_ZONE`,
         'MTI_ONLY' AS `event_tag`
     FROM {bronze_schema}.`cms_cost_dtransit_agen` d
     LEFT JOIN {bronze_schema}.`cms_cost_mtransit_agen` m
         ON d.`DMANIFEST_NO` = m.`MANIFEST_NO`
+    LEFT JOIN ref_zone_user z
+        ON trim(toString(m.`MANIFEST_UID`)) = z.`USER_ZONE`
     WHERE d.`DMANIFEST_DOC_REF` IS NOT NULL
 ),
 mts_mti_ranked AS (
@@ -379,13 +422,15 @@ delivery_events AS (
         d.`DRSHEET_NO` AS `DRI_NO`,
         m.`MRSHEET_DATE` AS `DRI_DATE`,
         m.`MRSHEET_UID` AS `DRI_USER`,
-        CAST(NULL AS Nullable(String)) AS `DRI_ZONE`,
+        z.`ZONE_CODE` AS `DRI_ZONE`,
         m.`MRSHEET_COURIER_ID` AS `DRI_COURIER_ID`,
         d.`DRSHEET_DATE` AS `DRI_POD_DATE`,
         d.`DRSHEET_STATUS` AS `DRI_POD_STATUS`
     FROM {bronze_schema}.`cms_drsheet` d
     LEFT JOIN {bronze_schema}.`cms_mrsheet` m
         ON d.`DRSHEET_NO` = m.`MRSHEET_NO`
+    LEFT JOIN ref_zone_user z
+        ON trim(toString(m.`MRSHEET_UID`)) = z.`USER_ZONE`
     WHERE d.`DRSHEET_CNOTE_NO` IS NOT NULL
 ),
 delivery_ranked AS (
@@ -424,10 +469,12 @@ hrs_events AS (
         m.`MHOV_RSHEET_NO` AS `HRS_NO`,
         m.`MHOV_RSHEET_DATE` AS `HRS_DATE`,
         m.`MHOV_RSHEET_UID` AS `HRS_USER`,
-        CAST(NULL AS Nullable(String)) AS `HRS_ZONE`
+        z.`ZONE_CODE` AS `HRS_ZONE`
     FROM {bronze_schema}.`cms_dhov_rsheet` d
     LEFT JOIN {bronze_schema}.`cms_mhov_rsheet` m
         ON d.`DHOV_RSHEET_NO` = m.`MHOV_RSHEET_NO`
+    LEFT JOIN ref_zone_user z
+        ON trim(toString(m.`MHOV_RSHEET_UID`)) = z.`USER_ZONE`
     WHERE d.`DHOV_RSHEET_CNOTE` IS NOT NULL
 ),
 hrs_ranked AS (
