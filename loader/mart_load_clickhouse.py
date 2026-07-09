@@ -78,6 +78,9 @@ class GovernanceConfig:
     results_path: Path
     result_cnotes_path: Path
     summary_path: Path
+    results_table: str = "governance_results_2"
+    result_cnotes_table: str = "governance_result_cnotes_2"
+    summary_table: str = "governance_rule_summary_2"
 
 
 @dataclass(frozen=True)
@@ -185,6 +188,9 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
             results_path=Path(governance.get("results_path") or default_governance_path),
             result_cnotes_path=Path(governance.get("result_cnotes_path") or default_result_cnotes_path),
             summary_path=Path(governance.get("summary_path") or default_summary_path),
+            results_table=governance.get("results_table", "governance_results_2"),
+            result_cnotes_table=governance.get("result_cnotes_table", "governance_result_cnotes_2"),
+            summary_table=governance.get("summary_table", "governance_rule_summary_2"),
         ),
         unified_mart=UnifiedMartConfig(
             enabled=_as_bool(unified_mart.get("enabled", False)),
@@ -495,12 +501,17 @@ def _load_governance_results(client: Any, config: MartClickHouseConfig, batch_si
     if not path.exists():
         raise FileNotFoundError(f"Governance results file not found: {path}")
 
-    _drop_database(client, config.schemas.governance)
     _create_database(client, config.schemas.governance)
+    for table in (
+        config.governance.results_table,
+        config.governance.result_cnotes_table,
+        config.governance.summary_table,
+    ):
+        _command(client, f"DROP TABLE IF EXISTS {_qualified(config.schemas.governance, table)}")
     row_count = _load_governance_csv(
         client,
         config.schemas.governance,
-        "governance_results",
+        config.governance.results_table,
         path,
         batch_size=batch_size,
     )
@@ -508,7 +519,7 @@ def _load_governance_results(client: Any, config: MartClickHouseConfig, batch_si
         row_count += _load_governance_csv(
             client,
             config.schemas.governance,
-            "governance_result_cnotes",
+            config.governance.result_cnotes_table,
             config.governance.result_cnotes_path,
             batch_size=batch_size,
         )
@@ -518,7 +529,7 @@ def _load_governance_results(client: Any, config: MartClickHouseConfig, batch_si
         row_count += _load_governance_csv(
             client,
             config.schemas.governance,
-            "governance_rule_summary",
+            config.governance.summary_table,
             config.governance.summary_path,
             batch_size=batch_size,
         )
@@ -730,7 +741,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
     if config.unified_mart.enabled:
         _log(f"  {config.unified_mart.schema}.{config.unified_mart.table}: {unified_rows} rows")
     if config.governance.enabled:
-        _log(f"  {config.schemas.governance}.governance_results: {governance_rows} rows")
+        _log(f"  {config.schemas.governance}.{config.governance.results_table}: {governance_rows} rows")
 
 
 def main() -> None:

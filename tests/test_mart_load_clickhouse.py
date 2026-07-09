@@ -12,6 +12,7 @@ from loader.mart_load_clickhouse import (
     _load_unified_mart,
     _load_table_entries,
     _load_governance_csv,
+    _load_governance_results,
     _render_unified_sql,
     _s3_url,
     _table_object_prefix,
@@ -79,6 +80,9 @@ governance:
   results_path: "governance/outputs/${RUN_ID}/governance_results.csv"
   result_cnotes_path: "governance/outputs/${RUN_ID}/governance_result_cnotes.csv"
   summary_path: "governance/outputs/${RUN_ID}/governance_rule_summary.csv"
+  results_table: "governance_results_2"
+  result_cnotes_table: "governance_result_cnotes_2"
+  summary_table: "governance_rule_summary_2"
 unified_mart:
   enabled: true
   schema: "mart"
@@ -101,6 +105,9 @@ mart:
     assert config.governance.results_path.as_posix() == "governance/outputs/R_TEST/governance_results.csv"
     assert config.governance.result_cnotes_path.as_posix() == "governance/outputs/R_TEST/governance_result_cnotes.csv"
     assert config.governance.summary_path.as_posix() == "governance/outputs/R_TEST/governance_rule_summary.csv"
+    assert config.governance.results_table == "governance_results_2"
+    assert config.governance.result_cnotes_table == "governance_result_cnotes_2"
+    assert config.governance.summary_table == "governance_rule_summary_2"
     assert config.unified_mart.enabled is True
     assert config.unified_mart.schema == "mart"
     assert config.unified_mart.table == "unified_shipments"
@@ -205,6 +212,61 @@ def test_clickhouse_governance_csv_rejects_mixed_column_counts(tmp_path):
     assert "header has 2" in message
     assert f"{csv_path}:3" in message
     assert client.inserts == []
+
+
+def test_clickhouse_governance_load_replaces_only_managed_tables(monkeypatch, tmp_path):
+    class Client:
+        def __init__(self):
+            self.commands = []
+
+        def command(self, sql):
+            self.commands.append(sql)
+
+    config = _config()
+    results_path = tmp_path / "governance_results.csv"
+    result_cnotes_path = tmp_path / "governance_result_cnotes.csv"
+    summary_path = tmp_path / "governance_rule_summary.csv"
+    for path in (results_path, result_cnotes_path, summary_path):
+        path.write_text("result_id\nR1\n", encoding="utf-8")
+    config = MartClickHouseConfig(
+        config.minio,
+        config.bronze,
+        config.clickhouse,
+        config.schemas,
+        GovernanceConfig(
+            True,
+            results_path,
+            result_cnotes_path,
+            summary_path,
+            "governance_results_2",
+            "governance_result_cnotes_2",
+            "governance_rule_summary_2",
+        ),
+        config.unified_mart,
+        config.skip_stages,
+        config.reuse_existing_stages,
+        config.load_mode,
+    )
+    loaded_tables = []
+
+    def fake_load_governance_csv(client, schema, table, path, batch_size=100_000):
+        loaded_tables.append(table)
+        return 1
+
+    monkeypatch.setattr("loader.mart_load_clickhouse._load_governance_csv", fake_load_governance_csv)
+    client = Client()
+
+    rows = _load_governance_results(client, config)
+
+    assert rows == 3
+    assert not any("DROP DATABASE" in sql for sql in client.commands)
+    assert any("CREATE DATABASE IF NOT EXISTS `governance`" in sql for sql in client.commands)
+    assert any("DROP TABLE IF EXISTS `governance`.`governance_results_2`" in sql for sql in client.commands)
+    assert loaded_tables == [
+        "governance_results_2",
+        "governance_result_cnotes_2",
+        "governance_rule_summary_2",
+    ]
 
 
 def test_unified_mart_sql_template_renders_qualified_names(tmp_path):
