@@ -61,6 +61,16 @@ def _as_bool(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _document_links_mode(config: dict[str, Any]) -> str:
+    transform_config = config.get("transform", {}) or {}
+    mode = str(transform_config.get("document_links_mode", "python")).strip().lower()
+    if mode not in {"python", "clickhouse", "skip"}:
+        raise ValueError(
+            "transform.document_links_mode must be one of: python, clickhouse, skip"
+        )
+    return mode
+
+
 def shipment_scope(origin: Any, destination: Any) -> str:
     """Classify a CNOTE origin/destination pair without touching bronze."""
     origin_text = str(origin or "").strip().upper()
@@ -542,7 +552,13 @@ def transform_data(source: DerivedSource, config: dict, tmpdir: Path | None = No
         _upload_manifest_to_minio(source, tmpdir)
 
     _log(f"Transformed derived.{DERIVED_TABLE}: {row_count:,} rows in {time.monotonic() - started:.1f}s")
-    _write_document_links(con, source, tmpdir)
+    document_links_mode = _document_links_mode(config)
+    if document_links_mode == "python":
+        _write_document_links(con, source, tmpdir)
+    elif document_links_mode == "clickhouse":
+        _log("Skipping derived.document_cnote_links in transform; ClickHouse mart load will build it")
+    else:
+        _log("Skipping derived.document_cnote_links in transform because transform.document_links_mode=skip")
     return entry
 
 

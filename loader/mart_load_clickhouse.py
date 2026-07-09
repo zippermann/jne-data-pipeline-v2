@@ -81,6 +81,8 @@ class GovernanceConfig:
     results_table: str = "governance_results_2"
     result_cnotes_table: str = "governance_result_cnotes_2"
     summary_table: str = "governance_rule_summary_2"
+    build_document_links: bool = True
+    document_links_table: str = "document_cnote_links_2"
 
 
 @dataclass(frozen=True)
@@ -191,6 +193,8 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
             results_table=governance.get("results_table", "governance_results_2"),
             result_cnotes_table=governance.get("result_cnotes_table", "governance_result_cnotes_2"),
             summary_table=governance.get("summary_table", "governance_rule_summary_2"),
+            build_document_links=_as_bool(governance.get("build_document_links", True)),
+            document_links_table=governance.get("document_links_table", "document_cnote_links_2"),
         ),
         unified_mart=UnifiedMartConfig(
             enabled=_as_bool(unified_mart.get("enabled", False)),
@@ -426,6 +430,254 @@ def _publish_schema(client: Any, staging_schema: str, target_schema: str) -> Non
         _command(client, f"DROP TABLE IF EXISTS {_qualified(target_schema, table_name)}")
         _command(client, f"RENAME TABLE {_qualified(staging_schema, table_name)} TO {_qualified(target_schema, table_name)}")
     _drop_database(client, staging_schema)
+
+
+def _ch_text(alias: str, column: str) -> str:
+    return f"trimBoth(toString({alias}.{_quote_ident(column)}))"
+
+
+def _ch_not_blank(alias: str, column: str) -> str:
+    return f"isNotNull({alias}.{_quote_ident(column)}) AND {_ch_text(alias, column)} != ''"
+
+
+def _document_link_select(
+    source_table: str,
+    document_expr: str,
+    cnote_expr: str,
+    method: str,
+    from_sql: str,
+    where: Iterable[str],
+) -> str:
+    document_type = source_table.removeprefix("CMS_")
+    return f"""
+        SELECT
+            {_quote_sql(source_table)} AS source_table,
+            {_quote_sql(document_type)} AS document_type,
+            {document_expr} AS document_id,
+            {cnote_expr} AS cnote_no,
+            {_quote_sql(method)} AS link_method,
+            'safe' AS link_confidence
+        {from_sql}
+        WHERE {' AND '.join(where)}
+    """
+
+
+def _empty_document_links_table(client: Any, schema: str, table: str) -> int:
+    _command(
+        client,
+        f"""
+        CREATE TABLE {_qualified(schema, table)} (
+            source_table String,
+            document_type String,
+            document_id String,
+            cnote_no String,
+            link_method String,
+            link_confidence String
+        )
+        ENGINE = MergeTree
+        ORDER BY (source_table, document_id, cnote_no)
+        """,
+    )
+    return 0
+
+
+def _build_document_cnote_links(client: Any, config: MartClickHouseConfig) -> int:
+    if not config.governance.build_document_links:
+        _log("Skipping ClickHouse document-to-CNOTE link build because governance.build_document_links=false")
+        return 0
+    if not _table_exists(client, config.schemas.bronze, "cms_cnote"):
+        _log("Skipping ClickHouse document-to-CNOTE link build because bronze.cms_cnote is missing")
+        return 0
+
+    started = time.monotonic()
+    bronze = config.schemas.bronze
+    governance = config.schemas.governance
+    target_table = config.governance.document_links_table
+    has_tables: dict[str, bool] = {}
+
+    def has(*tables: str) -> bool:
+        missing = [table for table in tables if not has_tables.setdefault(table, _table_exists(client, bronze, table))]
+        return not missing
+
+    def q(table: str) -> str:
+        return _qualified(bronze, table)
+
+    selects: list[str] = []
+    mf = q("cms_mfcnote")
+    if has("cms_mfcnote"):
+        selects.append(_document_link_select(
+            "CMS_MFCNOTE",
+            _ch_text("mf", "MFCNOTE_NO"),
+            _ch_text("mf", "MFCNOTE_NO"),
+            "direct_mfcnote",
+            f"FROM {mf} mf",
+            [_ch_not_blank("mf", "MFCNOTE_NO")],
+        ))
+        selects.append(_document_link_select(
+            "CMS_MFBAG",
+            _ch_text("mf", "MFCNOTE_BAG_NO"),
+            _ch_text("mf", "MFCNOTE_NO"),
+            "mfbag_to_mfcnote",
+            f"FROM {mf} mf",
+            [_ch_not_blank("mf", "MFCNOTE_BAG_NO"), _ch_not_blank("mf", "MFCNOTE_NO")],
+        ))
+        selects.append(_document_link_select(
+            "CMS_DMBAG",
+            _ch_text("mf", "MFCNOTE_BAG_NO"),
+            _ch_text("mf", "MFCNOTE_NO"),
+            "dmbag_to_mfbag_mfcnote",
+            f"FROM {mf} mf",
+            [_ch_not_blank("mf", "MFCNOTE_BAG_NO"), _ch_not_blank("mf", "MFCNOTE_NO")],
+        ))
+        selects.append(_document_link_select(
+            "CMS_MANIFEST",
+            _ch_text("mf", "MFCNOTE_MAN_NO"),
+            _ch_text("mf", "MFCNOTE_NO"),
+            "manifest_to_mfcnote",
+            f"FROM {mf} mf",
+            [_ch_not_blank("mf", "MFCNOTE_MAN_NO"), _ch_not_blank("mf", "MFCNOTE_NO")],
+        ))
+
+    if has("cms_mfcnote", "cms_dmbag"):
+        selects.append(_document_link_select(
+            "CMS_DMBAG",
+            _ch_text("d", "DMBAG_NO"),
+            _ch_text("mf", "MFCNOTE_NO"),
+            "dmbag_to_mfbag_mfcnote",
+            f"FROM {q('cms_dmbag')} d INNER JOIN {mf} mf ON {_ch_text('d', 'DMBAG_BAG_NO')} = {_ch_text('mf', 'MFCNOTE_BAG_NO')}",
+            [_ch_not_blank("d", "DMBAG_NO"), _ch_not_blank("d", "DMBAG_BAG_NO"), _ch_not_blank("mf", "MFCNOTE_BAG_NO"), _ch_not_blank("mf", "MFCNOTE_NO")],
+        ))
+
+    if has("cms_mfcnote", "cms_dmbag", "cms_mmbag"):
+        selects.append(_document_link_select(
+            "CMS_MMBAG",
+            _ch_text("m", "MMBAG_NO"),
+            _ch_text("mf", "MFCNOTE_NO"),
+            "mmbag_to_dmbag_mfbag_mfcnote",
+            f"FROM {q('cms_mmbag')} m INNER JOIN {mf} mf ON {_ch_text('m', 'MMBAG_NO')} = {_ch_text('mf', 'MFCNOTE_BAG_NO')}",
+            [_ch_not_blank("m", "MMBAG_NO"), _ch_not_blank("mf", "MFCNOTE_BAG_NO"), _ch_not_blank("mf", "MFCNOTE_NO")],
+        ))
+        selects.append(_document_link_select(
+            "CMS_MMBAG",
+            _ch_text("m", "MMBAG_NO"),
+            _ch_text("mf", "MFCNOTE_NO"),
+            "mmbag_to_dmbag_mfbag_mfcnote",
+            f"FROM {q('cms_mmbag')} m INNER JOIN {q('cms_dmbag')} d ON {_ch_text('m', 'MMBAG_NO')} = {_ch_text('d', 'DMBAG_NO')} INNER JOIN {mf} mf ON {_ch_text('d', 'DMBAG_BAG_NO')} = {_ch_text('mf', 'MFCNOTE_BAG_NO')}",
+            [_ch_not_blank("m", "MMBAG_NO"), _ch_not_blank("d", "DMBAG_NO"), _ch_not_blank("d", "DMBAG_BAG_NO"), _ch_not_blank("mf", "MFCNOTE_BAG_NO"), _ch_not_blank("mf", "MFCNOTE_NO")],
+        ))
+
+    direct_detail_links = [
+        ("cms_drsheet", "CMS_MRSHEET", "DRSHEET_NO", "DRSHEET_CNOTE_NO", "mrsheet_to_drsheet"),
+        ("cms_dhicnote", "CMS_MHICNOTE", "DHICNOTE_NO", "DHICNOTE_CNOTE_NO", "mhicnote_to_dhicnote"),
+        ("cms_dhi_hoc", "CMS_MHI_HOC", "DHI_NO", "DHI_CNOTE_NO", "mhi_hoc_to_dhi_hoc"),
+        ("cms_dhocnote", "CMS_MHOCNOTE", "DHOCNOTE_NO", "DHOCNOTE_CNOTE_NO", "mhocnote_to_dhocnote"),
+        ("cms_dhoundel_pod", "CMS_MHOUNDEL_POD", "DHOUNDEL_NO", "DHOUNDEL_CNOTE_NO", "mhoundel_to_dhoundel"),
+    ]
+    for table, source_table, document_column, cnote_column, method in direct_detail_links:
+        if has(table):
+            selects.append(_document_link_select(
+                source_table,
+                _ch_text("d", document_column),
+                _ch_text("d", cnote_column),
+                method,
+                f"FROM {q(table)} d",
+                [_ch_not_blank("d", document_column), _ch_not_blank("d", cnote_column)],
+            ))
+
+    if has("cms_dsmu", "cms_mfcnote"):
+        selects.append(_document_link_select(
+            "CMS_DSMU",
+            _ch_text("dsmu", "DSMU_NO"),
+            _ch_text("mf", "MFCNOTE_NO"),
+            "dsmu_to_dmbag_mfcnote",
+            f"FROM {q('cms_dsmu')} dsmu INNER JOIN {mf} mf ON {_ch_text('dsmu', 'DSMU_BAG_NO')} = {_ch_text('mf', 'MFCNOTE_BAG_NO')}",
+            [_ch_not_blank("dsmu", "DSMU_NO"), _ch_not_blank("dsmu", "DSMU_BAG_NO"), _ch_not_blank("mf", "MFCNOTE_BAG_NO"), _ch_not_blank("mf", "MFCNOTE_NO")],
+        ))
+    if has("cms_dsmu", "cms_dmbag", "cms_mfcnote"):
+        selects.append(_document_link_select(
+            "CMS_DSMU",
+            _ch_text("dsmu", "DSMU_NO"),
+            _ch_text("mf", "MFCNOTE_NO"),
+            "dsmu_to_dmbag_mfcnote",
+            f"FROM {q('cms_dsmu')} dsmu INNER JOIN {q('cms_dmbag')} d ON {_ch_text('dsmu', 'DSMU_BAG_NO')} = {_ch_text('d', 'DMBAG_NO')} INNER JOIN {mf} mf ON {_ch_text('d', 'DMBAG_BAG_NO')} = {_ch_text('mf', 'MFCNOTE_BAG_NO')}",
+            [_ch_not_blank("dsmu", "DSMU_NO"), _ch_not_blank("dsmu", "DSMU_BAG_NO"), _ch_not_blank("d", "DMBAG_NO"), _ch_not_blank("d", "DMBAG_BAG_NO"), _ch_not_blank("mf", "MFCNOTE_BAG_NO"), _ch_not_blank("mf", "MFCNOTE_NO")],
+        ))
+    if has("cms_msmu", "cms_dsmu", "cms_mfcnote"):
+        selects.append(_document_link_select(
+            "CMS_MSMU",
+            _ch_text("msmu", "MSMU_NO"),
+            _ch_text("mf", "MFCNOTE_NO"),
+            "msmu_to_dsmu_dmbag_mfcnote",
+            f"FROM {q('cms_msmu')} msmu INNER JOIN {q('cms_dsmu')} dsmu ON {_ch_text('msmu', 'MSMU_NO')} = {_ch_text('dsmu', 'DSMU_NO')} INNER JOIN {mf} mf ON {_ch_text('dsmu', 'DSMU_BAG_NO')} = {_ch_text('mf', 'MFCNOTE_BAG_NO')}",
+            [_ch_not_blank("msmu", "MSMU_NO"), _ch_not_blank("dsmu", "DSMU_NO"), _ch_not_blank("dsmu", "DSMU_BAG_NO"), _ch_not_blank("mf", "MFCNOTE_BAG_NO"), _ch_not_blank("mf", "MFCNOTE_NO")],
+        ))
+    if has("cms_msmu", "cms_dsmu", "cms_dmbag", "cms_mfcnote"):
+        selects.append(_document_link_select(
+            "CMS_MSMU",
+            _ch_text("msmu", "MSMU_NO"),
+            _ch_text("mf", "MFCNOTE_NO"),
+            "msmu_to_dsmu_dmbag_mfcnote",
+            f"FROM {q('cms_msmu')} msmu INNER JOIN {q('cms_dsmu')} dsmu ON {_ch_text('msmu', 'MSMU_NO')} = {_ch_text('dsmu', 'DSMU_NO')} INNER JOIN {q('cms_dmbag')} d ON {_ch_text('dsmu', 'DSMU_BAG_NO')} = {_ch_text('d', 'DMBAG_NO')} INNER JOIN {mf} mf ON {_ch_text('d', 'DMBAG_BAG_NO')} = {_ch_text('mf', 'MFCNOTE_BAG_NO')}",
+            [_ch_not_blank("msmu", "MSMU_NO"), _ch_not_blank("dsmu", "DSMU_NO"), _ch_not_blank("dsmu", "DSMU_BAG_NO"), _ch_not_blank("d", "DMBAG_NO"), _ch_not_blank("d", "DMBAG_BAG_NO"), _ch_not_blank("mf", "MFCNOTE_BAG_NO"), _ch_not_blank("mf", "MFCNOTE_NO")],
+        ))
+
+    if has("cms_dsj", "cms_rdsj", "cms_dhicnote"):
+        selects.append(_document_link_select(
+            "CMS_DSJ",
+            _ch_text("dsj", "DSJ_NO"),
+            _ch_text("dhic", "DHICNOTE_CNOTE_NO"),
+            "dsj_to_rdsj_mhicnote",
+            f"FROM {q('cms_dsj')} dsj INNER JOIN {q('cms_rdsj')} r ON {_ch_text('dsj', 'DSJ_HVO_NO')} = {_ch_text('r', 'RDSJ_HVO_NO')} INNER JOIN {q('cms_dhicnote')} dhic ON {_ch_text('r', 'RDSJ_HVI_NO')} = {_ch_text('dhic', 'DHICNOTE_NO')}",
+            [_ch_not_blank("dsj", "DSJ_NO"), _ch_not_blank("dsj", "DSJ_HVO_NO"), _ch_not_blank("r", "RDSJ_HVO_NO"), _ch_not_blank("r", "RDSJ_HVI_NO"), _ch_not_blank("dhic", "DHICNOTE_NO"), _ch_not_blank("dhic", "DHICNOTE_CNOTE_NO")],
+        ))
+    if has("cms_rdsj", "cms_dhocnote"):
+        selects.append(_document_link_select(
+            "CMS_RDSJ",
+            _ch_text("r", "RDSJ_NO"),
+            _ch_text("dhoc", "DHOCNOTE_CNOTE_NO"),
+            "rdsj_hvo_to_mhocnote",
+            f"FROM {q('cms_rdsj')} r INNER JOIN {q('cms_dhocnote')} dhoc ON {_ch_text('r', 'RDSJ_HVO_NO')} = {_ch_text('dhoc', 'DHOCNOTE_NO')}",
+            [_ch_not_blank("r", "RDSJ_NO"), _ch_not_blank("r", "RDSJ_HVO_NO"), _ch_not_blank("dhoc", "DHOCNOTE_NO"), _ch_not_blank("dhoc", "DHOCNOTE_CNOTE_NO")],
+        ))
+    if has("cms_msj", "cms_dsj", "cms_rdsj", "cms_dhicnote"):
+        selects.append(_document_link_select(
+            "CMS_MSJ",
+            _ch_text("msj", "MSJ_NO"),
+            _ch_text("dhic", "DHICNOTE_CNOTE_NO"),
+            "msj_to_dsj_rdsj_mhicnote",
+            f"FROM {q('cms_msj')} msj INNER JOIN {q('cms_dsj')} dsj ON {_ch_text('msj', 'MSJ_NO')} = {_ch_text('dsj', 'DSJ_NO')} INNER JOIN {q('cms_rdsj')} r ON {_ch_text('dsj', 'DSJ_HVO_NO')} = {_ch_text('r', 'RDSJ_HVO_NO')} INNER JOIN {q('cms_dhicnote')} dhic ON {_ch_text('r', 'RDSJ_HVI_NO')} = {_ch_text('dhic', 'DHICNOTE_NO')}",
+            [_ch_not_blank("msj", "MSJ_NO"), _ch_not_blank("dsj", "DSJ_NO"), _ch_not_blank("dsj", "DSJ_HVO_NO"), _ch_not_blank("r", "RDSJ_HVO_NO"), _ch_not_blank("r", "RDSJ_HVI_NO"), _ch_not_blank("dhic", "DHICNOTE_NO"), _ch_not_blank("dhic", "DHICNOTE_CNOTE_NO")],
+        ))
+
+    _create_database(client, governance)
+    _command(client, f"DROP TABLE IF EXISTS {_qualified(governance, target_table)}")
+    if not selects:
+        _log("No supported ClickHouse document-to-CNOTE link sources are available; creating empty link table")
+        return _empty_document_links_table(client, governance, target_table)
+
+    union_sql = "\nUNION ALL\n".join(selects)
+    _command(
+        client,
+        f"""
+        CREATE TABLE {_qualified(governance, target_table)}
+        ENGINE = MergeTree
+        ORDER BY (source_table, document_id, cnote_no)
+        AS
+        SELECT DISTINCT l.*
+        FROM (
+            {union_sql}
+        ) l
+        INNER JOIN {_qualified(bronze, 'cms_cnote')} c
+            ON l.cnote_no = {_ch_text('c', 'CNOTE_NO')}
+        WHERE {_ch_not_blank('c', 'CNOTE_NO')}
+        """,
+    )
+    row_count = int(_query_scalar(client, f"SELECT count() FROM {_qualified(governance, target_table)}"))
+    _log(
+        f"Built ClickHouse {governance}.{target_table}: "
+        f"{row_count:,} rows in {time.monotonic() - started:.1f}s"
+    )
+    return row_count
 
 
 def _read_csv_header(path: Path) -> list[str]:
@@ -675,6 +927,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
     loaded_derived: dict[str, int] = {}
     unified_rows = 0
     governance_rows = 0
+    document_link_rows = 0
     try:
         _drop_database(client, config.schemas.bronze_staging)
         _drop_database(client, config.schemas.derived_staging)
@@ -700,9 +953,16 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
         _publish_schema(client, config.schemas.bronze_staging, config.schemas.bronze)
         _drop_database(client, config.schemas.derived)
 
+        document_link_rows = _build_document_cnote_links(client, config)
         unified_rows = _load_unified_mart(client, config)
         governance_rows = _load_governance_results(client, config)
-        total_rows = sum(loaded_tables.values()) + sum(loaded_derived.values()) + unified_rows + governance_rows
+        total_rows = (
+            sum(loaded_tables.values())
+            + sum(loaded_derived.values())
+            + document_link_rows
+            + unified_rows
+            + governance_rows
+        )
         _insert_load_run(
             client,
             config,
@@ -710,6 +970,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
             table_count=(
                 len(loaded_tables)
                 + len(loaded_derived)
+                + (1 if document_link_rows else 0)
                 + (1 if unified_rows else 0)
                 + (1 if config.governance.enabled else 0)
             ),
@@ -724,8 +985,20 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
                 client,
                 config,
                 manifest,
-                table_count=len(loaded_tables) + len(loaded_derived) + (1 if unified_rows else 0) + (1 if governance_rows else 0),
-                row_count=sum(loaded_tables.values()) + sum(loaded_derived.values()) + unified_rows + governance_rows,
+                table_count=(
+                    len(loaded_tables)
+                    + len(loaded_derived)
+                    + (1 if document_link_rows else 0)
+                    + (1 if unified_rows else 0)
+                    + (1 if governance_rows else 0)
+                ),
+                row_count=(
+                    sum(loaded_tables.values())
+                    + sum(loaded_derived.values())
+                    + document_link_rows
+                    + unified_rows
+                    + governance_rows
+                ),
                 status="FAILED",
                 error_message=str(exc),
             )
@@ -738,6 +1011,8 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
         _log(f"  {config.schemas.bronze}.{table}: {rows} rows")
     for table, rows in sorted(loaded_derived.items()):
         _log(f"  {config.schemas.derived}.{table}: {rows} rows")
+    if config.governance.build_document_links:
+        _log(f"  {config.schemas.governance}.{config.governance.document_links_table}: {document_link_rows} rows")
     if config.unified_mart.enabled:
         _log(f"  {config.unified_mart.schema}.{config.unified_mart.table}: {unified_rows} rows")
     if config.governance.enabled:

@@ -55,3 +55,9 @@ scoping:
 columns:
   mode: "all"
   pii_exclude_file: "config/pii_exclude.yaml"
+
+transform:
+  document_links_mode: "clickhouse"
+
+governance:
+  python_document_links_fallback: false

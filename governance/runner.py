@@ -773,10 +773,15 @@ def _string_key_values(values: pd.Series) -> pd.Series:
     return values.fillna("").astype("string").str.strip()
 
 
-def _document_bridges(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, list[str]]]:
+def _document_bridges(
+    data: dict[str, pd.DataFrame],
+    allow_python_fallback: bool = True,
+) -> dict[str, dict[str, list[str]]]:
     links = data.get(DOCUMENT_LINKS_SOURCE_TABLE)
     if links is None or links.empty:
-        return build_document_bridges(data)
+        if allow_python_fallback:
+            return build_document_bridges(data)
+        return {}
     required = {"source_table", "document_id", "cnote_no"}
     if not required <= set(links.columns):
         return {}
@@ -1058,6 +1063,14 @@ def _rule_summary_row(
     }
 
 
+def _allow_python_document_links(config: dict[str, Any]) -> bool:
+    governance_config = config.get("governance", {}) or {}
+    if "python_document_links_fallback" in governance_config:
+        return _as_bool(governance_config.get("python_document_links_fallback"))
+    transform_config = config.get("transform", {}) or {}
+    return str(transform_config.get("document_links_mode", "python")).strip().lower() == "python"
+
+
 def _run_entries(
     entries: list[dict],
     data: dict[str, pd.DataFrame],
@@ -1066,6 +1079,7 @@ def _run_entries(
     strict: bool,
     fail_on_skipped: bool = False,
     upload_source: GovernanceSource | None = None,
+    allow_python_document_links: bool = True,
 ) -> None:
     run_at = datetime.now(timezone.utc).isoformat()
     summary_rows: list[dict] = []
@@ -1079,7 +1093,7 @@ def _run_entries(
     results_parquet_path = output_dir / "governance_results.parquet"
     result_cnotes_path = output_dir / "governance_result_cnotes.csv"
     result_cnotes_parquet_path = output_dir / "governance_result_cnotes.parquet"
-    bridges = _document_bridges(data)
+    bridges = _document_bridges(data, allow_python_fallback=allow_python_document_links)
     cnotes = _cnote_universe(data)
     contexts = _cnote_contexts(data)
     next_result_number = 1
@@ -1196,6 +1210,8 @@ def run(
     strict: bool = True,
     fail_on_skipped: bool = False,
 ) -> None:
+    config = load_config(config_path)
+    allow_python_document_links = _allow_python_document_links(config)
     output_dir = Path(output_dir)
     if source == "synthetic":
         data = load_tables(_required_tables() | set(BRIDGE_COLUMNS))
@@ -1272,6 +1288,7 @@ def run(
             strict,
             fail_on_skipped=fail_on_skipped,
             upload_source=bronze_source if source == "minio" else None,
+            allow_python_document_links=allow_python_document_links,
         )
 
 

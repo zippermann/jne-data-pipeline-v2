@@ -31,6 +31,8 @@ governance:
   results_table: "governance_results_2"
   result_cnotes_table: "governance_result_cnotes_2"
   summary_table: "governance_rule_summary_2"
+  build_document_links: true
+  document_links_table: "document_cnote_links_2"
 
 unified_mart:
   enabled: true
