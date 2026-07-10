@@ -1,16 +1,20 @@
 # JNE Data Pipeline v2
 
 This repo is intentionally stripped down to the core relational bronze pipeline.
-It does not build the old flat shipment table. The main path extracts Oracle
-source tables separately, writes partitioned Parquet to MinIO, transforms the
-CNOTE table, and can load the run into a ClickHouse mart for Tableau or
-inspection.
+It does not build the old flat shipment table during extraction. The main path
+extracts Oracle source tables separately, writes partitioned Parquet to MinIO,
+transforms the CNOTE table, evaluates governance pass/fail rows, and loads the
+run into a ClickHouse mart for Tableau or inspection. CNOTE linking and
+dashboard enrichment now belong in ClickHouse, not in the pandas governance
+runner.
 
 ## Current Shape
 
 - `extractor/`: Oracle to relational bronze Parquet extraction.
-- `loader/`: MinIO Parquet to ClickHouse mart loading.
+- `loader/`: MinIO Parquet to ClickHouse mart loading, CNOTE link builds, and
+  dashboard-ready governance enrichment.
 - `governance/`: pandas governance runner, executable catalog, and index workbook.
+  The runner evaluates rules and writes raw document-level pass/fail outputs.
 - `transform/`: derived CNOTE-level enrichment built from bronze Parquet.
 - `pipeline_context.py`: Airflow helper for run prefixes and window labels.
 - `airflow/dags/jne_data_pipeline_dag.py`: Airflow DAG definition.
@@ -83,8 +87,11 @@ extract_oracle -> transform_data -> run_governance -> load_data_mart_clickhouse
 `transform_data` runs `transform.transform_data` and appends `derived` metadata to
 the same run manifest.
 `run_governance` runs `governance.runner` against the bronze run manifest after
-transform has published reusable document-to-CNOTE links.
-`load_data_mart_clickhouse` runs `loader.mart_load_clickhouse`.
+the CNOTE transform. It writes raw document-level rule results and does not
+resolve non-CNOTE documents back to CNOTE in pandas.
+`load_data_mart_clickhouse` runs `loader.mart_load_clickhouse`, publishes bronze
+tables, builds document-to-CNOTE links in ClickHouse, loads raw governance
+outputs, and builds dashboard-ready governance tables.
 
 Pass `{"keep_scope": true}` in `dag_run.conf` to keep Oracle scope tables for
 manual inspection after extraction.
@@ -114,8 +121,11 @@ manifest's `derived` section:
 
 - `derived/cms_cnote_transformed/part-*.parquet`: CNOTE enrichment used as the
   mart's `bronze.cms_cnote`.
-- `derived/document_cnote_links/part-*.parquet`: reusable non-CNOTE document links
-  for governance and inspection.
+
+`transform.document_links_mode` is set to `clickhouse` in `config/config.yaml`.
+This means `transform.transform_data` intentionally skips the old pandas
+`derived/document_cnote_links` build. The ClickHouse mart loader builds
+document-to-CNOTE links from loaded bronze tables instead.
 
 ## Configuration
 
@@ -136,12 +146,19 @@ Oracle extraction tuning knobs:
 Use `config/mart_clickhouse.yaml` for the ClickHouse mart. The mart loader
 publishes tables into the `bronze` database and replaces raw `bronze.cms_cnote`
 with the transformed `derived/cms_cnote_transformed` data. Governance output
-lands in the `governance` database:
+lands in the `governance` database. Current stress-test table names use `_2`
+suffixes so existing dashboard tables from earlier 100k runs are not overwritten:
 
-- `governance.governance_results`: one document-level result row per rule check.
-- `governance.governance_result_cnotes`: zero-to-many CNOTE links per
-  `result_id`.
-- `governance.governance_rule_summary`: one audit row per rule.
+- `governance.governance_results_2`: one raw document-level result row per rule
+  check.
+- `governance.governance_result_cnotes_2`: kept for output-structure
+  compatibility; the current architecture does not populate CNOTE bridge rows in
+  pandas.
+- `governance.governance_rule_summary_2`: one audit row per rule.
+- `governance.document_cnote_links_2`: ClickHouse-built source document to CNOTE
+  bridge.
+- `governance.governance_results_dashboard_2`: ClickHouse-enriched dashboard
+  table joining raw governance results to document links and `bronze.cms_cnote`.
 
 Reference tables such as `cms_drourate` are loaded into the mart when missing,
 then reused on later mart loads instead of being reloaded every run.
@@ -160,47 +177,57 @@ An empty list extracts every configured table.
 ## Governance
 
 `governance/runner.py` reads the bronze `run_manifest.json`, loads the required
-Parquet columns for active catalog rules, and writes document-level governance
-results. The primary output is one row per checked document/index:
+Parquet columns for active catalog rules, and writes raw document-level
+governance results. For MinIO and local bronze runs, it streams execution one
+catalog rule at a time: load only that rule's tables/columns, evaluate, write
+results, release memory, and continue. This is slower than all-table preloading
+but avoids VM OOM kills during one-week stress tests.
+
+The primary output is one row per checked document/index:
 
 - `governance_results.csv`
 
-It also writes a CNOTE bridge file and one rule-level audit file:
+It also writes an output-structure-compatible CNOTE bridge file and one
+rule-level audit file:
 
 - `governance_result_cnotes.csv`
 - `governance_rule_summary.csv`
 
 `governance_results.csv` includes:
 
-- `result_id`: stable row id for joining to the CNOTE bridge in the same run.
+- `result_id`: stable row id for the result row.
 - `document_type`: the source document type, usually the source table name without
   the `CMS_` prefix.
 - `document_id`: the exact source document checked, such as a CNOTE number, bag
   number, manifest number, sheet number, or process document number.
-- `cnote_no`: a convenience shortcut only when exactly one safe sampled CNOTE is
-  linked. It is intentionally blank for zero-link and many-link documents.
+- `cnote_no`: populated only for direct `CMS_CNOTE` result rows in the raw
+  governance output. Non-CNOTE document rows intentionally keep this blank.
+- dashboard/context columns such as `shipment_type`, `cnote_origin`, and
+  `origin_region`: kept in the raw output schema for compatibility but left
+  blank by governance. ClickHouse fills dashboard-ready linked fields later.
 
-`governance_result_cnotes.csv` is the source of truth for CNOTE rollups. It
-contains one row per safe CNOTE link:
+`governance_result_cnotes.csv` is retained for structural compatibility with
+older loaders and dashboards, but the current architecture does not use it as
+the CNOTE rollup source. It is normally empty in the ClickHouse-linking branch.
 
 - `result_id`
 - `cnote_no`
 - `link_method`
-- `link_confidence`
 
 Dashboard rule of thumb:
 
 - Document-level views should use `governance_results.document_id`.
-- CNOTE-level views should join `governance_results` to
-  `governance_result_cnotes` on `result_id` and use
-  `governance_result_cnotes.cnote_no`.
+- CNOTE-level/dashboard views should use ClickHouse tables:
+  `governance.document_cnote_links_2` and
+  `governance.governance_results_dashboard_2`.
 - Do not group non-CNOTE tables only by `governance_results.cnote_no`; that
   column is nullable by design.
 
 Reusable bridge maps should only represent confirmed source relationships.
-Bridge construction belongs in `transform/document_links.py`; governance consumes
-the derived `DOCUMENT_CNOTE_LINKS` table when it exists. Current confirmed
-examples include:
+The confirmed relationship definitions still live in `transform/document_links.py`
+for shared vocabulary/tests, but production-scale bridge construction belongs in
+`loader/mart_load_clickhouse.py` after bronze tables are loaded into ClickHouse.
+Current confirmed examples include:
 
 - `CMS_MFCNOTE.MFCNOTE_NO` directly to CNOTE.
 - `CMS_MFBAG.MFBAG_NO -> CMS_MFCNOTE.MFCNOTE_BAG_NO -> CNOTE`.
@@ -240,6 +267,36 @@ and use `--no-strict` only for inspection runs.
 `governance/catalog_skipped_rows.csv` records workbook rows that were not mapped
 into executable catalog rules.
 
+## Stress-Test Notes
+
+For one-week stress tests in the VM, the extraction window must stay consistent
+across all task reruns because Airflow recomputes `BRONZE_RUN_PREFIX` from the
+current `config/config.yaml` for every task. If extraction ran with:
+
+```yaml
+extraction:
+  cnote_limit:
+  window:
+    start_date: "2026-05-01"
+    end_date: "2026-05-07"
+```
+
+then rerunning only `run_governance` or `load_data_mart_clickhouse` must use the
+same config. Restoring the default `cnote_limit: 100000` or
+`end_date: "2026-06-01"` will point the task at a different MinIO prefix and
+cause `NoSuchKey` for `run_manifest.json`.
+
+When testing code changes after extraction and transform have already succeeded,
+rerun from `run_governance` and then `load_data_mart_clickhouse`; do not rerun
+`extract_oracle` or `transform_data` unless the extraction window or source data
+should change.
+
+Docker images may not include `git`. To verify the VM container has this branch's
+code, inspect files instead of using `git` inside the container. For example,
+check that `governance/output.py` contains `document_id` in `RESULT_COLUMNS` and
+that `loader/mart_load_clickhouse.py` contains
+`governance_results_dashboard_2`.
+
 ## Tests
 
 Run tests when dependencies are installed:
@@ -254,6 +311,10 @@ Useful lightweight checks:
 python -m compileall extractor loader governance transform airflow/dags tests pipeline_context.py
 python -m governance.runner --source synthetic --no-strict --output-dir /tmp/jne-governance-smoke
 ```
+
+The synthetic governance smoke check requires Parquet dependencies such as
+`pyarrow`. If the local laptop environment is missing them, use compile checks
+and run full validation in the Airflow/Docker environment instead.
 
 ## Notes For Future Agents
 
