@@ -65,6 +65,15 @@ CNOTE_CONTEXT_COLUMNS = {
     "shipment_scope",
 }
 
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 BRANCH_REGION_BY_CODE = {
     "AMI": "JTBNN",
     "DPS": "JTBNN",
