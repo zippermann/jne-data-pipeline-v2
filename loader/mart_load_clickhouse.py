@@ -85,6 +85,7 @@ class GovernanceConfig:
     document_links_table: str = "document_cnote_links_2"
     build_dashboard_table: bool = True
     dashboard_table: str = "governance_results_dashboard_2"
+    execution_mode: str = "clickhouse"
 
 
 @dataclass(frozen=True)
@@ -192,6 +193,7 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
             results_path=Path(governance.get("results_path") or default_governance_path),
             result_cnotes_path=Path(governance.get("result_cnotes_path") or default_result_cnotes_path),
             summary_path=Path(governance.get("summary_path") or default_summary_path),
+            execution_mode=str(governance.get("execution_mode", "clickhouse")).strip().lower(),
             results_table=governance.get("results_table", "governance_results_2"),
             result_cnotes_table=governance.get("result_cnotes_table", "governance_result_cnotes_2"),
             summary_table=governance.get("summary_table", "governance_rule_summary_2"),
@@ -212,6 +214,8 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
     )
     if config.load_mode != "latest_snapshot":
         raise ValueError(f"Unsupported mart.load_mode: {config.load_mode}")
+    if config.governance.execution_mode not in {"clickhouse", "csv"}:
+        raise ValueError("governance.execution_mode must be one of: clickhouse, csv")
     if not config.bronze.run_prefix:
         raise ValueError("bronze.run_prefix is required")
     return config
@@ -356,6 +360,13 @@ def _table_exists(client: Any, schema: str, table: str) -> bool:
         parameters={"database": schema, "table": table},
     )
     return bool(result.result_rows and int(result.result_rows[0][0]) > 0)
+
+
+def _table_columns(client: Any, schema: str, table: str) -> set[str]:
+    if not _table_exists(client, schema, table):
+        return set()
+    result = client.query(f"DESCRIBE TABLE {_qualified(schema, table)}")
+    return {str(row[0]) for row in result.result_rows}
 
 
 def _create_empty_table_from_s3(client: Any, schema: str, table: str, s3_expr: str) -> None:
@@ -794,6 +805,470 @@ def _load_governance_results(client: Any, config: MartClickHouseConfig, batch_si
     return row_count
 
 
+RESULT_COLUMNS = [
+    "shipment_type",
+    "result_id",
+    "document_id",
+    "cnote_no",
+    "document_no",
+    "cnote_origin",
+    "cnote_destination",
+    "origin_region",
+    "destination_region",
+    "cnote_service_code",
+    "index_code",
+    "element",
+    "logic_description",
+    "table_name",
+    "level",
+    "stage",
+    "variable_1",
+    "variable_2",
+    "column_name",
+    "main_indicator",
+    "main_impact",
+    "impact_details",
+    "issue_description",
+    "status",
+]
+
+RESULT_CNOTE_COLUMNS = [
+    "result_id",
+    "cnote_no",
+    "link_method",
+    "link_confidence",
+    "cnote_origin",
+    "cnote_destination",
+    "cnote_service_code",
+    "delivery_type",
+    "shipment_scope",
+    "delivery_category",
+]
+
+RULE_SUMMARY_COLUMNS = [
+    "index_code",
+    "element",
+    "main_indicator",
+    "rule_family",
+    "table_name",
+    "status",
+    "total_checked",
+    "total_failed",
+    "result_rows",
+    "skip_reason",
+    "error_message",
+]
+
+CLICKHOUSE_RULE_FAMILIES = {
+    "completeness",
+    "validity_regex",
+    "validity_integer",
+    "validity_datetime",
+    "validity_in_set",
+    "non_negative",
+    "uniqueness",
+}
+
+
+def _create_empty_governance_tables(client: Any, config: MartClickHouseConfig) -> None:
+    governance = config.schemas.governance
+    _create_database(client, governance)
+    for table in (
+        config.governance.results_table,
+        config.governance.result_cnotes_table,
+        config.governance.summary_table,
+    ):
+        _command(client, f"DROP TABLE IF EXISTS {_qualified(governance, table)}")
+    _command(
+        client,
+        f"""
+        CREATE TABLE {_qualified(governance, config.governance.results_table)}
+        ({", ".join(f"{_quote_ident(column)} Nullable(String)" for column in RESULT_COLUMNS)})
+        ENGINE = MergeTree
+        ORDER BY tuple()
+        """,
+    )
+    _command(
+        client,
+        f"""
+        CREATE TABLE {_qualified(governance, config.governance.result_cnotes_table)}
+        ({", ".join(f"{_quote_ident(column)} Nullable(String)" for column in RESULT_CNOTE_COLUMNS)})
+        ENGINE = MergeTree
+        ORDER BY tuple()
+        """,
+    )
+    _command(
+        client,
+        f"""
+        CREATE TABLE {_qualified(governance, config.governance.summary_table)}
+        (
+            {_quote_ident("index_code")} String,
+            {_quote_ident("element")} String,
+            {_quote_ident("main_indicator")} String,
+            {_quote_ident("rule_family")} String,
+            {_quote_ident("table_name")} String,
+            {_quote_ident("status")} String,
+            {_quote_ident("total_checked")} UInt64,
+            {_quote_ident("total_failed")} UInt64,
+            {_quote_ident("result_rows")} UInt64,
+            {_quote_ident("skip_reason")} String,
+            {_quote_ident("error_message")} String
+        )
+        ENGINE = MergeTree
+        ORDER BY tuple()
+        """,
+    )
+
+
+def _document_type(table_name: str) -> str:
+    return table_name.removeprefix("CMS_")
+
+
+def _document_level(entry: dict[str, Any]) -> str:
+    table_name = str(entry.get("table", "")).upper()
+    if table_name == "CMS_CNOTE":
+        return "CNOTE"
+    if any(token in table_name for token in ("BAG", "MANIFEST", "SHEET", "SMU", "SJ", "HOC", "HIC")):
+        return "Operational Document"
+    return "Document"
+
+
+def _document_stage(entry: dict[str, Any]) -> str:
+    table_name = str(entry.get("table", "")).upper()
+    if table_name == "CMS_CNOTE":
+        return "Booking"
+    if "BAG" in table_name:
+        return "Bagging"
+    if "MANIFEST" in table_name or "SMU" in table_name:
+        return "Manifest"
+    if "SHEET" in table_name or "POD" in table_name:
+        return "Delivery"
+    if "HOC" in table_name or "HIC" in table_name:
+        return "Handover"
+    return ""
+
+
+def _entry_column_name(entry: dict[str, Any]) -> str:
+    params = entry.get("params", {})
+    for key in ("column", "left_column", "right_column", "start_column", "end_column"):
+        if params.get(key):
+            return str(params[key])
+    if params.get("columns"):
+        return ", ".join(str(column) for column in params["columns"])
+    return ""
+
+
+def _entry_document_column(entry: dict[str, Any]) -> str:
+    params = entry.get("params", {})
+    if params.get("cnote_column"):
+        return str(params["cnote_column"])
+    if params.get("column"):
+        return str(params["column"])
+    if params.get("columns"):
+        return str(params["columns"][0])
+    return "CNOTE_NO"
+
+
+def _present_expr(alias: str, column: str) -> str:
+    return f"isNotNull({alias}.{_quote_ident(column)}) AND trimBoth(toString({alias}.{_quote_ident(column)})) != ''"
+
+
+def _insert_summary_sql(
+    config: MartClickHouseConfig,
+    entry: dict[str, Any],
+    status: str,
+    total_checked: str = "0",
+    total_failed: str = "0",
+    result_rows: str = "0",
+    skip_reason: str = "",
+    error_message: str = "",
+) -> str:
+    values = [
+        _quote_sql(str(entry.get("index_code", ""))),
+        _quote_sql(str(entry.get("element", ""))),
+        _quote_sql(str(entry.get("indicator", ""))),
+        _quote_sql(str(entry.get("rule_family", ""))),
+        _quote_sql(str(entry.get("table", ""))),
+        status,
+        total_checked,
+        total_failed,
+        result_rows,
+        _quote_sql(skip_reason),
+        _quote_sql(error_message),
+    ]
+    return (
+        f"INSERT INTO {_qualified(config.schemas.governance, config.governance.summary_table)} "
+        f"({', '.join(_quote_ident(column) for column in RULE_SUMMARY_COLUMNS)}) "
+        f"SELECT {', '.join(values)}"
+    )
+
+
+def _rule_conditions(entry: dict[str, Any], columns: set[str]) -> tuple[str, str, str, str, set[str]]:
+    params = entry.get("params", {})
+    family = str(entry.get("rule_family", ""))
+    required: set[str] = {_entry_document_column(entry)}
+    if family == "completeness":
+        column = str(params["column"])
+        required.add(column)
+        return "1", f"NOT ({_present_expr('t', column)})", f"toString(t.{_quote_ident(column)})", "''", required
+    if family == "validity_regex":
+        column = str(params["column"])
+        pattern = str(params["pattern"])
+        required.add(column)
+        present = _present_expr("t", column)
+        return present, f"NOT match(toString(t.{_quote_ident(column)}), {_quote_sql(pattern)})", f"toString(t.{_quote_ident(column)})", _quote_sql(pattern), required
+    if family == "validity_integer":
+        column = str(params["column"])
+        required.add(column)
+        present = _present_expr("t", column)
+        return present, f"isNull(toInt64OrNull(toString(t.{_quote_ident(column)})))", f"toString(t.{_quote_ident(column)})", "''", required
+    if family == "validity_datetime":
+        column = str(params["column"])
+        required.add(column)
+        present = _present_expr("t", column)
+        return present, f"isNull(parseDateTimeBestEffortOrNull(toString(t.{_quote_ident(column)})))", f"toString(t.{_quote_ident(column)})", "''", required
+    if family == "validity_in_set":
+        column = str(params["column"])
+        values = [str(value) for value in params.get("allowed_values", params.get("allowed", []))]
+        required.add(column)
+        present = _present_expr("t", column)
+        allowed = "[" + ", ".join(_quote_sql(value) for value in values) + "]"
+        return present, f"NOT has({allowed}, trimBoth(toString(t.{_quote_ident(column)})))", f"toString(t.{_quote_ident(column)})", "''", required
+    if family == "non_negative":
+        column = str(params["column"])
+        required.add(column)
+        present = _present_expr("t", column)
+        numeric = f"toFloat64OrNull(toString(t.{_quote_ident(column)}))"
+        return present, f"isNull({numeric}) OR {numeric} < 0", f"toString(t.{_quote_ident(column)})", "''", required
+    if family == "uniqueness":
+        rule_columns = [str(column) for column in params["columns"]]
+        required.update(rule_columns)
+        present = " AND ".join(_present_expr("t", column) for column in rule_columns)
+        value_expr = "concat(" + ", '|', ".join(f"toString(t.{_quote_ident(column)})" for column in rule_columns) + ")"
+        return present, "__duplicate_count > 1", value_expr, "''", required
+    raise ValueError(f"Unsupported ClickHouse governance rule family: {family}")
+
+
+def _insert_rule_results_sql(config: MartClickHouseConfig, entry: dict[str, Any]) -> tuple[str, str, str]:
+    table_name = str(entry["table"]).upper()
+    table = table_name.lower()
+    params = entry.get("params", {})
+    family = str(entry.get("rule_family", ""))
+    document_column = _entry_document_column(entry)
+    checked_where, failed_expr, variable_1, variable_2, _required = _rule_conditions(entry, set())
+    document_id_expr = f"trimBoth(toString(t.{_quote_ident(document_column)}))"
+    status_expr = f"if({failed_expr}, 'FAIL', 'PASS')"
+    result_id_expr = (
+        "concat("
+        f"{_quote_sql(str(entry['index_code']))}, ':', "
+        "toString(rowNumberInAllBlocks()), ':', "
+        "hex(sipHash64("
+        f"{document_id_expr}, {status_expr}, {variable_1}, {variable_2}"
+        ")))"
+    )
+
+    source = _qualified(config.schemas.bronze, table)
+    if family == "uniqueness":
+        rule_columns = [str(column) for column in params["columns"]]
+        partitions = ", ".join(_quote_ident(column) for column in rule_columns)
+        source = f"(SELECT *, count() OVER (PARTITION BY {partitions}) AS __duplicate_count FROM {source})"
+
+    values = [
+        "''",
+        result_id_expr,
+        document_id_expr,
+        f"if({_quote_sql(table_name)} = 'CMS_CNOTE', {document_id_expr}, '')",
+        f"if({_quote_sql(table_name)} = 'CMS_CNOTE', '', {document_id_expr})",
+        "''",
+        "''",
+        "''",
+        "''",
+        "''",
+        _quote_sql(str(entry.get("index_code", ""))),
+        _quote_sql(str(entry.get("element", ""))),
+        _quote_sql(str(entry.get("description", ""))),
+        _quote_sql(table_name),
+        _quote_sql(_document_level(entry)),
+        _quote_sql(_document_stage(entry)),
+        variable_1,
+        variable_2,
+        _quote_sql(_entry_column_name(entry)),
+        _quote_sql(str(entry.get("indicator", ""))),
+        _quote_sql(str(entry.get("main_impact", ""))),
+        _quote_sql(str(entry.get("impact_details", ""))),
+        _quote_sql(str(entry.get("issue_description", ""))),
+        status_expr,
+    ]
+    insert_sql = (
+        f"INSERT INTO {_qualified(config.schemas.governance, config.governance.results_table)} "
+        f"({', '.join(_quote_ident(column) for column in RESULT_COLUMNS)}) "
+        f"SELECT {', '.join(values)} FROM {source} t WHERE {checked_where}"
+    )
+    summary_sql = _insert_summary_sql(
+        config,
+        entry,
+        "multiIf(count() = 0, 'NO_ROWS', countIf(status = 'FAIL') > 0, 'FAIL', 'PASS')",
+        "toUInt64(count())",
+        "toUInt64(countIf(status = 'FAIL'))",
+        "toUInt64(count())",
+    ) + (
+        f" FROM {_qualified(config.schemas.governance, config.governance.results_table)} "
+        f"WHERE index_code = {_quote_sql(str(entry.get('index_code', '')))}"
+    )
+    return insert_sql, summary_sql, checked_where
+
+
+def _build_clickhouse_governance_results(client: Any, config: MartClickHouseConfig) -> int:
+    if not config.governance.enabled:
+        _log("Skipping ClickHouse governance because governance.enabled=false")
+        return 0
+    if config.governance.execution_mode == "csv":
+        return _load_governance_results(client, config)
+
+    from governance.catalog import CATALOG
+
+    started = time.monotonic()
+    _create_empty_governance_tables(client, config)
+    active_entries = [entry for entry in CATALOG if entry.get("active", True)]
+    supported = 0
+    skipped = 0
+    for entry in active_entries:
+        table_name = str(entry.get("table", "")).upper()
+        table = table_name.lower()
+        family = str(entry.get("rule_family", ""))
+        if family not in CLICKHOUSE_RULE_FAMILIES:
+            skipped += 1
+            _command(
+                client,
+                _insert_summary_sql(
+                    config,
+                    entry,
+                    _quote_sql("SKIPPED"),
+                    skip_reason=f"ClickHouse governance does not yet implement rule family {family}",
+                ),
+            )
+            continue
+        if not _table_exists(client, config.schemas.bronze, table):
+            skipped += 1
+            _command(
+                client,
+                _insert_summary_sql(
+                    config,
+                    entry,
+                    _quote_sql("SKIPPED"),
+                    skip_reason=f"missing ClickHouse table: {config.schemas.bronze}.{table}",
+                ),
+            )
+            continue
+        columns = _table_columns(client, config.schemas.bronze, table)
+        try:
+            _checked, _failed, _v1, _v2, required = _rule_conditions(entry, columns)
+        except Exception as exc:
+            skipped += 1
+            _command(
+                client,
+                _insert_summary_sql(config, entry, _quote_sql("ERROR"), error_message=str(exc)),
+            )
+            continue
+        missing = sorted(column for column in required if column not in columns)
+        if missing:
+            skipped += 1
+            _command(
+                client,
+                _insert_summary_sql(
+                    config,
+                    entry,
+                    _quote_sql("SKIPPED"),
+                    skip_reason=f"missing column(s): {', '.join(missing)}",
+                ),
+            )
+            continue
+        insert_sql, summary_sql, _ = _insert_rule_results_sql(config, entry)
+        _command(client, insert_sql)
+        _command(client, summary_sql)
+        supported += 1
+
+    row_count = int(_query_scalar(client, f"SELECT count() FROM {_qualified(config.schemas.governance, config.governance.results_table)}"))
+    _log(
+        f"Built ClickHouse {config.schemas.governance}.{config.governance.results_table}: "
+        f"{row_count:,} rows from {supported:,} supported rule(s), {skipped:,} skipped rule(s) "
+        f"in {time.monotonic() - started:.1f}s"
+    )
+    return row_count
+
+
+def _build_governance_result_cnotes(client: Any, config: MartClickHouseConfig) -> int:
+    if not config.governance.enabled:
+        return 0
+    governance = config.schemas.governance
+    bronze = config.schemas.bronze
+    results_table = config.governance.results_table
+    result_cnotes_table = config.governance.result_cnotes_table
+    links_table = config.governance.document_links_table
+    if not _table_exists(client, governance, results_table) or not _table_exists(client, bronze, "cms_cnote"):
+        return 0
+
+    started = time.monotonic()
+    _command(client, f"DROP TABLE IF EXISTS {_qualified(governance, result_cnotes_table)}")
+    results = _qualified(governance, results_table)
+    cnote = _qualified(bronze, "cms_cnote")
+    link_select = ""
+    if _table_exists(client, governance, links_table):
+        link_select = f"""
+            UNION ALL
+            SELECT
+                r.`result_id` AS result_id,
+                l.`cnote_no` AS cnote_no,
+                l.`link_method` AS link_method,
+                l.`link_confidence` AS link_confidence
+            FROM {results} r
+            INNER JOIN {_qualified(governance, links_table)} l
+                ON upper(trimBoth(ifNull(r.`table_name`, ''))) = l.`source_table`
+               AND trimBoth(ifNull(r.`document_id`, '')) = l.`document_id`
+        """
+    _command(
+        client,
+        f"""
+        CREATE TABLE {_qualified(governance, result_cnotes_table)}
+        ENGINE = MergeTree
+        ORDER BY tuple()
+        AS
+        WITH candidates AS (
+            SELECT
+                r.`result_id` AS result_id,
+                trimBoth(ifNull(r.`document_id`, '')) AS cnote_no,
+                'direct_cnote' AS link_method,
+                'safe' AS link_confidence
+            FROM {results} r
+            WHERE upper(trimBoth(ifNull(r.`table_name`, ''))) = 'CMS_CNOTE'
+              AND trimBoth(ifNull(r.`document_id`, '')) != ''
+            {link_select}
+        )
+        SELECT DISTINCT
+            cnd.result_id,
+            cnd.cnote_no,
+            cnd.link_method,
+            cnd.link_confidence,
+            ifNull(c.`CNOTE_ORIGIN`, '') AS cnote_origin,
+            ifNull(c.`CNOTE_DESTINATION`, '') AS cnote_destination,
+            ifNull(c.`CNOTE_SERVICES_CODE`, '') AS cnote_service_code,
+            ifNull(c.`delivery_type`, '') AS delivery_type,
+            ifNull(c.`shipment_scope`, '') AS shipment_scope,
+            ifNull(c.`delivery_category`, '') AS delivery_category
+        FROM candidates cnd
+        INNER JOIN {cnote} c
+            ON cnd.cnote_no = trimBoth(ifNull(c.`CNOTE_NO`, ''))
+        WHERE cnd.cnote_no != ''
+        """,
+    )
+    row_count = int(_query_scalar(client, f"SELECT count() FROM {_qualified(governance, result_cnotes_table)}"))
+    _log(
+        f"Built ClickHouse {governance}.{result_cnotes_table}: "
+        f"{row_count:,} rows in {time.monotonic() - started:.1f}s"
+    )
+    return row_count
+
+
 def _build_governance_dashboard_table(client: Any, config: MartClickHouseConfig) -> int:
     if not config.governance.enabled or not config.governance.build_dashboard_table:
         _log("Skipping ClickHouse governance dashboard table build")
@@ -803,6 +1278,7 @@ def _build_governance_dashboard_table(client: Any, config: MartClickHouseConfig)
     bronze = config.schemas.bronze
     results_table = config.governance.results_table
     links_table = config.governance.document_links_table
+    result_cnotes_table = config.governance.result_cnotes_table
     target_table = config.governance.dashboard_table
     if not _table_exists(client, governance, results_table):
         _log(f"Skipping ClickHouse governance dashboard table build because {governance}.{results_table} is missing")
@@ -815,6 +1291,38 @@ def _build_governance_dashboard_table(client: Any, config: MartClickHouseConfig)
     _command(client, f"DROP TABLE IF EXISTS {_qualified(governance, target_table)}")
     results = _qualified(governance, results_table)
     cnote_table = _qualified(bronze, "cms_cnote")
+    if _table_exists(client, governance, result_cnotes_table):
+        result_cnotes = _qualified(governance, result_cnotes_table)
+        _command(
+            client,
+            f"""
+            CREATE TABLE {_qualified(governance, target_table)}
+            ENGINE = MergeTree
+            ORDER BY tuple()
+            AS
+            SELECT
+                r.*,
+                ifNull(rc.`cnote_no`, '') AS linked_cnote_no,
+                ifNull(rc.`link_method`, '') AS link_method,
+                ifNull(rc.`link_confidence`, '') AS link_confidence,
+                ifNull(rc.`cnote_origin`, '') AS linked_cnote_origin,
+                ifNull(rc.`cnote_destination`, '') AS linked_cnote_destination,
+                ifNull(rc.`cnote_service_code`, '') AS linked_cnote_service_code,
+                ifNull(rc.`delivery_type`, '') AS linked_delivery_type,
+                ifNull(rc.`shipment_scope`, '') AS linked_shipment_scope,
+                ifNull(rc.`delivery_category`, '') AS linked_delivery_category
+            FROM {results} r
+            LEFT JOIN {result_cnotes} rc
+                ON r.`result_id` = rc.`result_id`
+            """,
+        )
+        row_count = int(_query_scalar(client, f"SELECT count() FROM {_qualified(governance, target_table)}"))
+        _log(
+            f"Built ClickHouse {governance}.{target_table}: "
+            f"{row_count:,} rows in {time.monotonic() - started:.1f}s"
+        )
+        return row_count
+
     link_join = ""
     link_cnote_expr = "CAST(NULL, 'Nullable(String)')"
     link_method_expr = "CAST(NULL, 'Nullable(String)')"
@@ -1010,11 +1518,15 @@ def _insert_load_run(
     )
 
 
-def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
+def run(config_path: str = "config/mart_clickhouse.yaml", stage: str = "all") -> None:
+    stage = stage.strip().lower()
+    if stage not in {"all", "load", "governance"}:
+        raise ValueError("stage must be one of: all, load, governance")
     config = load_config(config_path)
     _log(
         "Starting ClickHouse mart load: "
         f"bronze=s3://{config.bronze.bucket}/{config.bronze.run_prefix}, "
+        f"stage={stage}, "
         f"skip_stages={list(config.skip_stages)}, "
         f"reuse_existing_stages={list(config.reuse_existing_stages)}"
     )
@@ -1030,43 +1542,49 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
     loaded_derived: dict[str, int] = {}
     unified_rows = 0
     governance_rows = 0
+    result_cnote_rows = 0
     document_link_rows = 0
     dashboard_rows = 0
     try:
-        _drop_database(client, config.schemas.bronze_staging)
-        _drop_database(client, config.schemas.derived_staging)
-        _create_database(client, config.schemas.bronze_staging)
-        loaded_tables = _load_table_entries(
-            client,
-            config,
-            manifest.get("tables", []),
-            config.schemas.bronze_staging,
-            "bronze",
-            target_schema=config.schemas.bronze,
-        )
-        if manifest.get("derived"):
-            _log("Loading transformed CNOTE into ClickHouse bronze staging")
-            loaded_derived = _load_table_entries(
+        if stage in {"all", "load"}:
+            _drop_database(client, config.schemas.bronze_staging)
+            _drop_database(client, config.schemas.derived_staging)
+            _create_database(client, config.schemas.bronze_staging)
+            loaded_tables = _load_table_entries(
                 client,
                 config,
-                manifest.get("derived", []),
+                manifest.get("tables", []),
                 config.schemas.bronze_staging,
                 "bronze",
-                default_parent="derived",
+                target_schema=config.schemas.bronze,
             )
-        _publish_schema(client, config.schemas.bronze_staging, config.schemas.bronze)
-        _drop_database(client, config.schemas.derived)
+            if manifest.get("derived"):
+                _log("Loading transformed CNOTE into ClickHouse bronze staging")
+                loaded_derived = _load_table_entries(
+                    client,
+                    config,
+                    manifest.get("derived", []),
+                    config.schemas.bronze_staging,
+                    "bronze",
+                    default_parent="derived",
+                )
+            _publish_schema(client, config.schemas.bronze_staging, config.schemas.bronze)
+            _drop_database(client, config.schemas.derived)
+            unified_rows = _load_unified_mart(client, config)
 
-        document_link_rows = _build_document_cnote_links(client, config)
-        unified_rows = _load_unified_mart(client, config)
-        governance_rows = _load_governance_results(client, config)
-        dashboard_rows = _build_governance_dashboard_table(client, config)
+        if stage in {"all", "governance"}:
+            document_link_rows = _build_document_cnote_links(client, config)
+            governance_rows = _build_clickhouse_governance_results(client, config)
+            result_cnote_rows = _build_governance_result_cnotes(client, config)
+            dashboard_rows = _build_governance_dashboard_table(client, config)
+
         total_rows = (
             sum(loaded_tables.values())
             + sum(loaded_derived.values())
             + document_link_rows
             + unified_rows
             + governance_rows
+            + result_cnote_rows
             + dashboard_rows
         )
         _insert_load_run(
@@ -1079,6 +1597,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
                 + (1 if document_link_rows else 0)
                 + (1 if unified_rows else 0)
                 + (1 if config.governance.enabled else 0)
+                + (1 if result_cnote_rows else 0)
                 + (1 if dashboard_rows else 0)
             ),
             row_count=total_rows,
@@ -1098,6 +1617,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
                     + (1 if document_link_rows else 0)
                     + (1 if unified_rows else 0)
                     + (1 if governance_rows else 0)
+                    + (1 if result_cnote_rows else 0)
                     + (1 if dashboard_rows else 0)
                 ),
                 row_count=(
@@ -1106,6 +1626,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
                     + document_link_rows
                     + unified_rows
                     + governance_rows
+                    + result_cnote_rows
                     + dashboard_rows
                 ),
                 status="FAILED",
@@ -1126,6 +1647,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
         _log(f"  {config.unified_mart.schema}.{config.unified_mart.table}: {unified_rows} rows")
     if config.governance.enabled:
         _log(f"  {config.schemas.governance}.{config.governance.results_table}: {governance_rows} rows")
+        _log(f"  {config.schemas.governance}.{config.governance.result_cnotes_table}: {result_cnote_rows} rows")
     if config.governance.build_dashboard_table:
         _log(f"  {config.schemas.governance}.{config.governance.dashboard_table}: {dashboard_rows} rows")
 
@@ -1133,8 +1655,9 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Load bronze Parquet into ClickHouse.")
     parser.add_argument("--config", default="config/mart_clickhouse.yaml")
+    parser.add_argument("--stage", choices=["all", "load", "governance"], default="all")
     args = parser.parse_args()
-    run(args.config)
+    run(args.config, stage=args.stage)
 
 
 if __name__ == "__main__":

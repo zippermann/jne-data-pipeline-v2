@@ -1,8 +1,8 @@
 """
 JNE Data Pipeline DAG
 =====================
-Relational Oracle → Parquet bronze extraction, derived transformation,
-governance checks, and mart loading.
+Relational Oracle → Parquet bronze extraction, derived CNOTE transformation,
+ClickHouse loading, and ClickHouse-native governance checks.
 
 Pass {"keep_scope": true} in dag_run.conf to leave Oracle scope tables in place
 for inspection after the run.
@@ -59,19 +59,6 @@ with DAG(
         ),
     )
 
-    run_governance = BashOperator(
-        task_id="run_governance",
-        bash_command=(
-            "cd /opt/airflow/project && "
-            f"{run_context}"
-            'python -m governance.runner '
-            '--source minio '
-            '--config config/config.yaml '
-            '--bronze-run-prefix "$BRONZE_RUN_PREFIX" '
-            '--output-dir "governance/outputs/$RUN_ID"'
-        ),
-    )
-
     transform_data = BashOperator(
         task_id="transform_data",
         bash_command=(
@@ -89,10 +76,21 @@ with DAG(
         bash_command=(
             "cd /opt/airflow/project && "
             f"{run_context}"
-            '{{ "python -m loader.mart_load_clickhouse --config config/mart_clickhouse.yaml" '
+            '{{ "python -m loader.mart_load_clickhouse --config config/mart_clickhouse.yaml --stage load" '
             'if dag_run.conf.get("load_clickhouse", True) else '
             '"echo ClickHouse mart load disabled by dag_run.conf" }}'
         ),
     )
 
-    extract_oracle >> transform_data >> run_governance >> load_data_mart_clickhouse
+    run_governance = BashOperator(
+        task_id="run_governance",
+        bash_command=(
+            "cd /opt/airflow/project && "
+            f"{run_context}"
+            '{{ "python -m loader.mart_load_clickhouse --config config/mart_clickhouse.yaml --stage governance" '
+            'if dag_run.conf.get("load_clickhouse", True) else '
+            '"echo ClickHouse governance disabled because ClickHouse mart load is disabled by dag_run.conf" }}'
+        ),
+    )
+
+    extract_oracle >> transform_data >> load_data_mart_clickhouse >> run_governance
