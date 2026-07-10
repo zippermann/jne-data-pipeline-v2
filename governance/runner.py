@@ -9,6 +9,7 @@ rule tests and demos, but Airflow uses the bronze manifest path.
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import re
@@ -404,8 +405,6 @@ def _required_columns(entries: Iterable[dict]) -> dict[str, set[str]]:
     for entry in entries:
         for table, columns in _entry_columns(entry).items():
             required.setdefault(table, set()).update(columns)
-    if "CMS_CNOTE" in required:
-        required["CMS_CNOTE"].update(CNOTE_CONTEXT_COLUMNS)
     return required
 
 
@@ -693,11 +692,15 @@ def _load_table_from_minio(source: GovernanceSource, table: BronzeTable, columns
     assert source.client is not None and source.bucket is not None and source.tmpdir is not None
     object_names = _list_minio_parquet_objects(source, table)
     local_paths = []
-    for object_name in object_names:
-        local_path = source.tmpdir / f"{table.output_name}-{Path(object_name).name}"
-        source.client.fget_object(source.bucket, object_name, str(local_path))
-        local_paths.append(local_path)
-    return _read_parquet_files(local_paths, sorted(columns))
+    try:
+        for object_name in object_names:
+            local_path = source.tmpdir / f"{table.output_name}-{Path(object_name).name}"
+            source.client.fget_object(source.bucket, object_name, str(local_path))
+            local_paths.append(local_path)
+        return _read_parquet_files(local_paths, sorted(columns))
+    finally:
+        for local_path in local_paths:
+            local_path.unlink(missing_ok=True)
 
 
 def _load_table_from_local(source: GovernanceSource, table: BronzeTable, columns: set[str]) -> pd.DataFrame:
@@ -1175,6 +1178,148 @@ def _run_entries(
         raise RuntimeError(f"Governance completed with {error_count} rule implementation error(s)")
 
 
+def _run_entries_streamed(
+    entries: list[dict],
+    skipped: dict[str, str],
+    source: GovernanceSource,
+    output_dir: Path,
+    strict: bool,
+    fail_on_skipped: bool = False,
+    upload_source: GovernanceSource | None = None,
+) -> None:
+    run_at = datetime.now(timezone.utc).isoformat()
+    summary_rows: list[dict] = []
+    status_counts: dict[str, int] = {}
+    row_status_counts: dict[str, int] = {}
+    result_row_total = 0
+    error_count = 0
+    disabled_count = 0
+    skipped_count = 0
+    results_path = output_dir / "governance_results.csv"
+    results_parquet_path = output_dir / "governance_results.parquet"
+    result_cnotes_path = output_dir / "governance_result_cnotes.csv"
+    result_cnotes_parquet_path = output_dir / "governance_result_cnotes.parquet"
+    next_result_number = 1
+    runnable_set = {entry["index_code"] for entry in entries}
+
+    with (
+        GovernanceResultWriter(results_path, results_parquet_path) as result_writer,
+        GovernanceResultWriter(
+            result_cnotes_path,
+            result_cnotes_parquet_path,
+            columns=RESULT_CNOTE_COLUMNS,
+        ) as result_cnote_writer,
+    ):
+        for entry in CATALOG:
+            if entry.get("enabled") is False:
+                disabled_count += 1
+                continue
+            index_code = entry["index_code"]
+            if index_code in skipped:
+                skipped_count += 1
+                summary_rows.append(_rule_summary_row(entry, "SKIPPED", skip_reason=skipped[index_code]))
+                continue
+            if index_code not in runnable_set:
+                continue
+
+            data: dict[str, pd.DataFrame] = {}
+            try:
+                streamed_reference_tables = _streamed_reference_tables([entry], source)
+                load_columns = {
+                    table: columns
+                    for table, columns in _required_columns([entry]).items()
+                    if table not in streamed_reference_tables
+                }
+                data = _load_bronze_tables(source, load_columns)
+                if DROURATE_TABLE in streamed_reference_tables:
+                    data[DROURATE_TABLE] = _stream_drourate_reference(source, [entry], data)
+                missing_columns = _missing_entry_columns(entry, data)
+                if missing_columns:
+                    skipped_count += 1
+                    skipped_reason = "missing bronze column(s): " + ", ".join(missing_columns)
+                    summary_rows.append(_rule_summary_row(entry, "SKIPPED", skip_reason=skipped_reason))
+                    continue
+
+                params = dict(entry["params"])
+                params.setdefault("table", entry["table"])
+                params["_index_code"] = index_code
+                params["_rule_family"] = entry["rule_family"]
+                outcome = rule_function_for_entry(entry)(data, params)
+                status = "NO_ROWS" if outcome.checks is None or len(outcome.checks) == 0 else ("FAIL" if outcome.total_failed else "PASS")
+                error_message = ""
+            except Exception as exc:
+                error_count += 1
+                status = "ERROR"
+                error_message = str(exc)
+                print(f"ERROR: {index_code} failed: {exc}", flush=True)
+                outcome = _error_outcome(error_message)
+
+            status_counts[status] = status_counts.get(status, 0) + 1
+            check_rows = _check_rows_frame(entry, outcome)
+            result_rows = len(check_rows)
+            if not check_rows.empty:
+                result_ids = [
+                    f"R{result_number:012d}"
+                    for result_number in range(next_result_number, next_result_number + result_rows)
+                ]
+                next_result_number += result_rows
+                check_rows.insert(0, "result_id", result_ids)
+                for row_status, count in check_rows["status"].value_counts().items():
+                    row_status_counts[str(row_status)] = row_status_counts.get(str(row_status), 0) + int(count)
+                result_row_total += result_writer.write(check_rows)
+                result_cnote_writer.write(pd.DataFrame(columns=RESULT_CNOTE_COLUMNS))
+            summary_rows.append(
+                _rule_summary_row(
+                    entry,
+                    status,
+                    total_checked=outcome.total_checked,
+                    total_failed=outcome.total_failed,
+                    result_rows=result_rows,
+                    error_message=error_message,
+                )
+            )
+            del data, outcome, check_rows
+            gc.collect()
+
+    summary_frame = pd.DataFrame(summary_rows)
+    summary_path = write_rule_summary(summary_frame, output_dir / "governance_rule_summary.csv")
+    summary_parquet_path = write_rule_summary_parquet(summary_frame, output_dir / "governance_rule_summary.parquet")
+    uploaded_paths = (
+        _upload_governance_outputs_to_minio(
+            upload_source,
+            [
+                results_path,
+                results_parquet_path,
+                result_cnotes_path,
+                result_cnotes_parquet_path,
+                summary_path,
+                summary_parquet_path,
+            ],
+        )
+        if upload_source is not None
+        else []
+    )
+
+    print(f"Catalog entries evaluated: {sum(status_counts.values())}")
+    print(f"Rule status counts: {status_counts}")
+    print(f"Disabled entries: {disabled_count}")
+    print(f"Skipped entries: {skipped_count}")
+    print(f"CNOTE result rows: {result_row_total:,}")
+    print(f"CNOTE row status counts: {row_status_counts}")
+    print(f"Output: {results_path}")
+    print(f"Output parquet: {results_parquet_path}")
+    print(f"Rule summary: {summary_path}")
+    print(f"Rule summary parquet: {summary_parquet_path}")
+    for uploaded_path in uploaded_paths:
+        print(f"Uploaded governance output: {uploaded_path}")
+    if skipped_count:
+        print(f"WARNING: Governance skipped {skipped_count} active rule(s); see {summary_path}", flush=True)
+    if fail_on_skipped and skipped_count:
+        raise RuntimeError(f"Governance skipped {skipped_count} active rule(s); see {summary_path}")
+    if strict and error_count:
+        raise RuntimeError(f"Governance completed with {error_count} rule implementation error(s)")
+
+
 def run(
     output_dir: str | Path = DEFAULT_OUTPUT_DIR,
     source: str = "minio",
@@ -1227,35 +1372,10 @@ def run(
             else:
                 runnable.append(entry)
 
-        streamed_reference_tables = _streamed_reference_tables(runnable, bronze_source)
-        required_columns = _required_columns(runnable)
-        if DOCUMENT_LINKS_SOURCE_TABLE in bronze_source.tables:
-            required_columns[DOCUMENT_LINKS_SOURCE_TABLE] = set(DOCUMENT_LINK_COLUMNS)
-        else:
-            print(
-                f"WARNING: {DOCUMENT_LINKS_SOURCE_TABLE} is missing from the run manifest; "
-                "run transform_data before governance for non-CNOTE document links.",
-                flush=True,
-            )
-        load_columns = {
-            table: columns
-            for table, columns in required_columns.items()
-            if table not in streamed_reference_tables
-        }
-        data = _load_bronze_tables(bronze_source, load_columns)
-        if DROURATE_TABLE in streamed_reference_tables:
-            data[DROURATE_TABLE] = _stream_drourate_reference(bronze_source, runnable, data)
-        available_runnable = []
-        for entry in runnable:
-            missing_columns = _missing_entry_columns(entry, data)
-            if missing_columns:
-                skipped[entry["index_code"]] = "missing bronze column(s): " + ", ".join(missing_columns)
-            else:
-                available_runnable.append(entry)
-        _run_entries(
-            available_runnable,
-            data,
+        _run_entries_streamed(
+            runnable,
             skipped,
+            bronze_source,
             output_dir,
             strict,
             fail_on_skipped=fail_on_skipped,
