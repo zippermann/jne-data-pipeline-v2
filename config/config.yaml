@@ -58,6 +58,3 @@ columns:
 
 transform:
   document_links_mode: "clickhouse"
-
-governance:
-  python_document_links_fallback: false

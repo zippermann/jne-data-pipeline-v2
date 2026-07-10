@@ -191,6 +191,7 @@ def test_governance_result_columns_match_dashboard_order():
     assert RESULT_COLUMNS == [
         "shipment_type",
         "result_id",
+        "document_id",
         "cnote_no",
         "document_no",
         "cnote_origin",
@@ -283,12 +284,12 @@ def test_governance_results_enrich_pass_rows_with_dashboard_context():
     assert rows.loc[0, "impact_details"] == "Routing visibility"
     assert rows.loc[0, "logic_description"] == "Service code should be present"
     assert rows.loc[0, "issue_description"] == "Missing service code affects routing checks"
-    assert rows.loc[0, "cnote_origin"] == "CGK10000"
-    assert rows.loc[0, "cnote_destination"] == "BDO10000"
-    assert rows.loc[0, "cnote_service_code"] == "REG"
-    assert rows.loc[0, "shipment_type"] == "Direct Domestic"
-    assert rows.loc[0, "origin_region"] == "Jakarta"
-    assert rows.loc[0, "destination_region"] == "Jawa Barat"
+    assert rows.loc[0, "cnote_origin"] == ""
+    assert rows.loc[0, "cnote_destination"] == ""
+    assert rows.loc[0, "cnote_service_code"] == ""
+    assert rows.loc[0, "shipment_type"] == ""
+    assert rows.loc[0, "origin_region"] == ""
+    assert rows.loc[0, "destination_region"] == ""
 
 
 def test_cnote_contexts_bucket_service_type_from_first_three_characters():
@@ -386,8 +387,7 @@ def test_bag_governance_rows_keep_document_id_and_links_cnotes_separately():
     assert rows["document_type"].tolist() == ["DMBAG"]
     assert rows["level"].tolist() == ["bag"]
     assert rows["stage"].tolist() == ["Warehouse Manifest"]
-    assert link_rows["result_id"].tolist() == ["R000000000001", "R000000000001"]
-    assert link_rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
+    assert link_rows.empty
     assert link_rows.columns.tolist() == ["result_id", "cnote_no", "link_method"]
 
 
@@ -459,7 +459,7 @@ def test_mmbag_links_to_cnotes_through_dmbag():
     assert rows.loc[0, "cnote_no"] == ""
     assert rows.loc[0, "level"] == "bag"
     assert rows.loc[0, "stage"] == "Warehouse Manifest"
-    assert link_rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
+    assert link_rows.empty
 
 
 def test_confirmed_operational_documents_bridge_to_cnotes():
@@ -556,7 +556,7 @@ def test_unmapped_bag_document_does_not_masquerade_as_cnote():
     assert rows.loc[0, "document_type"] == "MFBAG"
 
 
-def test_non_cnote_document_only_populates_cnote_when_in_sample():
+def test_non_cnote_document_keeps_document_key_without_python_cnote_resolution():
     entry = {
         "index_code": "COMP_TEST",
         "indicator": "Completeness",
@@ -578,8 +578,8 @@ def test_non_cnote_document_only_populates_cnote_when_in_sample():
     rows = _check_rows_frame(entry, outcome, {}, {"CNOTE1"})
 
     assert rows["document_id"].tolist() == ["MANIFEST1", "CNOTE1"]
-    assert rows["cnote_no"].tolist() == ["", "CNOTE1"]
-    assert rows["document_no"].tolist() == ["MANIFEST1", ""]
+    assert rows["cnote_no"].tolist() == ["", ""]
+    assert rows["document_no"].tolist() == ["MANIFEST1", "CNOTE1"]
     assert rows["level"].tolist() == ["bag", "bag"]
     assert rows["stage"].tolist() == ["Warehouse Manifest", "Warehouse Manifest"]
 

@@ -66,14 +66,6 @@ CNOTE_CONTEXT_COLUMNS = {
 }
 
 
-def _as_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return False
-    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
-
-
 BRANCH_REGION_BY_CODE = {
     "AMI": "JTBNN",
     "DPS": "JTBNN",
@@ -992,30 +984,14 @@ def _check_rows_frame(
     rows["document_type"] = _document_type(entry)
     rows["level"] = _document_level(entry)
     rows["stage"] = _document_stage(entry)
-    cnotes = cnote_universe or set()
-
-    bridge_map = document_bridges or {}
-    bridge = bridge_map.get(table_name, {})
-    if table_name in bridge_map:
-        rows["_linked_cnotes"] = rows["document_id"].map(lambda value: _safe_linked_cnotes(bridge.get(str(value), []), cnotes))
-        rows["_link_method"] = f"{table_name.lower()}_bridge"
-    elif table_name == "CMS_CNOTE":
-        rows["_linked_cnotes"] = rows["document_id"].map(lambda value: [str(value)] if (not cnotes or str(value) in cnotes) else [])
-        rows["_link_method"] = "direct_cnote"
-    else:
-        rows["_linked_cnotes"] = rows["document_id"].map(lambda value: [str(value)] if str(value) in cnotes else [])
-        rows["_link_method"] = "direct_cnote_value"
-
-    rows["cnote_no"] = rows["_linked_cnotes"].map(lambda values: values[0] if len(values) == 1 else "")
+    rows["cnote_no"] = rows["document_id"] if table_name == "CMS_CNOTE" else ""
     rows["document_no"] = rows["document_id"].where(rows["document_id"].ne(rows["cnote_no"]), "")
-    contexts = cnote_contexts or {}
-    row_contexts = rows.apply(lambda row: _single_cnote_context(row, contexts), axis=1)
-    rows["cnote_origin"] = row_contexts.map(lambda context: context.get("cnote_origin", ""))
-    rows["cnote_destination"] = row_contexts.map(lambda context: context.get("cnote_destination", ""))
-    rows["cnote_service_code"] = row_contexts.map(lambda context: context.get("cnote_service_code", ""))
-    rows["shipment_type"] = row_contexts.map(lambda context: context.get("shipment_type", ""))
-    rows["origin_region"] = row_contexts.map(lambda context: context.get("origin_region", ""))
-    rows["destination_region"] = row_contexts.map(lambda context: context.get("destination_region", ""))
+    rows["cnote_origin"] = ""
+    rows["cnote_destination"] = ""
+    rows["cnote_service_code"] = ""
+    rows["shipment_type"] = ""
+    rows["origin_region"] = ""
+    rows["destination_region"] = ""
 
     rows["index_code"] = entry["index_code"]
     rows["element"] = entry.get("element", "")
@@ -1030,6 +1006,8 @@ def _check_rows_frame(
 
 
 def _result_cnote_rows(rows: pd.DataFrame) -> pd.DataFrame:
+    if "_linked_cnotes" not in rows.columns or "_link_method" not in rows.columns:
+        return pd.DataFrame(columns=RESULT_CNOTE_COLUMNS)
     link_rows: list[dict[str, str]] = []
     for _, row in rows.iterrows():
         result_id = str(row["result_id"])
@@ -1072,14 +1050,6 @@ def _rule_summary_row(
     }
 
 
-def _allow_python_document_links(config: dict[str, Any]) -> bool:
-    governance_config = config.get("governance", {}) or {}
-    if "python_document_links_fallback" in governance_config:
-        return _as_bool(governance_config.get("python_document_links_fallback"))
-    transform_config = config.get("transform", {}) or {}
-    return str(transform_config.get("document_links_mode", "python")).strip().lower() == "python"
-
-
 def _run_entries(
     entries: list[dict],
     data: dict[str, pd.DataFrame],
@@ -1088,7 +1058,6 @@ def _run_entries(
     strict: bool,
     fail_on_skipped: bool = False,
     upload_source: GovernanceSource | None = None,
-    allow_python_document_links: bool = True,
 ) -> None:
     run_at = datetime.now(timezone.utc).isoformat()
     summary_rows: list[dict] = []
@@ -1102,9 +1071,6 @@ def _run_entries(
     results_parquet_path = output_dir / "governance_results.parquet"
     result_cnotes_path = output_dir / "governance_result_cnotes.csv"
     result_cnotes_parquet_path = output_dir / "governance_result_cnotes.parquet"
-    bridges = _document_bridges(data, allow_python_fallback=allow_python_document_links)
-    cnotes = _cnote_universe(data)
-    contexts = _cnote_contexts(data)
     next_result_number = 1
 
     with (
@@ -1145,7 +1111,7 @@ def _run_entries(
                 outcome = _error_outcome(error_message)
 
             status_counts[status] = status_counts.get(status, 0) + 1
-            check_rows = _check_rows_frame(entry, outcome, bridges, cnotes, contexts)
+            check_rows = _check_rows_frame(entry, outcome)
             result_rows = len(check_rows)
             if not check_rows.empty:
                 result_ids = [
@@ -1154,8 +1120,7 @@ def _run_entries(
                 ]
                 next_result_number += result_rows
                 check_rows.insert(0, "result_id", result_ids)
-                result_cnote_rows = _result_cnote_rows(check_rows)
-                check_rows = check_rows.drop(columns=["_linked_cnotes", "_link_method"])
+                result_cnote_rows = pd.DataFrame(columns=RESULT_CNOTE_COLUMNS)
                 for row_status, count in check_rows["status"].value_counts().items():
                     row_status_counts[str(row_status)] = row_status_counts.get(str(row_status), 0) + int(count)
                 result_row_total += result_writer.write(check_rows)
@@ -1219,8 +1184,6 @@ def run(
     strict: bool = True,
     fail_on_skipped: bool = False,
 ) -> None:
-    config = load_config(config_path)
-    allow_python_document_links = _allow_python_document_links(config)
     output_dir = Path(output_dir)
     if source == "synthetic":
         data = load_tables(_required_tables() | set(BRIDGE_COLUMNS))
@@ -1297,7 +1260,6 @@ def run(
             strict,
             fail_on_skipped=fail_on_skipped,
             upload_source=bronze_source if source == "minio" else None,
-            allow_python_document_links=allow_python_document_links,
         )
 
 

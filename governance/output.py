@@ -11,6 +11,7 @@ import pandas as pd
 RESULT_COLUMNS = [
     "shipment_type",
     "result_id",
+    "document_id",
     "cnote_no",
     "document_no",
     "cnote_origin",

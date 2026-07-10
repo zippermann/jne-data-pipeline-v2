@@ -14,6 +14,7 @@ from loader.mart_load_clickhouse import (
     _load_governance_csv,
     _load_governance_results,
     _build_document_cnote_links,
+    _build_governance_dashboard_table,
     _render_unified_sql,
     _s3_url,
     _table_object_prefix,
@@ -86,6 +87,8 @@ governance:
   summary_table: "governance_rule_summary_2"
   build_document_links: true
   document_links_table: "document_cnote_links_2"
+  build_dashboard_table: true
+  dashboard_table: "governance_results_dashboard_2"
 unified_mart:
   enabled: true
   schema: "mart"
@@ -113,6 +116,8 @@ mart:
     assert config.governance.summary_table == "governance_rule_summary_2"
     assert config.governance.build_document_links is True
     assert config.governance.document_links_table == "document_cnote_links_2"
+    assert config.governance.build_dashboard_table is True
+    assert config.governance.dashboard_table == "governance_results_dashboard_2"
     assert config.unified_mart.enabled is True
     assert config.unified_mart.schema == "mart"
     assert config.unified_mart.table == "unified_shipments"
@@ -290,6 +295,31 @@ def test_clickhouse_document_links_builds_separate_governance_table(monkeypatch)
     assert "FROM `bronze`.`cms_mfcnote` mf" in create_sql
     assert "INNER JOIN `bronze`.`cms_cnote` c" in create_sql
     assert "DROP TABLE IF EXISTS `governance`.`governance_results_2`" not in "\n".join(commands)
+
+
+def test_clickhouse_governance_dashboard_builds_from_raw_results_and_links(monkeypatch):
+    commands = []
+
+    def fake_exists(client, schema, table):
+        return table in {
+            "governance_results_2",
+            "document_cnote_links_2",
+            "cms_cnote",
+        }
+
+    monkeypatch.setattr("loader.mart_load_clickhouse._table_exists", fake_exists)
+    monkeypatch.setattr("loader.mart_load_clickhouse._command", lambda client, sql: commands.append(sql))
+    monkeypatch.setattr("loader.mart_load_clickhouse._query_scalar", lambda client, sql: 456)
+
+    rows = _build_governance_dashboard_table(object(), _config())
+
+    assert rows == 456
+    assert any("DROP TABLE IF EXISTS `governance`.`governance_results_dashboard_2`" in sql for sql in commands)
+    create_sql = next(sql for sql in commands if "CREATE TABLE `governance`.`governance_results_dashboard_2`" in sql)
+    assert "FROM `governance`.`governance_results_2` r" in create_sql
+    assert "LEFT JOIN `governance`.`document_cnote_links_2` l" in create_sql
+    assert "linked_cnote_no" in create_sql
+    assert "linked_delivery_category" in create_sql
 
 
 def test_unified_mart_sql_template_renders_qualified_names(tmp_path):

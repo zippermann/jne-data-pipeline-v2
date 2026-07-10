@@ -83,6 +83,8 @@ class GovernanceConfig:
     summary_table: str = "governance_rule_summary_2"
     build_document_links: bool = True
     document_links_table: str = "document_cnote_links_2"
+    build_dashboard_table: bool = True
+    dashboard_table: str = "governance_results_dashboard_2"
 
 
 @dataclass(frozen=True)
@@ -195,6 +197,8 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
             summary_table=governance.get("summary_table", "governance_rule_summary_2"),
             build_document_links=_as_bool(governance.get("build_document_links", True)),
             document_links_table=governance.get("document_links_table", "document_cnote_links_2"),
+            build_dashboard_table=_as_bool(governance.get("build_dashboard_table", True)),
+            dashboard_table=governance.get("dashboard_table", "governance_results_dashboard_2"),
         ),
         unified_mart=UnifiedMartConfig(
             enabled=_as_bool(unified_mart.get("enabled", False)),
@@ -790,6 +794,105 @@ def _load_governance_results(client: Any, config: MartClickHouseConfig, batch_si
     return row_count
 
 
+def _build_governance_dashboard_table(client: Any, config: MartClickHouseConfig) -> int:
+    if not config.governance.enabled or not config.governance.build_dashboard_table:
+        _log("Skipping ClickHouse governance dashboard table build")
+        return 0
+
+    governance = config.schemas.governance
+    bronze = config.schemas.bronze
+    results_table = config.governance.results_table
+    links_table = config.governance.document_links_table
+    target_table = config.governance.dashboard_table
+    if not _table_exists(client, governance, results_table):
+        _log(f"Skipping ClickHouse governance dashboard table build because {governance}.{results_table} is missing")
+        return 0
+    if not _table_exists(client, bronze, "cms_cnote"):
+        _log(f"Skipping ClickHouse governance dashboard table build because {bronze}.cms_cnote is missing")
+        return 0
+
+    started = time.monotonic()
+    _command(client, f"DROP TABLE IF EXISTS {_qualified(governance, target_table)}")
+    results = _qualified(governance, results_table)
+    cnote_table = _qualified(bronze, "cms_cnote")
+    link_join = ""
+    link_cnote_expr = "CAST(NULL, 'Nullable(String)')"
+    link_method_expr = "CAST(NULL, 'Nullable(String)')"
+    link_confidence_expr = "CAST(NULL, 'Nullable(String)')"
+    if _table_exists(client, governance, links_table):
+        link_join = (
+            f"LEFT JOIN {_qualified(governance, links_table)} l "
+            "ON upper(trimBoth(ifNull(r.`table_name`, ''))) = l.`source_table` "
+            "AND trimBoth(ifNull(r.`document_id`, '')) = l.`document_id`"
+        )
+        link_cnote_expr = "l.`cnote_no`"
+        link_method_expr = "l.`link_method`"
+        link_confidence_expr = "l.`link_confidence`"
+
+    _command(
+        client,
+        f"""
+        CREATE TABLE {_qualified(governance, target_table)}
+        ENGINE = MergeTree
+        ORDER BY tuple()
+        AS
+        WITH linked AS (
+            SELECT
+                r.*,
+                multiIf(
+                    nullIf(trimBoth(ifNull({link_cnote_expr}, '')), '') IS NOT NULL,
+                        trimBoth(ifNull({link_cnote_expr}, '')),
+                    upper(trimBoth(ifNull(r.`table_name`, ''))) = 'CMS_CNOTE'
+                        AND nullIf(trimBoth(ifNull(r.`document_id`, '')), '') IS NOT NULL,
+                        trimBoth(ifNull(r.`document_id`, '')),
+                    nullIf(trimBoth(ifNull(r.`cnote_no`, '')), '') IS NOT NULL,
+                        trimBoth(ifNull(r.`cnote_no`, '')),
+                    nullIf(trimBoth(ifNull(direct.`CNOTE_NO`, '')), '') IS NOT NULL,
+                        trimBoth(ifNull(r.`document_id`, '')),
+                    ''
+                ) AS linked_cnote_no,
+                multiIf(
+                    nullIf(trimBoth(ifNull({link_method_expr}, '')), '') IS NOT NULL,
+                        trimBoth(ifNull({link_method_expr}, '')),
+                    nullIf(trimBoth(ifNull(direct.`CNOTE_NO`, '')), '') IS NOT NULL
+                        OR upper(trimBoth(ifNull(r.`table_name`, ''))) = 'CMS_CNOTE',
+                        'direct_cnote',
+                    ''
+                ) AS link_method,
+                multiIf(
+                    nullIf(trimBoth(ifNull({link_confidence_expr}, '')), '') IS NOT NULL,
+                        trimBoth(ifNull({link_confidence_expr}, '')),
+                    nullIf(trimBoth(ifNull(direct.`CNOTE_NO`, '')), '') IS NOT NULL
+                        OR upper(trimBoth(ifNull(r.`table_name`, ''))) = 'CMS_CNOTE',
+                        'safe',
+                    ''
+                ) AS link_confidence
+            FROM {results} r
+            {link_join}
+            LEFT JOIN {cnote_table} direct
+                ON trimBoth(ifNull(r.`document_id`, '')) = trimBoth(ifNull(direct.`CNOTE_NO`, ''))
+        )
+        SELECT
+            linked.*,
+            ifNull(c.`CNOTE_ORIGIN`, '') AS linked_cnote_origin,
+            ifNull(c.`CNOTE_DESTINATION`, '') AS linked_cnote_destination,
+            ifNull(c.`CNOTE_SERVICES_CODE`, '') AS linked_cnote_service_code,
+            ifNull(c.`delivery_type`, '') AS linked_delivery_type,
+            ifNull(c.`shipment_scope`, '') AS linked_shipment_scope,
+            ifNull(c.`delivery_category`, '') AS linked_delivery_category
+        FROM linked
+        LEFT JOIN {cnote_table} c
+            ON linked.linked_cnote_no = trimBoth(ifNull(c.`CNOTE_NO`, ''))
+        """,
+    )
+    row_count = int(_query_scalar(client, f"SELECT count() FROM {_qualified(governance, target_table)}"))
+    _log(
+        f"Built ClickHouse {governance}.{target_table}: "
+        f"{row_count:,} rows in {time.monotonic() - started:.1f}s"
+    )
+    return row_count
+
+
 def _render_unified_sql(config: MartClickHouseConfig) -> str:
     if not config.unified_mart.sql_path.exists():
         raise FileNotFoundError(f"Unified mart SQL file not found: {config.unified_mart.sql_path}")
@@ -928,6 +1031,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
     unified_rows = 0
     governance_rows = 0
     document_link_rows = 0
+    dashboard_rows = 0
     try:
         _drop_database(client, config.schemas.bronze_staging)
         _drop_database(client, config.schemas.derived_staging)
@@ -956,12 +1060,14 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
         document_link_rows = _build_document_cnote_links(client, config)
         unified_rows = _load_unified_mart(client, config)
         governance_rows = _load_governance_results(client, config)
+        dashboard_rows = _build_governance_dashboard_table(client, config)
         total_rows = (
             sum(loaded_tables.values())
             + sum(loaded_derived.values())
             + document_link_rows
             + unified_rows
             + governance_rows
+            + dashboard_rows
         )
         _insert_load_run(
             client,
@@ -973,6 +1079,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
                 + (1 if document_link_rows else 0)
                 + (1 if unified_rows else 0)
                 + (1 if config.governance.enabled else 0)
+                + (1 if dashboard_rows else 0)
             ),
             row_count=total_rows,
             status="SUCCESS",
@@ -991,6 +1098,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
                     + (1 if document_link_rows else 0)
                     + (1 if unified_rows else 0)
                     + (1 if governance_rows else 0)
+                    + (1 if dashboard_rows else 0)
                 ),
                 row_count=(
                     sum(loaded_tables.values())
@@ -998,6 +1106,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
                     + document_link_rows
                     + unified_rows
                     + governance_rows
+                    + dashboard_rows
                 ),
                 status="FAILED",
                 error_message=str(exc),
@@ -1017,6 +1126,8 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
         _log(f"  {config.unified_mart.schema}.{config.unified_mart.table}: {unified_rows} rows")
     if config.governance.enabled:
         _log(f"  {config.schemas.governance}.{config.governance.results_table}: {governance_rows} rows")
+    if config.governance.build_dashboard_table:
+        _log(f"  {config.schemas.governance}.{config.governance.dashboard_table}: {dashboard_rows} rows")
 
 
 def main() -> None:

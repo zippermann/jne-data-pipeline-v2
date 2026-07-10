@@ -33,6 +33,8 @@ governance:
   summary_table: "governance_rule_summary_2"
   build_document_links: true
   document_links_table: "document_cnote_links_2"
+  build_dashboard_table: true
+  dashboard_table: "governance_results_dashboard_2"
 
 unified_mart:
   enabled: true
