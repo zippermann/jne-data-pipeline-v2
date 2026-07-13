@@ -59,6 +59,6 @@ columns:
 transform:
   document_links_mode: "clickhouse"
   duckdb_threads: 1
-  duckdb_memory_limit: "12GB"
+  duckdb_memory_limit: "4GB"
   duckdb_temp_directory: "/tmp/duckdb"
   duckdb_preserve_insertion_order: false
