@@ -490,7 +490,7 @@ def _empty_document_links_table(client: Any, schema: str, table: str) -> int:
             link_confidence String
         )
         ENGINE = MergeTree
-        ORDER BY (source_table, document_id, cnote_no)
+        ORDER BY tuple()
         """,
     )
     return 0
@@ -676,7 +676,7 @@ def _build_document_cnote_links(client: Any, config: MartClickHouseConfig) -> in
         f"""
         CREATE TABLE {_qualified(governance, target_table)}
         ENGINE = MergeTree
-        ORDER BY (source_table, document_id, cnote_no)
+        ORDER BY tuple()
         AS
         SELECT DISTINCT l.*
         FROM (
