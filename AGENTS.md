@@ -3,18 +3,19 @@
 This repo is intentionally stripped down to the core relational bronze pipeline.
 It does not build the old flat shipment table during extraction. The main path
 extracts Oracle source tables separately, writes partitioned Parquet to MinIO,
-transforms the CNOTE table, evaluates governance pass/fail rows, and loads the
-run into a ClickHouse mart for Tableau or inspection. Production stress-test
-governance now runs in ClickHouse after bronze/transformed CNOTE has been loaded;
-the pandas governance runner remains a fallback/smoke-test tool.
+loads the raw bronze run into ClickHouse, transforms CNOTE inside ClickHouse,
+and evaluates governance pass/fail rows in ClickHouse for Tableau or inspection.
+The pandas governance runner and DuckDB CNOTE transformer remain fallback/smoke
+tools, but they are not the Airflow stress-test path.
 
 ## Current Shape
 
 - `extractor/`: Oracle to relational bronze Parquet extraction.
-- `loader/`: MinIO Parquet to ClickHouse mart loading, ClickHouse-native
-  governance execution, CNOTE link builds, and dashboard-ready enrichment.
+- `loader/`: MinIO Parquet to ClickHouse mart loading, ClickHouse-native CNOTE
+  transformation, governance execution, CNOTE link builds, and dashboard-ready
+  enrichment.
 - `governance/`: executable catalog, pandas fallback runner, and index workbook.
-- `transform/`: derived CNOTE-level enrichment built from bronze Parquet.
+- `transform/`: fallback DuckDB CNOTE-level enrichment built from bronze Parquet.
 - `pipeline_context.py`: Airflow helper for run prefixes and window labels.
 - `airflow/dags/jne_data_pipeline_dag.py`: Airflow DAG definition.
 - `config/`: extraction, mart, and PII exclusion config.
@@ -45,7 +46,7 @@ For a local run directory under `data/bronze/.../run_id=<run_id>/`:
 python -m governance.runner --source local --bronze-run-path data/bronze/.../run_id=<run_id> --output-dir governance/outputs/<run_id>
 ```
 
-Transform the CNOTE table:
+Fallback DuckDB transform of the CNOTE table:
 
 ```bash
 BRONZE_RUN_PREFIX=bronze/jne/window_start=YYYY-MM-DD/window_end=YYYY-MM-DD/extract_date=YYYY-MM-DD/run_id=<run_id> \
@@ -62,6 +63,12 @@ Load a bronze run into ClickHouse:
 
 ```bash
 python -m loader.mart_load_clickhouse --config config/mart_clickhouse.yaml --stage load
+```
+
+Build transformed CNOTE in ClickHouse:
+
+```bash
+python -m loader.mart_load_clickhouse --config config/mart_clickhouse.yaml --stage transform
 ```
 
 Run ClickHouse-native governance and dashboard enrichment after the load:
@@ -85,14 +92,17 @@ The DAG id is `jne_data_pipeline`.
 Task order:
 
 ```text
-extract_oracle -> transform_data -> load_data_mart_clickhouse -> run_governance
+extract_oracle -> load_data_mart_clickhouse -> transform_data -> run_governance
 ```
 
 `extract_oracle` runs `extractor.bronze`.
-`transform_data` runs `transform.transform_data` and appends `derived` metadata to
-the same run manifest.
 `load_data_mart_clickhouse` runs `loader.mart_load_clickhouse --stage load` and
-publishes raw bronze tables plus transformed CNOTE into ClickHouse.
+publishes raw bronze tables into ClickHouse. Raw Oracle `CMS_CNOTE` is loaded as
+`bronze.cms_cnote_raw`.
+`transform_data` runs `loader.mart_load_clickhouse --stage transform`, which
+builds transformed `bronze.cms_cnote` inside ClickHouse from
+`bronze.cms_cnote_raw` and related loaded bronze tables, then rebuilds the
+unified mart if enabled.
 `run_governance` runs `loader.mart_load_clickhouse --stage governance`. It
 executes supported catalog rules in ClickHouse, writes raw document-level results
 and rule summaries, writes the bounded CNOTE bridge/enrichment table, and builds
@@ -121,18 +131,18 @@ Each extracted source table gets its own folder with `part-*.parquet`,
 Reference tables are reusable across runs. When a completed reference table
 already exists in MinIO, extraction records `reused: true` and `source_prefix`
 in the manifest instead of pulling the table from Oracle again.
-The transform step writes derived Parquet outputs and records them in the
-manifest's `derived` section:
-
-- `derived/cms_cnote_transformed/part-*.parquet`: CNOTE enrichment used as the
-  mart's `bronze.cms_cnote`.
+The Airflow stress-test path does not write derived CNOTE Parquet. Instead,
+ClickHouse load publishes raw `CMS_CNOTE` as `bronze.cms_cnote_raw`, then the
+ClickHouse transform stage builds `bronze.cms_cnote`. The fallback
+`transform.transform_data` module can still write
+`derived/cms_cnote_transformed/part-*.parquet` for local/smoke workflows, but it
+is not the production path.
 
 `transform.document_links_mode` is set to `clickhouse` in `config/config.yaml`.
-This means `transform.transform_data` intentionally skips the old pandas
-`derived/document_cnote_links` build. The ClickHouse mart loader can build
-document-to-CNOTE links from loaded bronze tables, but the stress-test config
-currently keeps `governance.build_document_links: false` because the full link
-table exceeded the VM ClickHouse memory cap.
+The ClickHouse mart loader can build document-to-CNOTE links from loaded bronze
+tables, but the stress-test config currently keeps
+`governance.build_document_links: false` because the full link table exceeded
+the VM ClickHouse memory cap.
 
 ## Configuration
 
@@ -150,7 +160,7 @@ Oracle extraction tuning knobs:
 - `scoping.date_guardrail_*`: date guardrails applied to extraction SQL and the
   high-volume DRSHEET/MANIFEST scope queries.
 
-CNOTE transform tuning knobs:
+CNOTE fallback DuckDB transform tuning knobs:
 
 - `output.rows_per_file`: derived CNOTE Parquet chunk size. The transform writer
   emits multiple `part-*.parquet` files using this row count instead of one giant
@@ -162,8 +172,9 @@ CNOTE transform tuning knobs:
   so DuckDB can stream/spill more efficiently.
 
 Use `config/mart_clickhouse.yaml` for the ClickHouse mart. The mart loader
-publishes tables into the `bronze` database and replaces raw `bronze.cms_cnote`
-with the transformed `derived/cms_cnote_transformed` data. With
+publishes raw tables into the `bronze` database, loads raw Oracle CNOTE as
+`bronze.cms_cnote_raw`, and builds transformed `bronze.cms_cnote` in ClickHouse.
+With
 `governance.execution_mode: "clickhouse"`, governance output is generated inside
 ClickHouse and lands in the `governance` database. Current table names use the
 canonical governance outputs:
@@ -327,18 +338,19 @@ config. Restoring the default `cnote_limit: 100000` or
 `end_date: "2026-06-01"` will point the task at a different MinIO prefix and
 cause `NoSuchKey` for `run_manifest.json`.
 
-When testing code changes after extraction and transform have already succeeded,
-rerun `load_data_mart_clickhouse` first if bronze/transformed ClickHouse tables
-need to be refreshed, then rerun `run_governance`. If the ClickHouse load already
+When testing code changes after extraction has already succeeded, rerun
+`load_data_mart_clickhouse` first if raw bronze ClickHouse tables need to be
+refreshed, then rerun `transform_data` to rebuild transformed `bronze.cms_cnote`,
+then rerun `run_governance`. If the ClickHouse load and transform already
 finished successfully and only governance SQL changed, rerun `run_governance`
-only. Do not rerun `extract_oracle` or `transform_data` unless the extraction
-window, source data, or CNOTE transform changed.
+only. Do not rerun `extract_oracle` unless the extraction window or source data
+changed.
 
 Docker images may not include `git`. To verify the VM container has this branch's
 code, inspect files instead of using `git` inside the container. For example,
 check that `governance/output.py` contains `document_id` in `RESULT_COLUMNS` and
 that `loader/mart_load_clickhouse.py` contains
-`--stage governance`; check `config/mart_clickhouse.yaml` for
+`--stage transform` and `--stage governance`; check `config/mart_clickhouse.yaml` for
 `build_dashboard_table: false` during stress tests.
 
 ## Tests

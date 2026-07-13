@@ -1,8 +1,8 @@
 """
 JNE Data Pipeline DAG
 =====================
-Relational Oracle → Parquet bronze extraction, derived CNOTE transformation,
-ClickHouse loading, and ClickHouse-native governance checks.
+Relational Oracle → Parquet bronze extraction, ClickHouse loading,
+ClickHouse-native CNOTE transformation, and ClickHouse-native governance checks.
 
 Pass {"keep_scope": true} in dag_run.conf to leave Oracle scope tables in place
 for inspection after the run.
@@ -29,7 +29,7 @@ default_args = {
 with DAG(
     "jne_data_pipeline",
     default_args=default_args,
-    description="JNE relational bronze extraction with governance and derived mart tables",
+    description="JNE relational bronze extraction with ClickHouse transforms and governance",
     schedule_interval=None,
     catchup=False,
     max_active_runs=1,
@@ -64,10 +64,9 @@ with DAG(
         bash_command=(
             "cd /opt/airflow/project && "
             f"{run_context}"
-            'python -m transform.transform_data '
-            '--source minio '
-            '--config config/config.yaml '
-            '--bronze-run-prefix "$BRONZE_RUN_PREFIX"'
+            '{{ "python -m loader.mart_load_clickhouse --config config/mart_clickhouse.yaml --stage transform" '
+            'if dag_run.conf.get("load_clickhouse", True) else '
+            '"echo ClickHouse CNOTE transform disabled because ClickHouse mart load is disabled by dag_run.conf" }}'
         ),
     )
 
@@ -93,4 +92,4 @@ with DAG(
         ),
     )
 
-    extract_oracle >> transform_data >> load_data_mart_clickhouse >> run_governance
+    extract_oracle >> load_data_mart_clickhouse >> transform_data >> run_governance

@@ -1,4 +1,4 @@
-"""Load bronze, derived, and governance outputs into a ClickHouse mart."""
+"""Load bronze and governance outputs into a ClickHouse mart."""
 
 from __future__ import annotations
 
@@ -302,14 +302,14 @@ def _table_object_prefix(config: MartClickHouseConfig, table_info: dict[str, Any
 
 
 def _mart_table_name(table_info: dict[str, Any]) -> str:
-    if table_info.get("output_name") == "cms_cnote_transformed":
-        return "cms_cnote"
+    if table_info.get("output_name") == "cms_cnote":
+        return "cms_cnote_raw"
     return table_info["output_name"]
 
 
 def _should_skip_bronze_table(table_info: dict[str, Any], config: MartClickHouseConfig) -> bool:
     stage = str(table_info.get("stage", "")).lower()
-    return stage in config.skip_stages or table_info.get("output_name") == "cms_cnote"
+    return stage in config.skip_stages
 
 
 def _s3_url(config: MartClickHouseConfig, prefix: str, pattern: str = "part-*.parquet") -> str:
@@ -423,7 +423,7 @@ def _load_table_entries(
         table_name = _mart_table_name(table_info)
         stage = str(table_info.get("stage", "")).lower()
         if label == "bronze" and _should_skip_bronze_table(table_info, config):
-            _log(f"Skipping ClickHouse bronze.{source_name}; mart uses transformed cms_cnote and skips configured stages")
+            _log(f"Skipping ClickHouse bronze.{source_name}; stage is configured to skip")
             continue
         if (
             label == "bronze"
@@ -700,6 +700,229 @@ def _build_document_cnote_links(client: Any, config: MartClickHouseConfig) -> in
         f"Built ClickHouse {governance}.{target_table}: "
         f"{row_count:,} rows in {time.monotonic() - started:.1f}s"
     )
+    return row_count
+
+
+def _timestamp_expr(alias: str, column: str) -> str:
+    return f"parseDateTimeBestEffortOrNull(toString({alias}.{_quote_ident(column)}))"
+
+
+def _optional_join_cte(
+    client: Any,
+    schema: str,
+    required_tables: Iterable[str],
+    name: str,
+    sql: str,
+    empty_columns: str,
+) -> str:
+    missing = [table for table in required_tables if not _table_exists(client, schema, table)]
+    if missing:
+        _log(f"ClickHouse CNOTE transform: {name} uses empty input because missing table(s): {', '.join(missing)}")
+        return f"{name} AS (SELECT {empty_columns} WHERE 0)"
+    return f"{name} AS ({sql})"
+
+
+def _build_clickhouse_cnote_transform(client: Any, config: MartClickHouseConfig) -> int:
+    bronze = config.schemas.bronze
+    if not _table_exists(client, bronze, "cms_cnote_raw"):
+        raise RuntimeError("Cannot build transformed bronze.cms_cnote because bronze.cms_cnote_raw is missing")
+
+    started = time.monotonic()
+    q = lambda table: _qualified(bronze, table)
+    text = _ch_text
+    ts = _timestamp_expr
+
+    transit_cte = _optional_join_cte(
+        client,
+        bronze,
+        ("cms_mfcnote", "cms_manifest"),
+        "transit_cnotes",
+        f"""
+            SELECT
+                {text('mf', 'MFCNOTE_NO')} AS cnote_no,
+                count() AS transit_leg_count,
+                min({ts('mf', 'MFCNOTE_CRDATE')}) AS first_manifest_ts
+            FROM {q('cms_mfcnote')} mf
+            INNER JOIN {q('cms_manifest')} m
+                ON {text('mf', 'MFCNOTE_MAN_NO')} = {text('m', 'MANIFEST_NO')}
+            WHERE toInt32OrNull(toString(m.{_quote_ident('MANIFEST_CODE')})) = 3
+              AND {text('mf', 'MFCNOTE_NO')} != ''
+            GROUP BY cnote_no
+        """,
+        "CAST('' AS String) AS cnote_no, CAST(0 AS UInt64) AS transit_leg_count, CAST(NULL AS Nullable(DateTime64(3))) AS first_manifest_ts",
+    )
+    pickup_cte = _optional_join_cte(
+        client,
+        bronze,
+        ("cms_drcnote", "cms_mrcnote"),
+        "pickup_events",
+        f"""
+            SELECT
+                {text('d', 'DRCNOTE_CNOTE_NO')} AS cnote_no,
+                min({ts('r', 'MRCNOTE_DATE')}) AS pickup_ts
+            FROM {q('cms_drcnote')} d
+            INNER JOIN {q('cms_mrcnote')} r
+                ON {text('d', 'DRCNOTE_NO')} = {text('r', 'MRCNOTE_NO')}
+            WHERE {text('d', 'DRCNOTE_CNOTE_NO')} != ''
+            GROUP BY cnote_no
+        """,
+        "CAST('' AS String) AS cnote_no, CAST(NULL AS Nullable(DateTime64(3))) AS pickup_ts",
+    )
+    handover_in_cte = _optional_join_cte(
+        client,
+        bronze,
+        ("cms_dhicnote",),
+        "handover_in_events",
+        f"""
+            SELECT
+                {text('dhi', 'DHICNOTE_CNOTE_NO')} AS cnote_no,
+                min({ts('dhi', 'DHICNOTE_TDATE')}) AS handover_in_ts
+            FROM {q('cms_dhicnote')} dhi
+            WHERE {text('dhi', 'DHICNOTE_CNOTE_NO')} != ''
+            GROUP BY cnote_no
+        """,
+        "CAST('' AS String) AS cnote_no, CAST(NULL AS Nullable(DateTime64(3))) AS handover_in_ts",
+    )
+    handover_out_cte = _optional_join_cte(
+        client,
+        bronze,
+        ("cms_dhocnote",),
+        "handover_out_events",
+        f"""
+            SELECT
+                {text('dho', 'DHOCNOTE_CNOTE_NO')} AS cnote_no,
+                min({ts('dho', 'DHOCNOTE_TDATE')}) AS handover_out_ts
+            FROM {q('cms_dhocnote')} dho
+            WHERE {text('dho', 'DHOCNOTE_CNOTE_NO')} != ''
+            GROUP BY cnote_no
+        """,
+        "CAST('' AS String) AS cnote_no, CAST(NULL AS Nullable(DateTime64(3))) AS handover_out_ts",
+    )
+    runsheet_cte = _optional_join_cte(
+        client,
+        bronze,
+        ("cms_drsheet",),
+        "runsheet_events",
+        f"""
+            SELECT
+                {text('drs', 'DRSHEET_CNOTE_NO')} AS cnote_no,
+                min({ts('drs', 'DRSHEET_DATE')}) AS runsheet_ts
+            FROM {q('cms_drsheet')} drs
+            WHERE {text('drs', 'DRSHEET_CNOTE_NO')} != ''
+            GROUP BY cnote_no
+        """,
+        "CAST('' AS String) AS cnote_no, CAST(NULL AS Nullable(DateTime64(3))) AS runsheet_ts",
+    )
+    pod_cte = _optional_join_cte(
+        client,
+        bronze,
+        ("cms_cnote_pod",),
+        "pod_events",
+        f"""
+            SELECT
+                {text('pod', 'CNOTE_POD_NO')} AS cnote_no,
+                min({ts('pod', 'CNOTE_POD_DATE')}) AS pod_ts
+            FROM {q('cms_cnote_pod')} pod
+            WHERE {text('pod', 'CNOTE_POD_NO')} != ''
+            GROUP BY cnote_no
+        """,
+        "CAST('' AS String) AS cnote_no, CAST(NULL AS Nullable(DateTime64(3))) AS pod_ts",
+    )
+
+    _command(client, f"DROP TABLE IF EXISTS {_qualified(bronze, 'cms_cnote')}")
+    _command(
+        client,
+        f"""
+        CREATE TABLE {_qualified(bronze, 'cms_cnote')}
+        ENGINE = MergeTree
+        ORDER BY tuple()
+        AS
+        WITH
+        {transit_cte},
+        {pickup_cte},
+        {handover_in_cte},
+        {handover_out_cte},
+        {runsheet_cte},
+        {pod_cte},
+        parts AS (
+            SELECT
+                c.*,
+                regexpExtract(upper(trimBoth(toString(c.{_quote_ident('CNOTE_ORIGIN')}))), '^([A-Z]{{3}})', 1) AS o_code,
+                regexpExtract(upper(trimBoth(toString(c.{_quote_ident('CNOTE_DESTINATION')}))), '^([A-Z]{{3}})', 1) AS d_code,
+                regexpExtract(upper(trimBoth(toString(c.{_quote_ident('CNOTE_ORIGIN')}))), '^[A-Z]{{3}}([0-9])', 1) AS o_digit,
+                regexpExtract(upper(trimBoth(toString(c.{_quote_ident('CNOTE_DESTINATION')}))), '^[A-Z]{{3}}([0-9])', 1) AS d_digit,
+                isNotNull(t.cnote_no) AND t.cnote_no != '' AS has_transit,
+                ifNull(t.transit_leg_count, 0) AS transit_leg_count,
+                t.first_manifest_ts AS first_manifest_ts,
+                p.pickup_ts AS pickup_ts,
+                hi.handover_in_ts AS handover_in_ts,
+                ho.handover_out_ts AS handover_out_ts,
+                rs.runsheet_ts AS runsheet_ts,
+                pod.pod_ts AS pod_ts
+            FROM {q('cms_cnote_raw')} c
+            LEFT JOIN transit_cnotes t ON {text('c', 'CNOTE_NO')} = t.cnote_no
+            LEFT JOIN pickup_events p ON {text('c', 'CNOTE_NO')} = p.cnote_no
+            LEFT JOIN handover_in_events hi ON {text('c', 'CNOTE_NO')} = hi.cnote_no
+            LEFT JOIN handover_out_events ho ON {text('c', 'CNOTE_NO')} = ho.cnote_no
+            LEFT JOIN runsheet_events rs ON {text('c', 'CNOTE_NO')} = rs.cnote_no
+            LEFT JOIN pod_events pod ON {text('c', 'CNOTE_NO')} = pod.cnote_no
+        ),
+        classified AS (
+            SELECT
+                *,
+                if(has_transit, 'Transit', 'Direct') AS delivery_type,
+                multiIf(
+                    o_code = '' OR d_code = '' OR o_digit = '' OR d_digit = '', 'Unknown',
+                    o_code = d_code AND o_digit = d_digit, 'Intracity',
+                    o_code = d_code, 'Intercity',
+                    'Domestic'
+                ) AS shipment_scope,
+                transit_leg_count AS transit_manifest_count,
+                transit_leg_count
+                    + if(isNotNull(pickup_ts), 1, 0)
+                    + if(isNotNull(handover_in_ts), 1, 0)
+                    + if(isNotNull(handover_out_ts), 1, 0)
+                    + if(isNotNull(runsheet_ts), 1, 0) AS handover_count,
+                if(
+                    isNotNull(pickup_ts) AND isNotNull(pod_ts),
+                    dateDiff('second', pickup_ts, pod_ts) / 3600.0,
+                    NULL
+                ) AS sla_total_hours,
+                if(
+                    isNotNull(pickup_ts) AND isNotNull(first_manifest_ts),
+                    dateDiff('second', pickup_ts, first_manifest_ts) / 3600.0,
+                    NULL
+                ) AS sla_pickup_to_firstmanifest_hours,
+                toJSONString(map(
+                    'pickup', ifNull(toString(pickup_ts), ''),
+                    'first_manifest', ifNull(toString(first_manifest_ts), ''),
+                    'handover_in', ifNull(toString(handover_in_ts), ''),
+                    'handover_out', ifNull(toString(handover_out_ts), ''),
+                    'delivery', ifNull(toString(runsheet_ts), ''),
+                    'pod', ifNull(toString(pod_ts), '')
+                )) AS sla_per_step
+            FROM parts
+        )
+        SELECT
+            * EXCEPT (
+                o_code, d_code, o_digit, d_digit, has_transit, transit_leg_count,
+                first_manifest_ts, pickup_ts, handover_in_ts, handover_out_ts,
+                runsheet_ts, pod_ts
+            ),
+            multiIf(
+                shipment_scope IN ('Intracity', 'Intercity'), shipment_scope,
+                shipment_scope = 'Domestic' AND delivery_type = 'Transit', 'Transit Domestic',
+                shipment_scope = 'Domestic' AND delivery_type = 'Direct', 'Direct Domestic',
+                shipment_scope
+            ) AS delivery_category
+        FROM classified
+        """,
+    )
+    row_count = int(_query_scalar(client, f"SELECT count() FROM {_qualified(bronze, 'cms_cnote')}"))
+    raw_count = int(_query_scalar(client, f"SELECT count() FROM {_qualified(bronze, 'cms_cnote_raw')}"))
+    if row_count != raw_count:
+        raise RuntimeError(f"bronze.cms_cnote row count mismatch: raw={raw_count:,}, transformed={row_count:,}")
+    _log(f"Built ClickHouse {bronze}.cms_cnote from cms_cnote_raw: {row_count:,} rows in {time.monotonic() - started:.1f}s")
     return row_count
 
 
@@ -1536,8 +1759,8 @@ def _insert_load_run(
 
 def run(config_path: str = "config/mart_clickhouse.yaml", stage: str = "all") -> None:
     stage = stage.strip().lower()
-    if stage not in {"all", "load", "governance"}:
-        raise ValueError("stage must be one of: all, load, governance")
+    if stage not in {"all", "load", "transform", "governance"}:
+        raise ValueError("stage must be one of: all, load, transform, governance")
     config = load_config(config_path)
     _log(
         "Starting ClickHouse mart load: "
@@ -1555,7 +1778,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml", stage: str = "all") ->
     )
     client = _connect_clickhouse(config)
     loaded_tables: dict[str, int] = {}
-    loaded_derived: dict[str, int] = {}
+    transformed_rows = 0
     unified_rows = 0
     governance_rows = 0
     result_cnote_rows = 0
@@ -1564,7 +1787,6 @@ def run(config_path: str = "config/mart_clickhouse.yaml", stage: str = "all") ->
     try:
         if stage in {"all", "load"}:
             _drop_database(client, config.schemas.bronze_staging)
-            _drop_database(client, config.schemas.derived_staging)
             _create_database(client, config.schemas.bronze_staging)
             loaded_tables = _load_table_entries(
                 client,
@@ -1574,18 +1796,10 @@ def run(config_path: str = "config/mart_clickhouse.yaml", stage: str = "all") ->
                 "bronze",
                 target_schema=config.schemas.bronze,
             )
-            if manifest.get("derived"):
-                _log("Loading transformed CNOTE into ClickHouse bronze staging")
-                loaded_derived = _load_table_entries(
-                    client,
-                    config,
-                    manifest.get("derived", []),
-                    config.schemas.bronze_staging,
-                    "bronze",
-                    default_parent="derived",
-                )
             _publish_schema(client, config.schemas.bronze_staging, config.schemas.bronze)
-            _drop_database(client, config.schemas.derived)
+
+        if stage in {"all", "transform"}:
+            transformed_rows = _build_clickhouse_cnote_transform(client, config)
             unified_rows = _load_unified_mart(client, config)
 
         if stage in {"all", "governance"}:
@@ -1596,7 +1810,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml", stage: str = "all") ->
 
         total_rows = (
             sum(loaded_tables.values())
-            + sum(loaded_derived.values())
+            + transformed_rows
             + document_link_rows
             + unified_rows
             + governance_rows
@@ -1609,7 +1823,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml", stage: str = "all") ->
             manifest,
             table_count=(
                 len(loaded_tables)
-                + len(loaded_derived)
+                + (1 if transformed_rows else 0)
                 + (1 if document_link_rows else 0)
                 + (1 if unified_rows else 0)
                 + (1 if config.governance.enabled else 0)
@@ -1621,7 +1835,6 @@ def run(config_path: str = "config/mart_clickhouse.yaml", stage: str = "all") ->
         )
     except Exception as exc:
         _drop_database(client, config.schemas.bronze_staging)
-        _drop_database(client, config.schemas.derived_staging)
         try:
             _insert_load_run(
                 client,
@@ -1629,7 +1842,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml", stage: str = "all") ->
                 manifest,
                 table_count=(
                     len(loaded_tables)
-                    + len(loaded_derived)
+                    + (1 if transformed_rows else 0)
                     + (1 if document_link_rows else 0)
                     + (1 if unified_rows else 0)
                     + (1 if governance_rows else 0)
@@ -1638,7 +1851,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml", stage: str = "all") ->
                 ),
                 row_count=(
                     sum(loaded_tables.values())
-                    + sum(loaded_derived.values())
+                    + transformed_rows
                     + document_link_rows
                     + unified_rows
                     + governance_rows
@@ -1655,8 +1868,8 @@ def run(config_path: str = "config/mart_clickhouse.yaml", stage: str = "all") ->
     _log("Loaded ClickHouse mart snapshot:")
     for table, rows in sorted(loaded_tables.items()):
         _log(f"  {config.schemas.bronze}.{table}: {rows} rows")
-    for table, rows in sorted(loaded_derived.items()):
-        _log(f"  {config.schemas.derived}.{table}: {rows} rows")
+    if transformed_rows:
+        _log(f"  {config.schemas.bronze}.cms_cnote: {transformed_rows} rows")
     if config.governance.build_document_links:
         _log(f"  {config.schemas.governance}.{config.governance.document_links_table}: {document_link_rows} rows")
     if config.unified_mart.enabled:
@@ -1671,7 +1884,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml", stage: str = "all") ->
 def main() -> None:
     parser = argparse.ArgumentParser(description="Load bronze Parquet into ClickHouse.")
     parser.add_argument("--config", default="config/mart_clickhouse.yaml")
-    parser.add_argument("--stage", choices=["all", "load", "governance"], default="all")
+    parser.add_argument("--stage", choices=["all", "load", "transform", "governance"], default="all")
     args = parser.parse_args()
     run(args.config, stage=args.stage)
 

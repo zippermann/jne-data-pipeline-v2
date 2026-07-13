@@ -13,6 +13,7 @@ from loader.mart_load_clickhouse import (
     _load_table_entries,
     _load_governance_csv,
     _load_governance_results,
+    _build_clickhouse_cnote_transform,
     _build_document_cnote_links,
     _build_governance_dashboard_table,
     _render_unified_sql,
@@ -146,18 +147,19 @@ def test_clickhouse_derived_prefix_defaults_under_derived_folder():
     assert prefix == "bronze/jne/run_id=R_TEST/derived/cms_cnote_transformed/"
 
 
-def test_clickhouse_loader_replaces_raw_cnote_and_loads_missing_reference(monkeypatch):
+def test_clickhouse_loader_loads_raw_cnote_as_raw_and_missing_reference(monkeypatch):
     loaded = []
 
     def fake_load(client, config, schema, table_info, label, default_parent=None):
-        loaded.append((table_info["output_name"], default_parent))
+        from loader.mart_load_clickhouse import _mart_table_name
+
+        loaded.append((_mart_table_name(table_info), table_info["output_name"], default_parent))
         return 12
 
     monkeypatch.setattr("loader.mart_load_clickhouse._load_s3_table", fake_load)
     monkeypatch.setattr("loader.mart_load_clickhouse._table_exists", lambda client, schema, table: False)
     entries = [
         {"output_name": "cms_cnote", "stage": "anchor", "row_count": 12},
-        {"output_name": "cms_cnote_transformed", "stage": "derived", "row_count": 12},
         {"output_name": "cms_drourate", "stage": "reference", "row_count": 78_000_000},
     ]
 
@@ -167,12 +169,14 @@ def test_clickhouse_loader_replaces_raw_cnote_and_loads_missing_reference(monkey
         entries,
         "bronze_staging",
         "bronze",
-        default_parent="derived",
         target_schema="bronze",
     )
 
-    assert result == {"cms_cnote": 12, "cms_drourate": 12}
-    assert loaded == [("cms_cnote_transformed", "derived"), ("cms_drourate", "derived")]
+    assert result == {"cms_cnote_raw": 12, "cms_drourate": 12}
+    assert loaded == [
+        ("cms_cnote_raw", "cms_cnote", None),
+        ("cms_drourate", "cms_drourate", None),
+    ]
 
 
 def test_clickhouse_loader_reuses_existing_reference_tables(monkeypatch):
@@ -196,6 +200,44 @@ def test_clickhouse_loader_reuses_existing_reference_tables(monkeypatch):
 
     assert result == {"cms_manifest": 12}
     assert loaded == ["cms_manifest"]
+
+
+def test_clickhouse_cnote_transform_builds_from_raw_table(monkeypatch):
+    commands = []
+
+    def fake_exists(client, schema, table):
+        return table in {
+            "cms_cnote_raw",
+            "cms_mfcnote",
+            "cms_manifest",
+            "cms_drcnote",
+            "cms_mrcnote",
+            "cms_dhicnote",
+            "cms_dhocnote",
+            "cms_drsheet",
+            "cms_cnote_pod",
+        }
+
+    def fake_scalar(client, sql):
+        if "`cms_cnote_raw`" in sql:
+            return 12
+        if "`cms_cnote`" in sql:
+            return 12
+        raise AssertionError(sql)
+
+    monkeypatch.setattr("loader.mart_load_clickhouse._table_exists", fake_exists)
+    monkeypatch.setattr("loader.mart_load_clickhouse._command", lambda client, sql: commands.append(sql))
+    monkeypatch.setattr("loader.mart_load_clickhouse._query_scalar", fake_scalar)
+
+    rows = _build_clickhouse_cnote_transform(object(), _config())
+
+    assert rows == 12
+    assert any("DROP TABLE IF EXISTS `bronze`.`cms_cnote`" in sql for sql in commands)
+    create_sql = next(sql for sql in commands if "CREATE TABLE `bronze`.`cms_cnote`" in sql)
+    assert "FROM `bronze`.`cms_cnote_raw` c" in create_sql
+    assert "INNER JOIN `bronze`.`cms_manifest` m" in create_sql
+    assert "delivery_category" in create_sql
+    assert "transit_manifest_count" in create_sql
 
 
 def test_clickhouse_governance_csv_rejects_mixed_column_counts(tmp_path):
