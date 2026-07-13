@@ -160,7 +160,10 @@ not overwritten:
   check.
 - `governance.governance_result_cnotes_2`: one row per result-to-CNOTE link,
   including CNOTE-native attributes such as origin, destination, service code,
-  delivery type, shipment scope, and delivery category.
+  delivery type, shipment scope, and delivery category. During stress tests this
+  is bounded by `governance.result_cnotes_statuses`, currently `["FAIL"]`, so
+  raw pass/fail rows remain complete without multiplying every PASS row through
+  the CNOTE bridge.
 - `governance.governance_rule_summary_2`: one audit row per rule.
 - `governance.document_cnote_links_2`: ClickHouse-built source document to CNOTE
   bridge.
@@ -224,7 +227,8 @@ rule-level audit file:
   blank by ClickHouse-native governance. CNOTE-native values belong in
   `governance.governance_result_cnotes_2`.
 
-`governance.governance_result_cnotes_2` is the CNOTE rollup/enrichment source:
+`governance.governance_result_cnotes_2` is the CNOTE rollup/enrichment source
+for the statuses configured in `governance.result_cnotes_statuses`:
 
 - `result_id`
 - `cnote_no`

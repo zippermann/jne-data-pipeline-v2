@@ -86,6 +86,7 @@ class GovernanceConfig:
     build_dashboard_table: bool = True
     dashboard_table: str = "governance_results_dashboard_2"
     execution_mode: str = "clickhouse"
+    result_cnotes_statuses: tuple[str, ...] = ("FAIL",)
 
 
 @dataclass(frozen=True)
@@ -201,6 +202,11 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
             document_links_table=governance.get("document_links_table", "document_cnote_links_2"),
             build_dashboard_table=_as_bool(governance.get("build_dashboard_table", True)),
             dashboard_table=governance.get("dashboard_table", "governance_results_dashboard_2"),
+            result_cnotes_statuses=tuple(
+                str(status).strip().upper()
+                for status in governance.get("result_cnotes_statuses", ["FAIL"])
+                if str(status).strip()
+            ),
         ),
         unified_mart=UnifiedMartConfig(
             enabled=_as_bool(unified_mart.get("enabled", False)),
@@ -1212,6 +1218,12 @@ def _build_governance_result_cnotes(client: Any, config: MartClickHouseConfig) -
     _command(client, f"DROP TABLE IF EXISTS {_qualified(governance, result_cnotes_table)}")
     results = _qualified(governance, results_table)
     cnote = _qualified(bronze, "cms_cnote")
+    status_filter = ", ".join(_quote_sql(status) for status in config.governance.result_cnotes_statuses)
+    status_predicate = "1" if not status_filter else f"upper(ifNull(r.`status`, '')) IN ({status_filter})"
+    _log(
+        f"Building ClickHouse {governance}.{result_cnotes_table} "
+        f"for statuses={list(config.governance.result_cnotes_statuses) or ['ALL']}"
+    )
     link_select = ""
     if _table_exists(client, governance, links_table):
         link_select = f"""
@@ -1225,6 +1237,7 @@ def _build_governance_result_cnotes(client: Any, config: MartClickHouseConfig) -
             INNER JOIN {_qualified(governance, links_table)} l
                 ON upper(trimBoth(ifNull(r.`table_name`, ''))) = l.`source_table`
                AND trimBoth(ifNull(r.`document_id`, '')) = l.`document_id`
+            WHERE {status_predicate}
         """
     _command(
         client,
@@ -1242,6 +1255,7 @@ def _build_governance_result_cnotes(client: Any, config: MartClickHouseConfig) -
             FROM {results} r
             WHERE upper(trimBoth(ifNull(r.`table_name`, ''))) = 'CMS_CNOTE'
               AND trimBoth(ifNull(r.`document_id`, '')) != ''
+              AND {status_predicate}
             {link_select}
         )
         SELECT DISTINCT
