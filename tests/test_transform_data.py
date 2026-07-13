@@ -2,6 +2,7 @@ import json
 
 from transform.transform_data import (
     DERIVED_TABLE,
+    _copy_to_parquet,
     _derived_manifest_entry,
     _update_manifest,
     delivery_category,
@@ -51,3 +52,33 @@ def test_update_manifest_replaces_existing_derived_entry(tmp_path):
             "source_prefix": "bronze/jne/run_id=R_TEST/derived/cms_cnote_transformed/",
         }
     ]
+
+
+def test_copy_to_parquet_chunks_output(tmp_path):
+    class Result:
+        def __init__(self, value):
+            self.value = value
+
+        def fetchone(self):
+            return (self.value,)
+
+    class Connection:
+        def __init__(self):
+            self.commands = []
+
+        def execute(self, sql):
+            self.commands.append(sql)
+            if sql.startswith("SELECT COUNT(*) FROM"):
+                return Result(5)
+            return Result(None)
+
+    con = Connection()
+    row_count = _copy_to_parquet(con, "SELECT * FROM source_table", tmp_path / "derived", rows_per_file=2)
+
+    assert row_count == 5
+    copy_commands = [sql for sql in con.commands if sql.startswith("COPY")]
+    assert len(copy_commands) == 3
+    assert "LIMIT 2 OFFSET 0" in copy_commands[0]
+    assert "LIMIT 2 OFFSET 2" in copy_commands[1]
+    assert "LIMIT 2 OFFSET 4" in copy_commands[2]
+    assert (tmp_path / "derived" / "_SUCCESS").read_text(encoding="ascii") == "5\n"

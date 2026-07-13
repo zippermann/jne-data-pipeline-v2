@@ -150,6 +150,17 @@ Oracle extraction tuning knobs:
 - `scoping.date_guardrail_*`: date guardrails applied to extraction SQL and the
   high-volume DRSHEET/MANIFEST scope queries.
 
+CNOTE transform tuning knobs:
+
+- `output.rows_per_file`: derived CNOTE Parquet chunk size. The transform writer
+  emits multiple `part-*.parquet` files using this row count instead of one giant
+  Parquet file.
+- `transform.duckdb_threads`: DuckDB thread count for transform SQL.
+- `transform.duckdb_memory_limit`: DuckDB memory cap for the transform process.
+- `transform.duckdb_temp_directory`: DuckDB spill directory.
+- `transform.duckdb_preserve_insertion_order`: keep false for large stress tests
+  so DuckDB can stream/spill more efficiently.
+
 Use `config/mart_clickhouse.yaml` for the ClickHouse mart. The mart loader
 publishes tables into the `bronze` database and replaces raw `bronze.cms_cnote`
 with the transformed `derived/cms_cnote_transformed` data. With

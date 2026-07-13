@@ -29,6 +29,10 @@ DERIVED_TABLE = "cms_cnote_transformed"
 DERIVED_SOURCE_TABLE = "CMS_CNOTE_TRANSFORMED"
 DERIVED_PARENT = "derived"
 DERIVED_PREFIX = f"{DERIVED_PARENT}/{DERIVED_TABLE}/"
+DEFAULT_DUCKDB_THREADS = 1
+DEFAULT_DUCKDB_MEMORY_LIMIT = "12GB"
+DEFAULT_DUCKDB_TEMP_DIRECTORY = "/tmp/duckdb"
+DEFAULT_DERIVED_ROWS_PER_FILE = 250_000
 
 
 @dataclass(frozen=True)
@@ -71,6 +75,17 @@ def _document_links_mode(config: dict[str, Any]) -> str:
     return mode
 
 
+def _derived_rows_per_file(config: dict[str, Any]) -> int:
+    transform_config = config.get("transform", {}) or {}
+    output_config = config.get("output", {}) or {}
+    return int(
+        transform_config.get(
+            "rows_per_file",
+            output_config.get("rows_per_file", DEFAULT_DERIVED_ROWS_PER_FILE),
+        )
+    )
+
+
 def shipment_scope(origin: Any, destination: Any) -> str:
     """Classify a CNOTE origin/destination pair without touching bronze."""
     origin_text = str(origin or "").strip().upper()
@@ -110,8 +125,38 @@ def _duckdb_connection(config: dict):
             "with `pip install -r requirements.txt` or rebuild the Airflow image."
         ) from exc
 
+    transform_config = config.get("transform", {}) or {}
+    threads = int(
+        os.getenv(
+            "TRANSFORM_DUCKDB_THREADS",
+            transform_config.get("duckdb_threads", DEFAULT_DUCKDB_THREADS),
+        )
+    )
+    memory_limit = str(
+        os.getenv(
+            "TRANSFORM_DUCKDB_MEMORY_LIMIT",
+            transform_config.get("duckdb_memory_limit", DEFAULT_DUCKDB_MEMORY_LIMIT),
+        )
+    )
+    temp_directory = str(
+        os.getenv(
+            "TRANSFORM_DUCKDB_TEMP_DIRECTORY",
+            transform_config.get("duckdb_temp_directory", DEFAULT_DUCKDB_TEMP_DIRECTORY),
+        )
+    )
+    preserve_insertion_order = _as_bool(
+        os.getenv(
+            "TRANSFORM_DUCKDB_PRESERVE_INSERTION_ORDER",
+            transform_config.get("duckdb_preserve_insertion_order", False),
+        )
+    )
+
+    Path(temp_directory).mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(database=":memory:")
-    con.execute("PRAGMA threads=4")
+    con.execute(f"SET threads={max(threads, 1)}")
+    con.execute(f"SET memory_limit={_quote_sql(memory_limit)}")
+    con.execute(f"SET temp_directory={_quote_sql(temp_directory)}")
+    con.execute(f"SET preserve_insertion_order={'true' if preserve_insertion_order else 'false'}")
     con.execute("INSTALL json")
     con.execute("LOAD json")
     return con
@@ -338,13 +383,26 @@ def _build_cnote_transform_query(
     """
 
 
-def _copy_to_parquet(con: Any, query: str, output_dir: Path) -> int:
+def _copy_to_parquet(con: Any, query: str, output_dir: Path, rows_per_file: int = DEFAULT_DERIVED_ROWS_PER_FILE) -> int:
     if output_dir.exists():
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True)
-    part_path = output_dir / "part-00001.parquet"
-    con.execute(f"COPY ({query}) TO {_quote_sql(part_path.as_posix())} (FORMAT PARQUET, COMPRESSION ZSTD)")
-    row_count = int(con.execute(f"SELECT COUNT(*) FROM read_parquet({_quote_sql(part_path.as_posix())})").fetchone()[0])
+    row_count = int(con.execute(f"SELECT COUNT(*) FROM ({query})").fetchone()[0])
+    if row_count:
+        rows_per_file = max(int(rows_per_file), 1)
+        part_no = 0
+        for offset in range(0, row_count, rows_per_file):
+            part_no += 1
+            part_path = output_dir / f"part-{part_no:05d}.parquet"
+            _log(f"Writing {part_path}: rows {offset + 1:,}-{min(offset + rows_per_file, row_count):,}")
+            con.execute(
+                "COPY ("
+                f"SELECT * FROM ({query}) LIMIT {rows_per_file} OFFSET {offset}"
+                f") TO {_quote_sql(part_path.as_posix())} (FORMAT PARQUET, COMPRESSION ZSTD)"
+            )
+    else:
+        part_path = output_dir / "part-00001.parquet"
+        con.execute(f"COPY ({query}) TO {_quote_sql(part_path.as_posix())} (FORMAT PARQUET, COMPRESSION ZSTD)")
     (output_dir / "_SUCCESS").write_text(f"{row_count}\n", encoding="ascii")
     return row_count
 
@@ -506,6 +564,7 @@ def _upload_manifest_to_minio(source: DerivedSource, tmpdir: Path) -> None:
 def transform_data(source: DerivedSource, config: dict, tmpdir: Path | None = None) -> dict[str, Any]:
     started = time.monotonic()
     con = _duckdb_connection(config)
+    rows_per_file = _derived_rows_per_file(config)
     if source.settings is not None:
         _configure_s3(con, source.settings)
 
@@ -537,7 +596,7 @@ def transform_data(source: DerivedSource, config: dict, tmpdir: Path | None = No
 
     if source.run_path is not None:
         output_dir = source.run_path / DERIVED_PREFIX
-        row_count = _copy_to_parquet(con, f"SELECT * FROM {DERIVED_TABLE}", output_dir)
+        row_count = _copy_to_parquet(con, f"SELECT * FROM {DERIVED_TABLE}", output_dir, rows_per_file)
         entry = _derived_manifest_entry(row_count, output_dir, source)
         _update_manifest(source.manifest, entry)
         _write_local_manifest(source)
@@ -545,7 +604,7 @@ def transform_data(source: DerivedSource, config: dict, tmpdir: Path | None = No
         if tmpdir is None:
             raise ValueError("tmpdir is required for minio derived output")
         output_dir = tmpdir / DERIVED_TABLE
-        row_count = _copy_to_parquet(con, f"SELECT * FROM {DERIVED_TABLE}", output_dir)
+        row_count = _copy_to_parquet(con, f"SELECT * FROM {DERIVED_TABLE}", output_dir, rows_per_file)
         entry = _derived_manifest_entry(row_count, output_dir, source)
         _update_manifest(source.manifest, entry)
         _upload_derived_to_minio(source, output_dir)
