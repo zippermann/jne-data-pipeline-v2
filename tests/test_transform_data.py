@@ -1,5 +1,7 @@
 import json
 
+import pyarrow as pa
+
 from transform.transform_data import (
     DERIVED_TABLE,
     _copy_to_parquet,
@@ -55,12 +57,21 @@ def test_update_manifest_replaces_existing_derived_entry(tmp_path):
 
 
 def test_copy_to_parquet_chunks_output(tmp_path):
+    batches = [
+        pa.record_batch([pa.array([1, 2])], names=["id"]),
+        pa.record_batch([pa.array([3, 4])], names=["id"]),
+        pa.record_batch([pa.array([5])], names=["id"]),
+    ]
+
     class Result:
         def __init__(self, value):
             self.value = value
 
         def fetchone(self):
             return (self.value,)
+
+        def fetch_record_batch(self, _rows_per_file):
+            return iter(batches)
 
     class Connection:
         def __init__(self):
@@ -76,9 +87,13 @@ def test_copy_to_parquet_chunks_output(tmp_path):
     row_count = _copy_to_parquet(con, "SELECT * FROM source_table", tmp_path / "derived", rows_per_file=2)
 
     assert row_count == 5
-    copy_commands = [sql for sql in con.commands if sql.startswith("COPY")]
-    assert len(copy_commands) == 3
-    assert "LIMIT 2 OFFSET 0" in copy_commands[0]
-    assert "LIMIT 2 OFFSET 2" in copy_commands[1]
-    assert "LIMIT 2 OFFSET 4" in copy_commands[2]
+    assert con.commands == [
+        "SELECT COUNT(*) FROM (SELECT * FROM source_table)",
+        "SELECT * FROM source_table",
+    ]
+    assert sorted(path.name for path in (tmp_path / "derived").glob("part-*.parquet")) == [
+        "part-00001.parquet",
+        "part-00002.parquet",
+        "part-00003.parquet",
+    ]
     assert (tmp_path / "derived" / "_SUCCESS").read_text(encoding="ascii") == "5\n"

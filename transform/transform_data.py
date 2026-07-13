@@ -389,16 +389,21 @@ def _copy_to_parquet(con: Any, query: str, output_dir: Path, rows_per_file: int 
     output_dir.mkdir(parents=True)
     row_count = int(con.execute(f"SELECT COUNT(*) FROM ({query})").fetchone()[0])
     if row_count:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
         rows_per_file = max(int(rows_per_file), 1)
-        part_no = 0
-        for offset in range(0, row_count, rows_per_file):
-            part_no += 1
+        reader = con.execute(query).fetch_record_batch(rows_per_file)
+        for part_no, batch in enumerate(reader, start=1):
+            if batch.num_rows == 0:
+                continue
             part_path = output_dir / f"part-{part_no:05d}.parquet"
-            _log(f"Writing {part_path}: rows {offset + 1:,}-{min(offset + rows_per_file, row_count):,}")
-            con.execute(
-                "COPY ("
-                f"SELECT * FROM ({query}) LIMIT {rows_per_file} OFFSET {offset}"
-                f") TO {_quote_sql(part_path.as_posix())} (FORMAT PARQUET, COMPRESSION ZSTD)"
+            _log(f"Writing {part_path}: {batch.num_rows:,} rows")
+            pq.write_table(
+                pa.Table.from_batches([batch]),
+                part_path,
+                compression="zstd",
+                use_dictionary=True,
             )
     else:
         part_path = output_dir / "part-00001.parquet"
