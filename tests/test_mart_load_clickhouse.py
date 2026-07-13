@@ -22,7 +22,7 @@ from loader.mart_load_clickhouse import (
 )
 
 
-def _config() -> MartClickHouseConfig:
+def _config(*, build_dashboard_table: bool = False) -> MartClickHouseConfig:
     return MartClickHouseConfig(
         minio=MinioConfig("minio:9000", "minioadmin", "minioadmin123", False),
         bronze=BronzeConfig("jne-bronze", "bronze/jne/run_id=R_TEST"),
@@ -39,6 +39,7 @@ def _config() -> MartClickHouseConfig:
             Path("governance/outputs/R_TEST/governance_results.csv"),
             Path("governance/outputs/R_TEST/governance_result_cnotes.csv"),
             Path("governance/outputs/R_TEST/governance_rule_summary.csv"),
+            build_dashboard_table=build_dashboard_table,
         ),
         unified_mart=UnifiedMartConfig(
             True,
@@ -82,13 +83,13 @@ governance:
   results_path: "governance/outputs/${RUN_ID}/governance_results.csv"
   result_cnotes_path: "governance/outputs/${RUN_ID}/governance_result_cnotes.csv"
   summary_path: "governance/outputs/${RUN_ID}/governance_rule_summary.csv"
-  results_table: "governance_results_2"
-  result_cnotes_table: "governance_result_cnotes_2"
-  summary_table: "governance_rule_summary_2"
+  results_table: "governance_results"
+  result_cnotes_table: "governance_result_cnotes"
+  summary_table: "governance_rule_summary"
   build_document_links: true
-  document_links_table: "document_cnote_links_2"
+  document_links_table: "document_cnote_links"
   build_dashboard_table: true
-  dashboard_table: "governance_results_dashboard_2"
+  dashboard_table: "governance_results_dashboard"
 unified_mart:
   enabled: true
   schema: "mart"
@@ -111,13 +112,13 @@ mart:
     assert config.governance.results_path.as_posix() == "governance/outputs/R_TEST/governance_results.csv"
     assert config.governance.result_cnotes_path.as_posix() == "governance/outputs/R_TEST/governance_result_cnotes.csv"
     assert config.governance.summary_path.as_posix() == "governance/outputs/R_TEST/governance_rule_summary.csv"
-    assert config.governance.results_table == "governance_results_2"
-    assert config.governance.result_cnotes_table == "governance_result_cnotes_2"
-    assert config.governance.summary_table == "governance_rule_summary_2"
+    assert config.governance.results_table == "governance_results"
+    assert config.governance.result_cnotes_table == "governance_result_cnotes"
+    assert config.governance.summary_table == "governance_rule_summary"
     assert config.governance.build_document_links is True
-    assert config.governance.document_links_table == "document_cnote_links_2"
+    assert config.governance.document_links_table == "document_cnote_links"
     assert config.governance.build_dashboard_table is True
-    assert config.governance.dashboard_table == "governance_results_dashboard_2"
+    assert config.governance.dashboard_table == "governance_results_dashboard"
     assert config.unified_mart.enabled is True
     assert config.unified_mart.schema == "mart"
     assert config.unified_mart.table == "unified_shipments"
@@ -248,9 +249,9 @@ def test_clickhouse_governance_load_replaces_only_managed_tables(monkeypatch, tm
             results_path,
             result_cnotes_path,
             summary_path,
-            "governance_results_2",
-            "governance_result_cnotes_2",
-            "governance_rule_summary_2",
+            "governance_results",
+            "governance_result_cnotes",
+            "governance_rule_summary",
         ),
         config.unified_mart,
         config.skip_stages,
@@ -271,11 +272,11 @@ def test_clickhouse_governance_load_replaces_only_managed_tables(monkeypatch, tm
     assert rows == 3
     assert not any("DROP DATABASE" in sql for sql in client.commands)
     assert any("CREATE DATABASE IF NOT EXISTS `governance`" in sql for sql in client.commands)
-    assert any("DROP TABLE IF EXISTS `governance`.`governance_results_2`" in sql for sql in client.commands)
+    assert any("DROP TABLE IF EXISTS `governance`.`governance_results`" in sql for sql in client.commands)
     assert loaded_tables == [
-        "governance_results_2",
-        "governance_result_cnotes_2",
-        "governance_rule_summary_2",
+        "governance_results",
+        "governance_result_cnotes",
+        "governance_rule_summary",
     ]
 
 
@@ -290,11 +291,11 @@ def test_clickhouse_document_links_builds_separate_governance_table(monkeypatch)
 
     assert rows == 123
     assert any("CREATE DATABASE IF NOT EXISTS `governance`" in sql for sql in commands)
-    assert any("DROP TABLE IF EXISTS `governance`.`document_cnote_links_2`" in sql for sql in commands)
-    create_sql = next(sql for sql in commands if "CREATE TABLE `governance`.`document_cnote_links_2`" in sql)
+    assert any("DROP TABLE IF EXISTS `governance`.`document_cnote_links`" in sql for sql in commands)
+    create_sql = next(sql for sql in commands if "CREATE TABLE `governance`.`document_cnote_links`" in sql)
     assert "FROM `bronze`.`cms_mfcnote` mf" in create_sql
     assert "INNER JOIN `bronze`.`cms_cnote` c" in create_sql
-    assert "DROP TABLE IF EXISTS `governance`.`governance_results_2`" not in "\n".join(commands)
+    assert "DROP TABLE IF EXISTS `governance`.`governance_results`" not in "\n".join(commands)
 
 
 def test_clickhouse_governance_dashboard_builds_from_raw_results_and_links(monkeypatch):
@@ -302,8 +303,8 @@ def test_clickhouse_governance_dashboard_builds_from_raw_results_and_links(monke
 
     def fake_exists(client, schema, table):
         return table in {
-            "governance_results_2",
-            "document_cnote_links_2",
+            "governance_results",
+            "document_cnote_links",
             "cms_cnote",
         }
 
@@ -311,13 +312,13 @@ def test_clickhouse_governance_dashboard_builds_from_raw_results_and_links(monke
     monkeypatch.setattr("loader.mart_load_clickhouse._command", lambda client, sql: commands.append(sql))
     monkeypatch.setattr("loader.mart_load_clickhouse._query_scalar", lambda client, sql: 456)
 
-    rows = _build_governance_dashboard_table(object(), _config())
+    rows = _build_governance_dashboard_table(object(), _config(build_dashboard_table=True))
 
     assert rows == 456
-    assert any("DROP TABLE IF EXISTS `governance`.`governance_results_dashboard_2`" in sql for sql in commands)
-    create_sql = next(sql for sql in commands if "CREATE TABLE `governance`.`governance_results_dashboard_2`" in sql)
-    assert "FROM `governance`.`governance_results_2` r" in create_sql
-    assert "LEFT JOIN `governance`.`document_cnote_links_2` l" in create_sql
+    assert any("DROP TABLE IF EXISTS `governance`.`governance_results_dashboard`" in sql for sql in commands)
+    create_sql = next(sql for sql in commands if "CREATE TABLE `governance`.`governance_results_dashboard`" in sql)
+    assert "FROM `governance`.`governance_results` r" in create_sql
+    assert "LEFT JOIN `governance`.`document_cnote_links` l" in create_sql
     assert "linked_cnote_no" in create_sql
     assert "linked_delivery_category" in create_sql
 

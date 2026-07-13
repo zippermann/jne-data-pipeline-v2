@@ -154,24 +154,25 @@ Use `config/mart_clickhouse.yaml` for the ClickHouse mart. The mart loader
 publishes tables into the `bronze` database and replaces raw `bronze.cms_cnote`
 with the transformed `derived/cms_cnote_transformed` data. With
 `governance.execution_mode: "clickhouse"`, governance output is generated inside
-ClickHouse and lands in the `governance` database. Current stress-test table
-names use `_2` suffixes so existing dashboard tables from earlier 100k runs are
-not overwritten:
+ClickHouse and lands in the `governance` database. Current table names use the
+canonical governance outputs:
 
-- `governance.governance_results_2`: one raw document-level result row per rule
+- `governance.governance_results`: one raw document-level result row per rule
   check.
-- `governance.governance_result_cnotes_2`: one row per result-to-CNOTE link,
+- `governance.governance_result_cnotes`: one row per result-to-CNOTE link,
   including CNOTE-native attributes such as origin, destination, service code,
   delivery type, shipment scope, and delivery category. During stress tests this
   is bounded by `governance.result_cnotes_statuses`, currently `["FAIL"]`, so
   raw pass/fail rows remain complete without multiplying every PASS row through
   the CNOTE bridge.
-- `governance.governance_rule_summary_2`: one audit row per rule.
-- `governance.document_cnote_links_2`: optional ClickHouse-built source document
+- `governance.governance_rule_summary`: one audit row per rule.
+- `governance.document_cnote_links`: optional ClickHouse-built source document
   to CNOTE bridge. Disabled by default in the stress-test config because the
   full 49M-row link build exceeded the current VM memory budget.
-- `governance.governance_results_dashboard_2`: ClickHouse-enriched dashboard
-  table joining raw governance results to `governance_result_cnotes_2`.
+- `governance.governance_results_dashboard`: optional ClickHouse-enriched
+  dashboard table joining raw governance results to `governance_result_cnotes`.
+  Disabled by default in the stress-test config because the full dashboard join
+  can create hundreds of millions of rows.
 
 Reference tables such as `cms_drourate` are loaded into the mart when missing,
 then reused on later mart loads instead of being reloaded every run.
@@ -192,8 +193,8 @@ An empty list extracts every configured table.
 Production stress-test governance is ClickHouse-native. The Airflow
 `run_governance` task calls `loader.mart_load_clickhouse --stage governance`
 after the ClickHouse load. It reads `governance/catalog.py`, inserts raw
-document-level pass/fail rows into `governance.governance_results_2`, and records
-one audit row per catalog rule in `governance.governance_rule_summary_2`.
+document-level pass/fail rows into `governance.governance_results`, and records
+one audit row per catalog rule in `governance.governance_rule_summary`.
 
 The initial ClickHouse executor supports the high-volume simple rule families:
 `completeness`, `uniqueness`, `validity_regex`, `validity_integer`,
@@ -216,7 +217,7 @@ rule-level audit file:
 - `governance_result_cnotes.csv`
 - `governance_rule_summary.csv`
 
-`governance.governance_results_2` includes:
+`governance.governance_results` includes:
 
 - `result_id`: stable row id for the result row.
 - `document_type`: the source document type, usually the source table name without
@@ -228,9 +229,9 @@ rule-level audit file:
 - CNOTE context columns such as `shipment_type`, `cnote_origin`, and
   `origin_region`: kept in the raw output schema for compatibility but left
   blank by ClickHouse-native governance. CNOTE-native values belong in
-  `governance.governance_result_cnotes_2`.
+  `governance.governance_result_cnotes`.
 
-`governance.governance_result_cnotes_2` is the CNOTE rollup/enrichment source
+`governance.governance_result_cnotes` is the CNOTE rollup/enrichment source
 for the statuses configured in `governance.result_cnotes_statuses`:
 
 - `result_id`
@@ -248,8 +249,8 @@ Dashboard rule of thumb:
 
 - Document-level views should use `governance_results.document_id`.
 - CNOTE-level/dashboard views should use
-  `governance.governance_result_cnotes_2` or
-  `governance.governance_results_dashboard_2`.
+  `governance.governance_result_cnotes` or
+  `governance.governance_results_dashboard`.
 - Do not group non-CNOTE tables only by `governance_results.cnote_no`; that
   column is nullable by design.
 
@@ -291,7 +292,7 @@ Result rows use explicit statuses:
   implementation issue such as a missing column or malformed rule.
 
 `SKIPPED`, `ERROR`, and `NO_ROWS` rules are recorded in
-`governance.governance_rule_summary_2` for audit.
+`governance.governance_rule_summary` for audit.
 
 `governance/catalog_skipped_rows.csv` records workbook rows that were not mapped
 into executable catalog rules.
@@ -326,7 +327,8 @@ Docker images may not include `git`. To verify the VM container has this branch'
 code, inspect files instead of using `git` inside the container. For example,
 check that `governance/output.py` contains `document_id` in `RESULT_COLUMNS` and
 that `loader/mart_load_clickhouse.py` contains
-`--stage governance` and `governance_results_dashboard_2`.
+`--stage governance`; check `config/mart_clickhouse.yaml` for
+`build_dashboard_table: false` during stress tests.
 
 ## Tests
 

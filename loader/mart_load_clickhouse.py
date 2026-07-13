@@ -78,13 +78,13 @@ class GovernanceConfig:
     results_path: Path
     result_cnotes_path: Path
     summary_path: Path
-    results_table: str = "governance_results_2"
-    result_cnotes_table: str = "governance_result_cnotes_2"
-    summary_table: str = "governance_rule_summary_2"
+    results_table: str = "governance_results"
+    result_cnotes_table: str = "governance_result_cnotes"
+    summary_table: str = "governance_rule_summary"
     build_document_links: bool = True
-    document_links_table: str = "document_cnote_links_2"
-    build_dashboard_table: bool = True
-    dashboard_table: str = "governance_results_dashboard_2"
+    document_links_table: str = "document_cnote_links"
+    build_dashboard_table: bool = False
+    dashboard_table: str = "governance_results_dashboard"
     execution_mode: str = "clickhouse"
     result_cnotes_statuses: tuple[str, ...] = ("FAIL",)
 
@@ -195,13 +195,13 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
             result_cnotes_path=Path(governance.get("result_cnotes_path") or default_result_cnotes_path),
             summary_path=Path(governance.get("summary_path") or default_summary_path),
             execution_mode=str(governance.get("execution_mode", "clickhouse")).strip().lower(),
-            results_table=governance.get("results_table", "governance_results_2"),
-            result_cnotes_table=governance.get("result_cnotes_table", "governance_result_cnotes_2"),
-            summary_table=governance.get("summary_table", "governance_rule_summary_2"),
+            results_table=governance.get("results_table", "governance_results"),
+            result_cnotes_table=governance.get("result_cnotes_table", "governance_result_cnotes"),
+            summary_table=governance.get("summary_table", "governance_rule_summary"),
             build_document_links=_as_bool(governance.get("build_document_links", True)),
-            document_links_table=governance.get("document_links_table", "document_cnote_links_2"),
-            build_dashboard_table=_as_bool(governance.get("build_dashboard_table", True)),
-            dashboard_table=governance.get("dashboard_table", "governance_results_dashboard_2"),
+            document_links_table=governance.get("document_links_table", "document_cnote_links"),
+            build_dashboard_table=_as_bool(governance.get("build_dashboard_table", False)),
+            dashboard_table=governance.get("dashboard_table", "governance_results_dashboard"),
             result_cnotes_statuses=tuple(
                 str(status).strip().upper()
                 for status in governance.get("result_cnotes_statuses", ["FAIL"])
