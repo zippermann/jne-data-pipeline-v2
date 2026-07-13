@@ -503,7 +503,11 @@ def _empty_document_links_table(client: Any, schema: str, table: str) -> int:
 
 
 def _build_document_cnote_links(client: Any, config: MartClickHouseConfig) -> int:
+    governance = config.schemas.governance
+    target_table = config.governance.document_links_table
     if not config.governance.build_document_links:
+        _create_database(client, governance)
+        _command(client, f"DROP TABLE IF EXISTS {_qualified(governance, target_table)}")
         _log("Skipping ClickHouse document-to-CNOTE link build because governance.build_document_links=false")
         return 0
     if not _table_exists(client, config.schemas.bronze, "cms_cnote"):
@@ -512,8 +516,6 @@ def _build_document_cnote_links(client: Any, config: MartClickHouseConfig) -> in
 
     started = time.monotonic()
     bronze = config.schemas.bronze
-    governance = config.schemas.governance
-    target_table = config.governance.document_links_table
     has_tables: dict[str, bool] = {}
 
     def has(*tables: str) -> bool:
@@ -1225,7 +1227,7 @@ def _build_governance_result_cnotes(client: Any, config: MartClickHouseConfig) -
         f"for statuses={list(config.governance.result_cnotes_statuses) or ['ALL']}"
     )
     link_select = ""
-    if _table_exists(client, governance, links_table):
+    if config.governance.build_document_links and _table_exists(client, governance, links_table):
         link_select = f"""
             UNION ALL
             SELECT

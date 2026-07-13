@@ -93,10 +93,10 @@ extract_oracle -> transform_data -> load_data_mart_clickhouse -> run_governance
 the same run manifest.
 `load_data_mart_clickhouse` runs `loader.mart_load_clickhouse --stage load` and
 publishes raw bronze tables plus transformed CNOTE into ClickHouse.
-`run_governance` runs `loader.mart_load_clickhouse --stage governance`. It builds
-document-to-CNOTE links, executes supported catalog rules in ClickHouse, writes
-raw document-level results and rule summaries, writes the CNOTE bridge/enrichment
-table, and builds dashboard-ready governance tables.
+`run_governance` runs `loader.mart_load_clickhouse --stage governance`. It
+executes supported catalog rules in ClickHouse, writes raw document-level results
+and rule summaries, writes the bounded CNOTE bridge/enrichment table, and builds
+dashboard-ready governance tables.
 
 Pass `{"keep_scope": true}` in `dag_run.conf` to keep Oracle scope tables for
 manual inspection after extraction.
@@ -129,8 +129,10 @@ manifest's `derived` section:
 
 `transform.document_links_mode` is set to `clickhouse` in `config/config.yaml`.
 This means `transform.transform_data` intentionally skips the old pandas
-`derived/document_cnote_links` build. The ClickHouse mart loader builds
-document-to-CNOTE links from loaded bronze tables instead.
+`derived/document_cnote_links` build. The ClickHouse mart loader can build
+document-to-CNOTE links from loaded bronze tables, but the stress-test config
+currently keeps `governance.build_document_links: false` because the full link
+table exceeded the VM ClickHouse memory cap.
 
 ## Configuration
 
@@ -165,8 +167,9 @@ not overwritten:
   raw pass/fail rows remain complete without multiplying every PASS row through
   the CNOTE bridge.
 - `governance.governance_rule_summary_2`: one audit row per rule.
-- `governance.document_cnote_links_2`: ClickHouse-built source document to CNOTE
-  bridge.
+- `governance.document_cnote_links_2`: optional ClickHouse-built source document
+  to CNOTE bridge. Disabled by default in the stress-test config because the
+  full 49M-row link build exceeded the current VM memory budget.
 - `governance.governance_results_dashboard_2`: ClickHouse-enriched dashboard
   table joining raw governance results to `governance_result_cnotes_2`.
 
