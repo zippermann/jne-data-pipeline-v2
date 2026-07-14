@@ -707,19 +707,47 @@ def _timestamp_expr(alias: str, column: str) -> str:
     return f"parseDateTimeBestEffortOrNull(toString({alias}.{_quote_ident(column)}))"
 
 
-def _optional_join_cte(
+def _transform_query_settings() -> str:
+    return """
+        SETTINGS
+            max_threads = 1,
+            join_algorithm = 'grace_hash',
+            max_bytes_before_external_group_by = 1073741824,
+            max_bytes_before_external_sort = 1073741824
+    """
+
+
+def _create_cnote_feature_table(
     client: Any,
     schema: str,
+    table: str,
     required_tables: Iterable[str],
-    name: str,
-    sql: str,
+    select_sql: str,
     empty_columns: str,
-) -> str:
-    missing = [table for table in required_tables if not _table_exists(client, schema, table)]
+) -> None:
+    target = _qualified(schema, table)
+    _command(client, f"DROP TABLE IF EXISTS {target}")
+    missing = [source for source in required_tables if not _table_exists(client, schema, source)]
     if missing:
-        _log(f"ClickHouse CNOTE transform: {name} uses empty input because missing table(s): {', '.join(missing)}")
-        return f"{name} AS (SELECT {empty_columns} WHERE 0)"
-    return f"{name} AS ({sql})"
+        _log(
+            "ClickHouse CNOTE transform: "
+            f"{table} uses empty input because missing table(s): {', '.join(missing)}"
+        )
+        select_sql = f"SELECT {empty_columns} WHERE 0"
+
+    _command(
+        client,
+        f"""
+        CREATE TABLE {target}
+        ENGINE = MergeTree
+        ORDER BY cnote_no
+        AS
+        {select_sql}
+        {_transform_query_settings()}
+        """,
+    )
+    row_count = int(_query_scalar(client, f"SELECT count() FROM {target}"))
+    _log(f"Built ClickHouse transform helper {schema}.{table}: {row_count:,} rows")
 
 
 def _build_clickhouse_cnote_transform(client: Any, config: MartClickHouseConfig) -> int:
@@ -732,11 +760,23 @@ def _build_clickhouse_cnote_transform(client: Any, config: MartClickHouseConfig)
     text = _ch_text
     ts = _timestamp_expr
 
-    transit_cte = _optional_join_cte(
-        client,
-        bronze,
-        ("cms_mfcnote", "cms_manifest"),
-        "transit_cnotes",
+    helper_tables = (
+        "__cnote_transform_transit",
+        "__cnote_transform_pickup",
+        "__cnote_transform_handover_in",
+        "__cnote_transform_handover_out",
+        "__cnote_transform_runsheet",
+        "__cnote_transform_pod",
+    )
+    for helper_table in helper_tables:
+        _command(client, f"DROP TABLE IF EXISTS {_qualified(bronze, helper_table)}")
+
+    try:
+        _create_cnote_feature_table(
+            client,
+            bronze,
+            "__cnote_transform_transit",
+            ("cms_mfcnote", "cms_manifest"),
         f"""
             SELECT
                 {text('mf', 'MFCNOTE_NO')} AS cnote_no,
@@ -749,13 +789,13 @@ def _build_clickhouse_cnote_transform(client: Any, config: MartClickHouseConfig)
               AND {text('mf', 'MFCNOTE_NO')} != ''
             GROUP BY cnote_no
         """,
-        "CAST('' AS String) AS cnote_no, CAST(0 AS UInt64) AS transit_leg_count, CAST(NULL AS Nullable(DateTime64(3))) AS first_manifest_ts",
-    )
-    pickup_cte = _optional_join_cte(
-        client,
-        bronze,
-        ("cms_drcnote", "cms_mrcnote"),
-        "pickup_events",
+            "CAST('' AS String) AS cnote_no, CAST(0 AS UInt64) AS transit_leg_count, CAST(NULL AS Nullable(DateTime64(3))) AS first_manifest_ts",
+        )
+        _create_cnote_feature_table(
+            client,
+            bronze,
+            "__cnote_transform_pickup",
+            ("cms_drcnote", "cms_mrcnote"),
         f"""
             SELECT
                 {text('d', 'DRCNOTE_CNOTE_NO')} AS cnote_no,
@@ -766,13 +806,13 @@ def _build_clickhouse_cnote_transform(client: Any, config: MartClickHouseConfig)
             WHERE {text('d', 'DRCNOTE_CNOTE_NO')} != ''
             GROUP BY cnote_no
         """,
-        "CAST('' AS String) AS cnote_no, CAST(NULL AS Nullable(DateTime64(3))) AS pickup_ts",
-    )
-    handover_in_cte = _optional_join_cte(
-        client,
-        bronze,
-        ("cms_dhicnote",),
-        "handover_in_events",
+            "CAST('' AS String) AS cnote_no, CAST(NULL AS Nullable(DateTime64(3))) AS pickup_ts",
+        )
+        _create_cnote_feature_table(
+            client,
+            bronze,
+            "__cnote_transform_handover_in",
+            ("cms_dhicnote",),
         f"""
             SELECT
                 {text('dhi', 'DHICNOTE_CNOTE_NO')} AS cnote_no,
@@ -781,13 +821,13 @@ def _build_clickhouse_cnote_transform(client: Any, config: MartClickHouseConfig)
             WHERE {text('dhi', 'DHICNOTE_CNOTE_NO')} != ''
             GROUP BY cnote_no
         """,
-        "CAST('' AS String) AS cnote_no, CAST(NULL AS Nullable(DateTime64(3))) AS handover_in_ts",
-    )
-    handover_out_cte = _optional_join_cte(
-        client,
-        bronze,
-        ("cms_dhocnote",),
-        "handover_out_events",
+            "CAST('' AS String) AS cnote_no, CAST(NULL AS Nullable(DateTime64(3))) AS handover_in_ts",
+        )
+        _create_cnote_feature_table(
+            client,
+            bronze,
+            "__cnote_transform_handover_out",
+            ("cms_dhocnote",),
         f"""
             SELECT
                 {text('dho', 'DHOCNOTE_CNOTE_NO')} AS cnote_no,
@@ -796,13 +836,13 @@ def _build_clickhouse_cnote_transform(client: Any, config: MartClickHouseConfig)
             WHERE {text('dho', 'DHOCNOTE_CNOTE_NO')} != ''
             GROUP BY cnote_no
         """,
-        "CAST('' AS String) AS cnote_no, CAST(NULL AS Nullable(DateTime64(3))) AS handover_out_ts",
-    )
-    runsheet_cte = _optional_join_cte(
-        client,
-        bronze,
-        ("cms_drsheet",),
-        "runsheet_events",
+            "CAST('' AS String) AS cnote_no, CAST(NULL AS Nullable(DateTime64(3))) AS handover_out_ts",
+        )
+        _create_cnote_feature_table(
+            client,
+            bronze,
+            "__cnote_transform_runsheet",
+            ("cms_drsheet",),
         f"""
             SELECT
                 {text('drs', 'DRSHEET_CNOTE_NO')} AS cnote_no,
@@ -811,13 +851,13 @@ def _build_clickhouse_cnote_transform(client: Any, config: MartClickHouseConfig)
             WHERE {text('drs', 'DRSHEET_CNOTE_NO')} != ''
             GROUP BY cnote_no
         """,
-        "CAST('' AS String) AS cnote_no, CAST(NULL AS Nullable(DateTime64(3))) AS runsheet_ts",
-    )
-    pod_cte = _optional_join_cte(
-        client,
-        bronze,
-        ("cms_cnote_pod",),
-        "pod_events",
+            "CAST('' AS String) AS cnote_no, CAST(NULL AS Nullable(DateTime64(3))) AS runsheet_ts",
+        )
+        _create_cnote_feature_table(
+            client,
+            bronze,
+            "__cnote_transform_pod",
+            ("cms_cnote_pod",),
         f"""
             SELECT
                 {text('pod', 'CNOTE_POD_NO')} AS cnote_no,
@@ -826,24 +866,18 @@ def _build_clickhouse_cnote_transform(client: Any, config: MartClickHouseConfig)
             WHERE {text('pod', 'CNOTE_POD_NO')} != ''
             GROUP BY cnote_no
         """,
-        "CAST('' AS String) AS cnote_no, CAST(NULL AS Nullable(DateTime64(3))) AS pod_ts",
-    )
+            "CAST('' AS String) AS cnote_no, CAST(NULL AS Nullable(DateTime64(3))) AS pod_ts",
+        )
 
-    _command(client, f"DROP TABLE IF EXISTS {_qualified(bronze, 'cms_cnote')}")
-    _command(
-        client,
-        f"""
-        CREATE TABLE {_qualified(bronze, 'cms_cnote')}
-        ENGINE = MergeTree
-        ORDER BY tuple()
-        AS
-        WITH
-        {transit_cte},
-        {pickup_cte},
-        {handover_in_cte},
-        {handover_out_cte},
-        {runsheet_cte},
-        {pod_cte},
+        _command(client, f"DROP TABLE IF EXISTS {_qualified(bronze, 'cms_cnote')}")
+        _command(
+            client,
+            f"""
+            CREATE TABLE {_qualified(bronze, 'cms_cnote')}
+            ENGINE = MergeTree
+            ORDER BY tuple()
+            AS
+            WITH
         parts AS (
             SELECT
                 c.*,
@@ -860,12 +894,12 @@ def _build_clickhouse_cnote_transform(client: Any, config: MartClickHouseConfig)
                 rs.runsheet_ts AS runsheet_ts,
                 pod.pod_ts AS pod_ts
             FROM {q('cms_cnote_raw')} c
-            LEFT JOIN transit_cnotes t ON {text('c', 'CNOTE_NO')} = t.cnote_no
-            LEFT JOIN pickup_events p ON {text('c', 'CNOTE_NO')} = p.cnote_no
-            LEFT JOIN handover_in_events hi ON {text('c', 'CNOTE_NO')} = hi.cnote_no
-            LEFT JOIN handover_out_events ho ON {text('c', 'CNOTE_NO')} = ho.cnote_no
-            LEFT JOIN runsheet_events rs ON {text('c', 'CNOTE_NO')} = rs.cnote_no
-            LEFT JOIN pod_events pod ON {text('c', 'CNOTE_NO')} = pod.cnote_no
+            LEFT JOIN {q('__cnote_transform_transit')} t ON {text('c', 'CNOTE_NO')} = t.cnote_no
+            LEFT JOIN {q('__cnote_transform_pickup')} p ON {text('c', 'CNOTE_NO')} = p.cnote_no
+            LEFT JOIN {q('__cnote_transform_handover_in')} hi ON {text('c', 'CNOTE_NO')} = hi.cnote_no
+            LEFT JOIN {q('__cnote_transform_handover_out')} ho ON {text('c', 'CNOTE_NO')} = ho.cnote_no
+            LEFT JOIN {q('__cnote_transform_runsheet')} rs ON {text('c', 'CNOTE_NO')} = rs.cnote_no
+            LEFT JOIN {q('__cnote_transform_pod')} pod ON {text('c', 'CNOTE_NO')} = pod.cnote_no
         ),
         classified AS (
             SELECT
@@ -916,14 +950,18 @@ def _build_clickhouse_cnote_transform(client: Any, config: MartClickHouseConfig)
                 shipment_scope
             ) AS delivery_category
         FROM classified
-        """,
-    )
-    row_count = int(_query_scalar(client, f"SELECT count() FROM {_qualified(bronze, 'cms_cnote')}"))
-    raw_count = int(_query_scalar(client, f"SELECT count() FROM {_qualified(bronze, 'cms_cnote_raw')}"))
-    if row_count != raw_count:
-        raise RuntimeError(f"bronze.cms_cnote row count mismatch: raw={raw_count:,}, transformed={row_count:,}")
-    _log(f"Built ClickHouse {bronze}.cms_cnote from cms_cnote_raw: {row_count:,} rows in {time.monotonic() - started:.1f}s")
-    return row_count
+            {_transform_query_settings()}
+            """,
+        )
+        row_count = int(_query_scalar(client, f"SELECT count() FROM {_qualified(bronze, 'cms_cnote')}"))
+        raw_count = int(_query_scalar(client, f"SELECT count() FROM {_qualified(bronze, 'cms_cnote_raw')}"))
+        if row_count != raw_count:
+            raise RuntimeError(f"bronze.cms_cnote row count mismatch: raw={raw_count:,}, transformed={row_count:,}")
+        _log(f"Built ClickHouse {bronze}.cms_cnote from cms_cnote_raw: {row_count:,} rows in {time.monotonic() - started:.1f}s")
+        return row_count
+    finally:
+        for helper_table in helper_tables:
+            _command(client, f"DROP TABLE IF EXISTS {_qualified(bronze, helper_table)}")
 
 
 def _read_csv_header(path: Path) -> list[str]:
