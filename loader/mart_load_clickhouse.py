@@ -740,7 +740,7 @@ def _create_cnote_feature_table(
         f"""
         CREATE TABLE {target}
         ENGINE = MergeTree
-        ORDER BY cnote_no
+        ORDER BY tuple()
         AS
         {select_sql}
         {_transform_query_settings()}
