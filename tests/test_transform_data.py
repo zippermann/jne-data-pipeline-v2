@@ -2,6 +2,7 @@ import json
 
 from transform.transform_data import (
     DERIVED_TABLE,
+    _build_cnote_transform_query,
     _derived_manifest_entry,
     _update_manifest,
     delivery_category,
@@ -23,6 +24,37 @@ def test_delivery_category_combines_domestic_only():
     assert delivery_category("Direct", "Intracity") == "Intracity"
     assert delivery_category("Transit", "Intercity") == "Intercity"
     assert delivery_category("Direct", "Unknown") == "Unknown"
+
+
+def test_cnote_transform_query_includes_stage_duration_columns():
+    query = _build_cnote_transform_query(
+        "cms_cnote/*.parquet",
+        "cms_mfcnote/*.parquet",
+        "cms_mfbag/*.parquet",
+        "cms_manifest/*.parquet",
+        "cms_drcnote/*.parquet",
+        "cms_mrcnote/*.parquet",
+        "cms_dhicnote/*.parquet",
+        "cms_dhocnote/*.parquet",
+        "cms_mhocnote/*.parquet",
+        "cms_drsheet/*.parquet",
+        "cms_cnote_pod/*.parquet",
+    )
+
+    for column in (
+        "total_duration_hour_to_receival",
+        "total_duration_hour_to_manifest",
+        "total_duration_hour_to_handover",
+        "total_duration_hour_to_runsheet",
+        "cms_cnote_create_date",
+        "cms_mrcnote_create_date",
+        "cms_mfbag_create_date",
+        "cms_cnote_pod_create_date",
+    ):
+        assert column in query
+    assert "MFBAG_CRDATE" in query
+    assert "MHOCNOTE_DATE" in query
+    assert "CNOTE_POD_CREATION_DATE" in query
 
 
 def test_update_manifest_replaces_existing_derived_entry(tmp_path):

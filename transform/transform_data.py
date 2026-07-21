@@ -211,11 +211,13 @@ def _derived_prefix(source: DerivedSource, output_name: str = DERIVED_TABLE) -> 
 def _build_cnote_transform_query(
     cnote_path: str,
     mfcnote_path: str,
+    mfbag_path: str,
     manifest_path: str,
     drcnote_path: str,
     mrcnote_path: str,
     dhicnote_path: str,
     dhocnote_path: str,
+    mhocnote_path: str,
     drsheet_path: str,
     cnote_pod_path: str,
 ) -> str:
@@ -240,6 +242,14 @@ def _build_cnote_transform_query(
             WHERE d.DRCNOTE_CNOTE_NO IS NOT NULL
             GROUP BY d.DRCNOTE_CNOTE_NO
         ),
+        manifest_bag_events AS (
+            SELECT mf.MFCNOTE_NO AS cnote_no,
+                MIN(TRY_CAST(b.MFBAG_CRDATE AS TIMESTAMP)) AS mfbag_create_ts
+            FROM read_parquet({_quote_sql(mfcnote_path)}) mf
+            JOIN read_parquet({_quote_sql(mfbag_path)}) b ON mf.MFCNOTE_BAG_NO = b.MFBAG_NO
+            WHERE mf.MFCNOTE_NO IS NOT NULL
+            GROUP BY mf.MFCNOTE_NO
+        ),
         handover_in_events AS (
             SELECT DHICNOTE_CNOTE_NO AS cnote_no,
                 MIN(TRY_CAST(DHICNOTE_TDATE AS TIMESTAMP)) AS handover_in_ts
@@ -254,6 +264,14 @@ def _build_cnote_transform_query(
             WHERE DHOCNOTE_CNOTE_NO IS NOT NULL
             GROUP BY DHOCNOTE_CNOTE_NO
         ),
+        mhocnote_events AS (
+            SELECT d.DHOCNOTE_CNOTE_NO AS cnote_no,
+                MIN(TRY_CAST(m.MHOCNOTE_DATE AS TIMESTAMP)) AS mhocnote_create_ts
+            FROM read_parquet({_quote_sql(dhocnote_path)}) d
+            JOIN read_parquet({_quote_sql(mhocnote_path)}) m ON d.DHOCNOTE_NO = m.MHOCNOTE_NO
+            WHERE d.DHOCNOTE_CNOTE_NO IS NOT NULL
+            GROUP BY d.DHOCNOTE_CNOTE_NO
+        ),
         runsheet_events AS (
             SELECT DRSHEET_CNOTE_NO AS cnote_no,
                 MIN(TRY_CAST(DRSHEET_DATE AS TIMESTAMP)) AS runsheet_ts
@@ -266,7 +284,8 @@ def _build_cnote_transform_query(
         -- cnote_no values rather than a separate POD record id.
         pod_events AS (
             SELECT CNOTE_POD_NO AS cnote_no,
-                MIN(TRY_CAST(CNOTE_POD_DATE AS TIMESTAMP)) AS pod_ts
+                MIN(TRY_CAST(CNOTE_POD_DATE AS TIMESTAMP)) AS pod_ts,
+                MIN(TRY_CAST(CNOTE_POD_CREATION_DATE AS TIMESTAMP)) AS cnote_pod_create_ts
             FROM read_parquet({_quote_sql(cnote_pod_path)})
             WHERE CNOTE_POD_NO IS NOT NULL
             GROUP BY CNOTE_POD_NO
@@ -281,23 +300,33 @@ def _build_cnote_transform_query(
                 COALESCE(t.transit_leg_count, 0) AS transit_leg_count,
                 t.first_manifest_ts,
                 p.pickup_ts,
+                mb.mfbag_create_ts,
                 hi.handover_in_ts,
                 ho.handover_out_ts,
+                mh.mhocnote_create_ts,
                 rs.runsheet_ts,
-                pod.pod_ts
+                pod.pod_ts,
+                pod.cnote_pod_create_ts
             FROM read_parquet({_quote_sql(cnote_path)}) c
             LEFT JOIN transit_cnotes t ON c.CNOTE_NO = t.cnote_no
             LEFT JOIN pickup_events p ON c.CNOTE_NO = p.cnote_no
+            LEFT JOIN manifest_bag_events mb ON c.CNOTE_NO = mb.cnote_no
             LEFT JOIN handover_in_events hi ON c.CNOTE_NO = hi.cnote_no
             LEFT JOIN handover_out_events ho ON c.CNOTE_NO = ho.cnote_no
+            LEFT JOIN mhocnote_events mh ON c.CNOTE_NO = mh.cnote_no
             LEFT JOIN runsheet_events rs ON c.CNOTE_NO = rs.cnote_no
             LEFT JOIN pod_events pod ON c.CNOTE_NO = pod.cnote_no
         ),
         classified AS (
             SELECT * EXCLUDE (
                     o_code, d_code, o_digit, d_digit, has_transit, transit_leg_count,
-                    first_manifest_ts, pickup_ts, handover_in_ts, handover_out_ts, runsheet_ts, pod_ts
+                    first_manifest_ts, pickup_ts, mfbag_create_ts, handover_in_ts, handover_out_ts,
+                    mhocnote_create_ts, runsheet_ts, pod_ts, cnote_pod_create_ts
                 ),
+                TRY_CAST(CNOTE_CRDATE AS TIMESTAMP) AS cms_cnote_create_date,
+                pickup_ts AS cms_mrcnote_create_date,
+                mfbag_create_ts AS cms_mfbag_create_date,
+                cnote_pod_create_ts AS cms_cnote_pod_create_date,
                 CASE WHEN has_transit THEN 'Transit' ELSE 'Direct' END AS delivery_type,
                 CASE
                     WHEN o_code = '' OR d_code = '' OR o_digit = '' OR d_digit = '' THEN 'Unknown'
@@ -317,6 +346,18 @@ def _build_cnote_transform_query(
                 CASE WHEN pickup_ts IS NOT NULL AND first_manifest_ts IS NOT NULL
                      THEN (epoch(first_manifest_ts) - epoch(pickup_ts)) / 3600.0
                 END AS sla_pickup_to_firstmanifest_hours,
+                CASE WHEN TRY_CAST(CNOTE_CRDATE AS TIMESTAMP) IS NOT NULL AND pickup_ts IS NOT NULL
+                     THEN (epoch(pickup_ts) - epoch(TRY_CAST(CNOTE_CRDATE AS TIMESTAMP))) / 3600.0
+                END AS total_duration_hour_to_receival,
+                CASE WHEN pickup_ts IS NOT NULL AND mfbag_create_ts IS NOT NULL
+                     THEN (epoch(mfbag_create_ts) - epoch(pickup_ts)) / 3600.0
+                END AS total_duration_hour_to_manifest,
+                CASE WHEN mfbag_create_ts IS NOT NULL AND mhocnote_create_ts IS NOT NULL
+                     THEN (epoch(mhocnote_create_ts) - epoch(mfbag_create_ts)) / 3600.0
+                END AS total_duration_hour_to_handover,
+                CASE WHEN mhocnote_create_ts IS NOT NULL AND cnote_pod_create_ts IS NOT NULL
+                     THEN (epoch(cnote_pod_create_ts) - epoch(mhocnote_create_ts)) / 3600.0
+                END AS total_duration_hour_to_runsheet,
                 to_json(struct_pack(
                     pickup := pickup_ts,
                     first_manifest := first_manifest_ts,
@@ -511,21 +552,25 @@ def transform_data(source: DerivedSource, config: dict, tmpdir: Path | None = No
 
     cnote_path = _parquet_glob(source, "CMS_CNOTE")
     mfcnote_path = _parquet_glob(source, "CMS_MFCNOTE")
+    mfbag_path = _parquet_glob(source, "CMS_MFBAG")
     manifest_path = _parquet_glob(source, "CMS_MANIFEST")
     drcnote_path = _parquet_glob(source, "CMS_DRCNOTE")
     mrcnote_path = _parquet_glob(source, "CMS_MRCNOTE")
     dhicnote_path = _parquet_glob(source, "CMS_DHICNOTE")
     dhocnote_path = _parquet_glob(source, "CMS_DHOCNOTE")
+    mhocnote_path = _parquet_glob(source, "CMS_MHOCNOTE")
     drsheet_path = _parquet_glob(source, "CMS_DRSHEET")
     cnote_pod_path = _parquet_glob(source, "CMS_CNOTE_POD")
     query = _build_cnote_transform_query(
         cnote_path,
         mfcnote_path,
+        mfbag_path,
         manifest_path,
         drcnote_path,
         mrcnote_path,
         dhicnote_path,
         dhocnote_path,
+        mhocnote_path,
         drsheet_path,
         cnote_pod_path,
     )
