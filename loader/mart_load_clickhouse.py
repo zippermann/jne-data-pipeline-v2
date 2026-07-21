@@ -1130,6 +1130,37 @@ RULE_SUMMARY_COLUMNS = [
 
 CLICKHOUSE_RULE_FAMILIES = {
     "completeness",
+    "conditional_completeness",
+    "reference_conditional_completeness",
+    "validity_regex",
+    "validity_integer",
+    "validity_datetime",
+    "validity_in_set",
+    "reference_format",
+    "value_in_reference",
+    "non_negative",
+    "non_negative_not_in_reference",
+    "uniqueness",
+    "pair_consistency",
+    "rounded_pair_consistency",
+    "prefix_match",
+    "suffix_after_prefix_match",
+    "timeliness",
+    "count_consistency",
+    "aggregate_sum_consistency",
+    "aggregate_count_consistency",
+    "bridged_pair_consistency",
+    "bridged_substring_match",
+    "bridged_timeliness",
+    "cnote_im_manifest_before_msj",
+    "duplicate_aware_weight_consistency",
+    "manifest_code_sequence",
+    "transit_manifest_required_for_origin_mismatch",
+}
+
+SIMPLE_CLICKHOUSE_RULE_FAMILIES = {
+    "completeness",
+    "conditional_completeness",
     "validity_regex",
     "validity_integer",
     "validity_datetime",
@@ -1242,6 +1273,97 @@ def _present_expr(alias: str, column: str) -> str:
     return f"isNotNull({alias}.{_quote_ident(column)}) AND trimBoth(toString({alias}.{_quote_ident(column)})) != ''"
 
 
+def _normalized_expr(alias: str, column: str) -> str:
+    return f"replaceRegexpOne(trimBoth(toString({alias}.{_quote_ident(column)})), '\\\\.0+$', '')"
+
+
+def _reference_component_expr(alias: str, params: dict[str, Any]) -> str:
+    column = str(params["reference_column"])
+    component = str(params.get("reference_component", ""))
+    value = _normalized_expr(alias, column)
+    if str(params.get("reference_table", "")).upper() == "CMS_DROURATE":
+        if component == "origin":
+            return f"regexpExtract({value}, '^([A-Z]{{3}}[0-9]{{5}})', 1)"
+        if component == "destination":
+            return f"regexpExtract({value}, '^[A-Z]{{3}}[0-9]{{5}}([A-Z]{{3}}[0-9]{{5}})$', 1)"
+    return value
+
+
+def _column_prefix(table_name: str) -> str:
+    return table_name.upper().removeprefix("CMS_")
+
+
+def _alias_for_column(column: str, aliases: list[tuple[str, str]], fallback_alias: str) -> str:
+    column_upper = column.upper()
+    for alias, table_name in aliases:
+        if column_upper.startswith(f"{_column_prefix(table_name)}_"):
+            return alias
+    return fallback_alias
+
+
+def _alias_for_bridge_column(
+    column: str,
+    aliases: list[tuple[str, str]],
+    joins: list[dict[str, Any]],
+    fallback_alias: str,
+) -> str:
+    prefix_alias = _alias_for_column(column, aliases, "")
+    if prefix_alias:
+        return prefix_alias
+    column_upper = column.upper()
+    current_alias = aliases[0][0]
+    for idx, join in enumerate(joins, start=1):
+        join_alias = aliases[idx][0]
+        if str(join["left_on"]).upper() == column_upper:
+            return current_alias
+        if str(join["right_on"]).upper() == column_upper:
+            return join_alias
+        current_alias = join_alias
+    return fallback_alias
+
+
+def _joined_detail_source(
+    config: MartClickHouseConfig,
+    detail_table: str,
+    joins: list[dict[str, Any]],
+) -> tuple[str, list[tuple[str, str]]]:
+    aliases = [("d0", detail_table)]
+    source = _qualified(config.schemas.bronze, detail_table.lower()) + " d0"
+    current_alias = "d0"
+    for idx, join in enumerate(joins, start=1):
+        join_alias = f"d{idx}"
+        join_table = str(join["table"])
+        source += (
+            f" INNER JOIN {_qualified(config.schemas.bronze, join_table.lower())} {join_alias} "
+            f"ON {_normalized_expr(current_alias, str(join['left_on']))} = "
+            f"{_normalized_expr(join_alias, str(join['right_on']))}"
+        )
+        aliases.append((join_alias, join_table))
+        current_alias = join_alias
+    return source, aliases
+
+
+def _joined_bridge_source(
+    config: MartClickHouseConfig,
+    left_table: str,
+    joins: list[dict[str, Any]],
+) -> tuple[str, list[tuple[str, str]]]:
+    aliases = [("b0", left_table)]
+    source = _qualified(config.schemas.bronze, left_table.lower()) + " b0"
+    current_alias = "b0"
+    for idx, join in enumerate(joins, start=1):
+        join_alias = f"b{idx}"
+        join_table = str(join["table"])
+        source += (
+            f" INNER JOIN {_qualified(config.schemas.bronze, join_table.lower())} {join_alias} "
+            f"ON {_normalized_expr(current_alias, str(join['left_on']))} = "
+            f"{_normalized_expr(join_alias, str(join['right_on']))}"
+        )
+        aliases.append((join_alias, join_table))
+        current_alias = join_alias
+    return source, aliases
+
+
 def _insert_summary_sql(
     config: MartClickHouseConfig,
     entry: dict[str, Any],
@@ -1280,6 +1402,18 @@ def _rule_conditions(entry: dict[str, Any], columns: set[str]) -> tuple[str, str
         column = str(params["column"])
         required.add(column)
         return "1", f"NOT ({_present_expr('t', column)})", f"toString(t.{_quote_ident(column)})", "''", required
+    if family == "conditional_completeness":
+        column = str(params["column"])
+        condition_column = str(params["condition_column"])
+        required.update((column, condition_column))
+        if params.get("condition_present"):
+            condition = _present_expr("t", condition_column)
+            condition_label = "'filled'"
+        else:
+            condition_value = str(params.get("condition_value", "Y")).strip().upper()
+            condition = f"upper(trimBoth(toString(t.{_quote_ident(condition_column)}))) = {_quote_sql(condition_value)}"
+            condition_label = _quote_sql(condition_value)
+        return condition, f"NOT ({_present_expr('t', column)})", f"toString(t.{_quote_ident(column)})", condition_label, required
     if family == "validity_regex":
         column = str(params["column"])
         pattern = str(params["pattern"])
@@ -1318,14 +1452,463 @@ def _rule_conditions(entry: dict[str, Any], columns: set[str]) -> tuple[str, str
     raise ValueError(f"Unsupported ClickHouse governance rule family: {family}")
 
 
+def _pair_document_expr(params: dict[str, Any]) -> str:
+    left_join_key = str(params.get("left_join_key", params.get("join_key", "")))
+    right_join_key = str(params.get("right_join_key", params.get("join_key", "")))
+    candidates = []
+    if left_join_key:
+        candidates.append(f"nullIf({_normalized_expr('l', left_join_key)}, '')")
+    if right_join_key:
+        candidates.append(f"nullIf({_normalized_expr('r', right_join_key)}, '')")
+    candidates.append("''")
+    return f"coalesce({', '.join(candidates)})"
+
+
+def _reference_rule_sql(config: MartClickHouseConfig, entry: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    params = entry.get("params", {})
+    table = str(entry["table"]).lower()
+    reference_table = str(params["reference_table"]).lower()
+    column = str(params["column"])
+    document_column = _entry_document_column(entry)
+    reference_value = _reference_component_expr("ref", params)
+    source_value = _normalized_expr("t", column)
+    ref_source = (
+        f"(SELECT DISTINCT {reference_value} AS __ref_value "
+        f"FROM {_qualified(config.schemas.bronze, reference_table)} ref "
+        f"WHERE {reference_value} != '')"
+    )
+    source = (
+        f"{_qualified(config.schemas.bronze, table)} t "
+        f"LEFT JOIN {ref_source} r ON {source_value} = r.__ref_value"
+    )
+    checked_where = _present_expr("t", column)
+    if entry["rule_family"] == "reference_format":
+        failed_expr = f"NOT match({source_value}, '^[A-Za-z0-9]+$') OR isNull(r.__ref_value)"
+    else:
+        failed_expr = "isNull(r.__ref_value)"
+    return source, checked_where, failed_expr, f"toString(t.{_quote_ident(column)})", _quote_sql(str(params["reference_table"])), f"trimBoth(toString(t.{_quote_ident(document_column)}))"
+
+
+def _pair_rule_sql(config: MartClickHouseConfig, entry: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    params = entry.get("params", {})
+    family = str(entry["rule_family"])
+    left_table = str(params["left_table"]).lower()
+    right_table = str(params["right_table"]).lower()
+    left_key = str(params.get("left_join_key", params.get("join_key")))
+    right_key = str(params.get("right_join_key", params.get("join_key")))
+    left_column = str(params["left_column"])
+    right_column = str(params["right_column"])
+    source = (
+        f"{_qualified(config.schemas.bronze, left_table)} l "
+        f"INNER JOIN {_qualified(config.schemas.bronze, right_table)} r "
+        f"ON {_normalized_expr('l', left_key)} = {_normalized_expr('r', right_key)}"
+    )
+    left_value = f"toString(l.{_quote_ident(left_column)})"
+    right_value = f"toString(r.{_quote_ident(right_column)})"
+    checked_where = f"{_present_expr('l', left_column)} AND {_present_expr('r', right_column)}"
+    if family == "rounded_pair_consistency":
+        decimals = int(params.get("decimals", 0))
+        left_compare = f"round(toFloat64OrNull({left_value}), {decimals})"
+        right_compare = f"round(toFloat64OrNull({right_value}), {decimals})"
+        checked_where = (
+            f"{checked_where} AND isNotNull(toFloat64OrNull({left_value})) "
+            f"AND isNotNull(toFloat64OrNull({right_value}))"
+        )
+        failed_expr = f"{left_compare} != {right_compare}"
+    elif family == "prefix_match":
+        length = int(params.get("prefix_length", 3))
+        failed_expr = f"substring({left_value}, 1, {length}) != substring({right_value}, 1, {length})"
+    elif family == "suffix_after_prefix_match":
+        start = int(params.get("prefix_length", 3)) + 1
+        failed_expr = f"substring({left_value}, {start}) != substring({right_value}, {start})"
+    else:
+        failed_expr = f"{left_value} != {right_value}"
+    return source, checked_where, failed_expr, left_value, right_value, _pair_document_expr(params)
+
+
+def _timeliness_rule_sql(config: MartClickHouseConfig, entry: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    params = entry.get("params", {})
+    start_table = str(params["start_table"]).lower()
+    end_table = str(params["end_table"]).lower()
+    start_key = str(params.get("start_join_key", params.get("join_key")))
+    end_key = str(params.get("end_join_key", params.get("join_key")))
+    start_column = str(params["start_column"])
+    end_column = str(params["end_column"])
+    source = (
+        f"{_qualified(config.schemas.bronze, start_table)} s "
+        f"INNER JOIN {_qualified(config.schemas.bronze, end_table)} e "
+        f"ON {_normalized_expr('s', start_key)} = {_normalized_expr('e', end_key)}"
+    )
+    start_value = f"parseDateTimeBestEffortOrNull(toString(s.{_quote_ident(start_column)}))"
+    end_value = f"parseDateTimeBestEffortOrNull(toString(e.{_quote_ident(end_column)}))"
+    checked_where = f"isNotNull({start_value}) AND isNotNull({end_value})"
+    failed_expr = f"{start_value} > {end_value}"
+    document_column = str(params.get("cnote_column", start_key))
+    document_expr = f"trimBoth(toString(s.{_quote_ident(document_column)}))"
+    return source, checked_where, failed_expr, f"toString({start_value})", f"toString({end_value})", document_expr
+
+
+def _non_negative_not_reference_sql(config: MartClickHouseConfig, entry: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    params = entry.get("params", {})
+    table = str(entry["table"]).lower()
+    reference_table = str(params["reference_table"]).lower()
+    column = str(params["column"])
+    cnote_column = str(params.get("cnote_column", "CNOTE_NO"))
+    reference_column = str(params["reference_column"])
+    ref_source = (
+        f"(SELECT DISTINCT {_normalized_expr('ref', reference_column)} AS __ref_value "
+        f"FROM {_qualified(config.schemas.bronze, reference_table)} ref "
+        f"WHERE {_normalized_expr('ref', reference_column)} != '')"
+    )
+    source = (
+        f"{_qualified(config.schemas.bronze, table)} t "
+        f"LEFT JOIN {ref_source} r ON {_normalized_expr('t', cnote_column)} = r.__ref_value"
+    )
+    numeric = f"toFloat64OrNull(toString(t.{_quote_ident(column)}))"
+    checked_where = f"isNotNull({numeric})"
+    failed_expr = f"{numeric} < 0 OR isNotNull(r.__ref_value)"
+    return source, checked_where, failed_expr, f"toString(t.{_quote_ident(column)})", _quote_sql(str(params["reference_table"])), f"trimBoth(toString(t.{_quote_ident(cnote_column)}))"
+
+
+def _reference_conditional_sql(config: MartClickHouseConfig, entry: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    params = entry.get("params", {})
+    table = str(entry["table"]).lower()
+    column = str(params["column"])
+    condition_column = str(params["condition_column"])
+    document_column = _entry_document_column(entry)
+    references = params.get("references") or [{"table": params["reference_table"], "column": params["reference_column"]}]
+    selects = []
+    for ref in references:
+        ref_table = str(ref["table"]).lower()
+        ref_column = str(ref["column"])
+        selects.append(
+            f"SELECT DISTINCT {_normalized_expr('ref', ref_column)} AS __ref_value "
+            f"FROM {_qualified(config.schemas.bronze, ref_table)} ref "
+            f"WHERE {_normalized_expr('ref', ref_column)} != ''"
+        )
+    ref_source = "(" + " UNION DISTINCT ".join(selects) + ")"
+    source = (
+        f"{_qualified(config.schemas.bronze, table)} t "
+        f"INNER JOIN {ref_source} r ON {_normalized_expr('t', condition_column)} = r.__ref_value"
+    )
+    checked_where = "1"
+    failed_expr = f"NOT ({_present_expr('t', column)})"
+    return source, checked_where, failed_expr, f"toString(t.{_quote_ident(column)})", f"toString(t.{_quote_ident(condition_column)})", f"trimBoth(toString(t.{_quote_ident(document_column)}))"
+
+
+def _count_consistency_sql(config: MartClickHouseConfig, entry: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    params = entry.get("params", {})
+    master_table = str(params["master_table"]).lower()
+    child_table = str(params["child_table"]).lower()
+    master_key = str(params["master_key"])
+    child_key = str(params["child_key"])
+    count_column = str(params["count_column"])
+    master_column = str(params["master_column"])
+    document_column = str(params.get("cnote_column", master_key))
+    child_counts = (
+        f"(SELECT {_normalized_expr('c', child_key)} AS __join_key, "
+        f"uniqExact({_normalized_expr('c', count_column)}) AS __child_count "
+        f"FROM {_qualified(config.schemas.bronze, child_table)} c "
+        f"WHERE {_normalized_expr('c', count_column)} != '' "
+        f"GROUP BY __join_key)"
+    )
+    source = (
+        f"{_qualified(config.schemas.bronze, master_table)} t "
+        f"INNER JOIN {child_counts} c ON {_normalized_expr('t', master_key)} = c.__join_key"
+    )
+    master_value = f"toFloat64OrNull(toString(t.{_quote_ident(master_column)}))"
+    checked_where = f"isNotNull({master_value})"
+    failed_expr = f"{master_value} != c.__child_count"
+    return source, checked_where, failed_expr, f"toString(t.{_quote_ident(master_column)})", "toString(c.__child_count)", f"trimBoth(toString(t.{_quote_ident(document_column)}))"
+
+
+def _aggregate_sum_sql(config: MartClickHouseConfig, entry: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    params = entry.get("params", {})
+    master_table = str(params["master_table"]).lower()
+    detail_table = str(params["detail_table"]).lower()
+    master_key = str(params["master_key"])
+    detail_key = str(params["detail_key"])
+    master_value_column = str(params["master_value_column"])
+    detail_value_column = str(params["detail_value_column"])
+    document_column = str(params.get("cnote_column", master_key))
+    decimals = int(params.get("decimals", 0))
+    detail_source, detail_aliases = _joined_detail_source(config, detail_table, params.get("joins", []))
+    detail_key_alias = _alias_for_column(detail_key, detail_aliases, detail_aliases[-1][0])
+    detail_value_alias = _alias_for_column(detail_value_column, detail_aliases, "d0")
+    detail_totals = (
+        f"(SELECT {_normalized_expr(detail_key_alias, detail_key)} AS __join_key, "
+        f"sum(toFloat64OrNull(toString({detail_value_alias}.{_quote_ident(detail_value_column)}))) AS __detail_total "
+        f"FROM {detail_source} "
+        f"WHERE isNotNull(toFloat64OrNull(toString({detail_value_alias}.{_quote_ident(detail_value_column)}))) "
+        f"GROUP BY __join_key)"
+    )
+    source = (
+        f"{_qualified(config.schemas.bronze, master_table)} t "
+        f"INNER JOIN {detail_totals} d ON {_normalized_expr('t', master_key)} = d.__join_key"
+    )
+    master_value = f"toFloat64OrNull(toString(t.{_quote_ident(master_value_column)}))"
+    checked_where = f"isNotNull({master_value}) AND isNotNull(d.__detail_total)"
+    failed_expr = f"round({master_value}, {decimals}) != round(d.__detail_total, {decimals})"
+    return source, checked_where, failed_expr, f"toString(t.{_quote_ident(master_value_column)})", "toString(d.__detail_total)", f"trimBoth(toString(t.{_quote_ident(document_column)}))"
+
+
+def _aggregate_count_sql(config: MartClickHouseConfig, entry: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    params = entry.get("params", {})
+    master_table = str(params["master_table"]).lower()
+    detail_table = str(params["detail_table"]).lower()
+    master_key = str(params["master_key"])
+    detail_key = str(params["detail_key"])
+    master_count_column = str(params["master_count_column"])
+    detail_count_column = str(params["detail_count_column"])
+    document_column = str(params.get("cnote_column", master_key))
+    detail_source, detail_aliases = _joined_detail_source(config, detail_table, params.get("joins", []))
+    detail_key_alias = _alias_for_column(detail_key, detail_aliases, detail_aliases[-1][0])
+    detail_count_alias = _alias_for_column(detail_count_column, detail_aliases, "d0")
+    detail_counts = (
+        f"(SELECT {_normalized_expr(detail_key_alias, detail_key)} AS __join_key, "
+        f"uniqExact({_normalized_expr(detail_count_alias, detail_count_column)}) AS __detail_count "
+        f"FROM {detail_source} "
+        f"WHERE {_normalized_expr(detail_count_alias, detail_count_column)} != '' "
+        f"GROUP BY __join_key)"
+    )
+    source = (
+        f"{_qualified(config.schemas.bronze, master_table)} t "
+        f"INNER JOIN {detail_counts} d ON {_normalized_expr('t', master_key)} = d.__join_key"
+    )
+    master_value = f"toFloat64OrNull(toString(t.{_quote_ident(master_count_column)}))"
+    checked_where = f"isNotNull({master_value})"
+    failed_expr = f"{master_value} != d.__detail_count"
+    return source, checked_where, failed_expr, f"toString(t.{_quote_ident(master_count_column)})", "toString(d.__detail_count)", f"trimBoth(toString(t.{_quote_ident(document_column)}))"
+
+
+def _bridged_pair_sql(config: MartClickHouseConfig, entry: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    params = entry.get("params", {})
+    family = str(entry["rule_family"])
+    joins = params.get("joins", [])
+    source, aliases = _joined_bridge_source(config, str(params["left_table"]), joins)
+    left_column = str(params["left_column"])
+    right_column = str(params["right_column"])
+    cnote_column = str(params.get("cnote_column", left_column))
+    left_alias = _alias_for_bridge_column(left_column, aliases, joins, "b0")
+    right_alias = _alias_for_bridge_column(right_column, aliases, joins, aliases[-1][0])
+    cnote_alias = _alias_for_bridge_column(cnote_column, aliases, joins, "b0")
+    left_value = f"toString({left_alias}.{_quote_ident(left_column)})"
+    right_value = f"toString({right_alias}.{_quote_ident(right_column)})"
+    checked_where = f"{_present_expr(left_alias, left_column)} AND {_present_expr(right_alias, right_column)}"
+    if family == "bridged_substring_match":
+        start = int(params["substring_start"]) + 1
+        length = int(params["substring_length"])
+        left_compare = f"substring({left_value}, {start}, {length})"
+        failed_expr = f"{left_compare} != {right_value}"
+        variable_1 = f"concat({left_value}, ' -> ', {left_compare})"
+    elif "decimals" in params:
+        decimals = int(params.get("decimals", 0))
+        left_compare = f"round(toFloat64OrNull({left_value}), {decimals})"
+        right_compare = f"round(toFloat64OrNull({right_value}), {decimals})"
+        checked_where = (
+            f"{checked_where} AND isNotNull(toFloat64OrNull({left_value})) "
+            f"AND isNotNull(toFloat64OrNull({right_value}))"
+        )
+        failed_expr = f"{left_compare} != {right_compare}"
+        variable_1 = left_value
+    else:
+        failed_expr = f"{left_value} != {right_value}"
+        variable_1 = left_value
+    document_expr = f"trimBoth(toString({cnote_alias}.{_quote_ident(cnote_column)}))"
+    return source, checked_where, failed_expr, variable_1, right_value, document_expr
+
+
+def _bridged_timeliness_sql(config: MartClickHouseConfig, entry: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    params = entry.get("params", {})
+    joins = params.get("joins", [])
+    source, aliases = _joined_bridge_source(config, str(params["left_table"]), joins)
+    start_column = str(params["start_column"])
+    end_column = str(params["end_column"])
+    cnote_column = str(params.get("cnote_column", start_column))
+    start_alias = _alias_for_bridge_column(start_column, aliases, joins, "b0")
+    end_alias = _alias_for_bridge_column(end_column, aliases, joins, aliases[-1][0])
+    cnote_alias = _alias_for_bridge_column(cnote_column, aliases, joins, "b0")
+    start_time = f"parseDateTimeBestEffortOrNull(toString({start_alias}.{_quote_ident(start_column)}))"
+    end_time = f"parseDateTimeBestEffortOrNull(toString({end_alias}.{_quote_ident(end_column)}))"
+    document_expr = f"trimBoth(toString({cnote_alias}.{_quote_ident(cnote_column)}))"
+    if params.get("first_start_group"):
+        group_column = str(params["first_start_group"])
+        group_alias = _alias_for_bridge_column(group_column, aliases, joins, "b0")
+        source = (
+            f"(SELECT *, row_number() OVER (PARTITION BY {_normalized_expr(group_alias, group_column)} "
+            f"ORDER BY {start_time} ASC) AS __rn FROM {source} "
+            f"WHERE isNotNull({start_time}) AND isNotNull({end_time})) b"
+        )
+        checked_where = "__rn = 1"
+        start_time = f"parseDateTimeBestEffortOrNull(toString(b.{_quote_ident(start_column)}))"
+        end_time = f"parseDateTimeBestEffortOrNull(toString(b.{_quote_ident(end_column)}))"
+        document_expr = f"trimBoth(toString(b.{_quote_ident(cnote_column)}))"
+    else:
+        checked_where = f"isNotNull({start_time}) AND isNotNull({end_time})"
+    failed_expr = f"{start_time} > {end_time}"
+    return source, checked_where, failed_expr, f"toString({start_time})", f"toString({end_time})", document_expr
+
+
+def _transit_manifest_required_sql(config: MartClickHouseConfig, entry: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    source = (
+        f"{_qualified(config.schemas.bronze, 'cms_dsmu')} d "
+        f"INNER JOIN {_qualified(config.schemas.bronze, 'cms_msmu')} m "
+        f"ON {_normalized_expr('d', 'DSMU_NO')} = {_normalized_expr('m', 'MSMU_NO')} "
+        f"INNER JOIN {_qualified(config.schemas.bronze, 'cms_mfbag')} b "
+        f"ON {_normalized_expr('d', 'DSMU_BAG_NO')} = {_normalized_expr('b', 'MFBAG_NO')}"
+    )
+    dsmu_origin = "trimBoth(toString(d.`DSMU_BAG_ORIGIN`))"
+    msmu_origin = "trimBoth(toString(m.`MSMU_ORIGIN`))"
+    manifest_no = "trimBoth(toString(b.`MFBAG_MAN_NO`))"
+    checked_where = f"{dsmu_origin} != '' AND {msmu_origin} != '' AND substring({dsmu_origin}, 1, 3) != substring({msmu_origin}, 1, 3)"
+    failed_expr = f"positionCaseInsensitive({manifest_no}, 'TM') = 0"
+    return source, checked_where, failed_expr, f"concat({dsmu_origin}, ' / ', {msmu_origin})", manifest_no, "trimBoth(toString(b.`MFBAG_NO`))"
+
+
+def _manifest_code_sequence_sql(config: MartClickHouseConfig, entry: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    params = entry.get("params", {})
+    mode = str(params["mode"])
+    manifest_code_column = str(params.get("manifest_code_column", "MANIFEST_CODE"))
+    date_column = str(params.get("date_column", "MANIFEST_CRDATE"))
+    event_time = f"parseDateTimeBestEffortOrNull(toString(man.{_quote_ident(date_column)}))"
+    code = f"trimBoth(toString(man.{_quote_ident(manifest_code_column)}))"
+    source = (
+        "(SELECT "
+        f"{_normalized_expr('mfc', 'MFCNOTE_NO')} AS document_id, "
+        f"maxIf({event_time}, {code} = '1') AS om_max, "
+        f"minIf({event_time}, {code} = '2') AS tm_min, "
+        f"maxIf({event_time}, {code} = '2') AS tm_max, "
+        f"minIf({event_time}, {code} = '3') AS im_min, "
+        f"countIf({code} = '2' AND isNotNull({event_time})) AS tm_count, "
+        f"uniqExactIf(toString({event_time}), {code} = '2' AND isNotNull({event_time})) AS tm_unique "
+        f"FROM {_qualified(config.schemas.bronze, 'cms_mfcnote')} mfc "
+        f"INNER JOIN {_qualified(config.schemas.bronze, 'cms_manifest')} man "
+        f"ON {_normalized_expr('mfc', 'MFCNOTE_MAN_NO')} = {_normalized_expr('man', 'MANIFEST_NO')} "
+        f"WHERE {_normalized_expr('mfc', 'MFCNOTE_NO')} != '' "
+        "GROUP BY document_id) t"
+    )
+    if mode == "om_before_tm":
+        checked_where = "isNotNull(om_max) AND isNotNull(tm_min)"
+        failed_expr = "om_max > tm_min"
+        variable_1 = "toString(om_max)"
+        variable_2 = "toString(tm_min)"
+    elif mode == "tm_sequence_before_im":
+        checked_where = "tm_count > 1 OR (isNotNull(tm_max) AND isNotNull(im_min))"
+        failed_expr = "(tm_count > 1 AND tm_unique < tm_count) OR (isNotNull(tm_max) AND isNotNull(im_min) AND tm_max > im_min)"
+        variable_1 = "toString(tm_max)"
+        variable_2 = "toString(im_min)"
+    elif mode == "im_after_tm":
+        checked_where = "isNotNull(tm_max) AND isNotNull(im_min)"
+        failed_expr = "im_min < tm_max"
+        variable_1 = "toString(tm_max)"
+        variable_2 = "toString(im_min)"
+    else:
+        raise ValueError(f"Unsupported manifest sequence mode: {mode}")
+    return source, checked_where, failed_expr, variable_1, variable_2, "document_id"
+
+
+def _cnote_im_manifest_before_msj_sql(config: MartClickHouseConfig, entry: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    params = entry.get("params", {})
+    manifest_code = str(params.get("manifest_code", "3"))
+    manifest_code_column = str(params.get("manifest_code_column", "MANIFEST_CODE"))
+    manifest_date_column = str(params.get("manifest_date_column", "MANIFEST_DATE"))
+    msj_date_column = str(params.get("msj_date_column", "MSJ_SIGNDATE"))
+    im_source = (
+        f"(SELECT {_normalized_expr('mfc', 'MFCNOTE_NO')} AS cnote_no, "
+        f"min(parseDateTimeBestEffortOrNull(toString(man.{_quote_ident(manifest_date_column)}))) AS im_time "
+        f"FROM {_qualified(config.schemas.bronze, 'cms_mfcnote')} mfc "
+        f"INNER JOIN {_qualified(config.schemas.bronze, 'cms_manifest')} man "
+        f"ON {_normalized_expr('mfc', 'MFCNOTE_MAN_NO')} = {_normalized_expr('man', 'MANIFEST_NO')} "
+        f"WHERE trimBoth(toString(man.{_quote_ident(manifest_code_column)})) = {_quote_sql(manifest_code)} "
+        f"GROUP BY cnote_no)"
+    )
+    msj_source = (
+        f"(SELECT {_normalized_expr('dh', 'DHICNOTE_CNOTE_NO')} AS cnote_no, "
+        f"min(parseDateTimeBestEffortOrNull(toString(msj.{_quote_ident(msj_date_column)}))) AS msj_time "
+        f"FROM {_qualified(config.schemas.bronze, 'cms_dhicnote')} dh "
+        f"INNER JOIN {_qualified(config.schemas.bronze, 'cms_rdsj')} r "
+        f"ON {_normalized_expr('dh', 'DHICNOTE_NO')} = {_normalized_expr('r', 'RDSJ_HVI_NO')} "
+        f"INNER JOIN {_qualified(config.schemas.bronze, 'cms_dsj')} dsj "
+        f"ON {_normalized_expr('r', 'RDSJ_HVO_NO')} = {_normalized_expr('dsj', 'DSJ_HVO_NO')} "
+        f"INNER JOIN {_qualified(config.schemas.bronze, 'cms_msj')} msj "
+        f"ON {_normalized_expr('dsj', 'DSJ_NO')} = {_normalized_expr('msj', 'MSJ_NO')} "
+        f"GROUP BY cnote_no)"
+    )
+    source = f"{im_source} i INNER JOIN {msj_source} m ON i.cnote_no = m.cnote_no"
+    checked_where = "isNotNull(i.im_time) AND isNotNull(m.msj_time)"
+    failed_expr = "i.im_time > m.msj_time"
+    return source, checked_where, failed_expr, "toString(i.im_time)", "toString(m.msj_time)", "i.cnote_no"
+
+
+def _duplicate_aware_weight_sql(config: MartClickHouseConfig, entry: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    params = entry.get("params", {})
+    left_table = str(params["left_table"]).lower()
+    right_table = str(params["right_table"]).lower()
+    left_key = str(params["left_join_key"])
+    right_key = str(params["right_join_key"])
+    duplicate_key = str(params["duplicate_key"])
+    left_column = str(params["left_column"])
+    right_column = str(params["right_column"])
+    decimals = int(params.get("decimals", 0))
+    source = (
+        f"(SELECT {_normalized_expr('l', duplicate_key)} AS document_id, "
+        f"sum(toFloat64OrNull(toString(l.{_quote_ident(left_column)}))) AS left_total, "
+        f"sum(toFloat64OrNull(toString(r.{_quote_ident(right_column)}))) AS right_total "
+        f"FROM {_qualified(config.schemas.bronze, left_table)} l "
+        f"INNER JOIN {_qualified(config.schemas.bronze, right_table)} r "
+        f"ON {_normalized_expr('l', left_key)} = {_normalized_expr('r', right_key)} "
+        f"WHERE {_normalized_expr('l', duplicate_key)} != '' "
+        f"AND isNotNull(toFloat64OrNull(toString(l.{_quote_ident(left_column)}))) "
+        f"AND isNotNull(toFloat64OrNull(toString(r.{_quote_ident(right_column)}))) "
+        "GROUP BY document_id) t"
+    )
+    checked_where = "1"
+    failed_expr = f"round(left_total, {decimals}) != round(right_total, {decimals})"
+    return source, checked_where, failed_expr, "toString(left_total)", "toString(right_total)", "document_id"
+
+
 def _insert_rule_results_sql(config: MartClickHouseConfig, entry: dict[str, Any]) -> tuple[str, str, str]:
     table_name = str(entry["table"]).upper()
     table = table_name.lower()
     params = entry.get("params", {})
     family = str(entry.get("rule_family", ""))
-    document_column = _entry_document_column(entry)
-    checked_where, failed_expr, variable_1, variable_2, _required = _rule_conditions(entry, set())
-    document_id_expr = f"trimBoth(toString(t.{_quote_ident(document_column)}))"
+    if family in {"reference_format", "value_in_reference"}:
+        source, checked_where, failed_expr, variable_1, variable_2, document_id_expr = _reference_rule_sql(config, entry)
+    elif family == "non_negative_not_in_reference":
+        source, checked_where, failed_expr, variable_1, variable_2, document_id_expr = _non_negative_not_reference_sql(config, entry)
+    elif family == "reference_conditional_completeness":
+        source, checked_where, failed_expr, variable_1, variable_2, document_id_expr = _reference_conditional_sql(config, entry)
+    elif family in {"pair_consistency", "rounded_pair_consistency", "prefix_match", "suffix_after_prefix_match"}:
+        source, checked_where, failed_expr, variable_1, variable_2, document_id_expr = _pair_rule_sql(config, entry)
+    elif family == "timeliness":
+        source, checked_where, failed_expr, variable_1, variable_2, document_id_expr = _timeliness_rule_sql(config, entry)
+    elif family == "count_consistency":
+        source, checked_where, failed_expr, variable_1, variable_2, document_id_expr = _count_consistency_sql(config, entry)
+    elif family == "aggregate_sum_consistency":
+        source, checked_where, failed_expr, variable_1, variable_2, document_id_expr = _aggregate_sum_sql(config, entry)
+    elif family == "aggregate_count_consistency":
+        source, checked_where, failed_expr, variable_1, variable_2, document_id_expr = _aggregate_count_sql(config, entry)
+    elif family in {"bridged_pair_consistency", "bridged_substring_match"}:
+        source, checked_where, failed_expr, variable_1, variable_2, document_id_expr = _bridged_pair_sql(config, entry)
+    elif family == "bridged_timeliness":
+        source, checked_where, failed_expr, variable_1, variable_2, document_id_expr = _bridged_timeliness_sql(config, entry)
+    elif family == "transit_manifest_required_for_origin_mismatch":
+        source, checked_where, failed_expr, variable_1, variable_2, document_id_expr = _transit_manifest_required_sql(config, entry)
+    elif family == "manifest_code_sequence":
+        source, checked_where, failed_expr, variable_1, variable_2, document_id_expr = _manifest_code_sequence_sql(config, entry)
+    elif family == "cnote_im_manifest_before_msj":
+        source, checked_where, failed_expr, variable_1, variable_2, document_id_expr = _cnote_im_manifest_before_msj_sql(config, entry)
+    elif family == "duplicate_aware_weight_consistency":
+        source, checked_where, failed_expr, variable_1, variable_2, document_id_expr = _duplicate_aware_weight_sql(config, entry)
+    else:
+        document_column = _entry_document_column(entry)
+        checked_where, failed_expr, variable_1, variable_2, _required = _rule_conditions(entry, set())
+        document_id_expr = f"trimBoth(toString(t.{_quote_ident(document_column)}))"
+        source = f"{_qualified(config.schemas.bronze, table)} t"
+        if family == "uniqueness":
+            rule_columns = [str(column) for column in params["columns"]]
+            partitions = ", ".join(_quote_ident(column) for column in rule_columns)
+            source = f"(SELECT *, count() OVER (PARTITION BY {partitions}) AS __duplicate_count FROM {_qualified(config.schemas.bronze, table)}) t"
     status_expr = f"if({failed_expr}, 'FAIL', 'PASS')"
     result_id_expr = (
         "concat("
@@ -1335,12 +1918,6 @@ def _insert_rule_results_sql(config: MartClickHouseConfig, entry: dict[str, Any]
         f"{document_id_expr}, {status_expr}, {variable_1}, {variable_2}"
         ")))"
     )
-
-    source = _qualified(config.schemas.bronze, table)
-    if family == "uniqueness":
-        rule_columns = [str(column) for column in params["columns"]]
-        partitions = ", ".join(_quote_ident(column) for column in rule_columns)
-        source = f"(SELECT *, count() OVER (PARTITION BY {partitions}) AS __duplicate_count FROM {source})"
 
     values = [
         "''",
@@ -1371,7 +1948,7 @@ def _insert_rule_results_sql(config: MartClickHouseConfig, entry: dict[str, Any]
     insert_sql = (
         f"INSERT INTO {_qualified(config.schemas.governance, config.governance.results_table)} "
         f"({', '.join(_quote_ident(column) for column in RESULT_COLUMNS)}) "
-        f"SELECT {', '.join(values)} FROM {source} t WHERE {checked_where}"
+        f"SELECT {', '.join(values)} FROM {source} WHERE {checked_where}"
     )
     summary_sql = _insert_summary_sql(
         config,
@@ -1430,32 +2007,41 @@ def _build_clickhouse_governance_results(client: Any, config: MartClickHouseConf
             )
             continue
         columns = _table_columns(client, config.schemas.bronze, table)
+        if family in SIMPLE_CLICKHOUSE_RULE_FAMILIES:
+            try:
+                _checked, _failed, _v1, _v2, required = _rule_conditions(entry, columns)
+            except Exception as exc:
+                skipped += 1
+                _command(
+                    client,
+                    _insert_summary_sql(config, entry, _quote_sql("ERROR"), error_message=str(exc)),
+                )
+                continue
+            missing = sorted(column for column in required if column not in columns)
+            if missing:
+                skipped += 1
+                _command(
+                    client,
+                    _insert_summary_sql(
+                        config,
+                        entry,
+                        _quote_sql("SKIPPED"),
+                        skip_reason=f"missing column(s): {', '.join(missing)}",
+                    ),
+                )
+                continue
         try:
-            _checked, _failed, _v1, _v2, required = _rule_conditions(entry, columns)
+            insert_sql, summary_sql, _ = _insert_rule_results_sql(config, entry)
+            _command(client, insert_sql)
+            _command(client, summary_sql)
+            supported += 1
         except Exception as exc:
             skipped += 1
+            _log(f"Governance rule {entry.get('index_code', '')} failed: {exc}")
             _command(
                 client,
                 _insert_summary_sql(config, entry, _quote_sql("ERROR"), error_message=str(exc)),
             )
-            continue
-        missing = sorted(column for column in required if column not in columns)
-        if missing:
-            skipped += 1
-            _command(
-                client,
-                _insert_summary_sql(
-                    config,
-                    entry,
-                    _quote_sql("SKIPPED"),
-                    skip_reason=f"missing column(s): {', '.join(missing)}",
-                ),
-            )
-            continue
-        insert_sql, summary_sql, _ = _insert_rule_results_sql(config, entry)
-        _command(client, insert_sql)
-        _command(client, summary_sql)
-        supported += 1
 
     row_count = int(_query_scalar(client, f"SELECT count() FROM {_qualified(config.schemas.governance, config.governance.results_table)}"))
     _log(
