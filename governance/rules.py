@@ -88,8 +88,18 @@ def _merge_pair(data: dict[str, pd.DataFrame], params: dict) -> pd.DataFrame:
     right_key = params.get("right_join_key", params.get("join_key"))
     if left_key is None or right_key is None:
         raise ValueError("pair rule requires left_join_key and right_join_key")
+    right = data[params["right_table"]]
+    right_latest_by = params.get("right_latest_by")
+    if right_latest_by:
+        right = right.copy()
+        right["_right_latest_sort"] = pd.to_datetime(right[right_latest_by], errors="coerce")
+        right = (
+            right.sort_values([right_key, "_right_latest_sort"], na_position="first")
+            .drop_duplicates(subset=[right_key], keep="last")
+            .drop(columns=["_right_latest_sort"])
+        )
     return data[params["left_table"]].merge(
-        data[params["right_table"]],
+        right,
         left_on=left_key,
         right_on=right_key,
         suffixes=("_left", "_right"),

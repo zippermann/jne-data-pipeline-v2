@@ -6732,19 +6732,19 @@ CATALOG: list[dict] = [
     },
 
     {
-        'index_code': 'UNIQ1R6',
+        'index_code': 'UNIQ2R1',
         'element': 'Uniqueness',
         'indicator': 'Unique Identifier',
         'rule_family': 'uniqueness',
         'table': 'CMS_CNOTE_POD',
         'params': {
-            'columns': ['CNOTE_POD_DOC_NO'],
+            'columns': ['CNOTE_POD_NO', 'CNOTE_POD_DOC_NO'],
             'cnote_column': 'CNOTE_POD_NO',
         },
         'main_impact': 'TBD',
         'impact_details': 'TBD',
         'issue_description': 'Duplicate Identifier',
-        'description': 'CMS_CNOTE_POD: CNOTE_POD_DOC_NO value must appear exactly once',
+        'description': 'CMS_CNOTE_POD: CNOTE_POD_NO, CNOTE_POD_DOC_NO combination of values must appear exactly once',
     },
 
     {
@@ -6780,7 +6780,7 @@ CATALOG: list[dict] = [
     },
 
     {
-        'index_code': 'UNIQ2AE1-2-3',
+        'index_code': 'UNIQ2AE1',
         'element': 'Uniqueness',
         'indicator': 'Unique Identifier',
         'rule_family': 'uniqueness',
@@ -6796,19 +6796,19 @@ CATALOG: list[dict] = [
     },
 
     {
-        'index_code': 'UNIQ1AC3',
+        'index_code': 'UNIQ2AC1',
         'element': 'Uniqueness',
         'indicator': 'Unique Identifier',
         'rule_family': 'uniqueness',
         'table': 'CMS_DHICNOTE',
         'params': {
-            'columns': ['DHICNOTE_CNOTE_NO'],
+            'columns': ['DHICNOTE_NO', 'DHICNOTE_CNOTE_NO'],
             'cnote_column': 'DHICNOTE_CNOTE_NO',
         },
         'main_impact': 'TBD',
         'impact_details': 'TBD',
         'issue_description': 'Duplicate Identifier',
-        'description': 'CMS_DHICNOTE: DHICNOTE_CNOTE_NO value must appear exactly once',
+        'description': 'CMS_DHICNOTE: DHICNOTE_NO, DHICNOTE_CNOTE_NO combination of values must appear exactly once',
     },
 
     {
@@ -6828,7 +6828,7 @@ CATALOG: list[dict] = [
     },
 
     {
-        'index_code': 'UNIQ2F1-3-5',
+        'index_code': 'UNIQ2F1',
         'element': 'Uniqueness',
         'indicator': 'Unique Identifier',
         'rule_family': 'uniqueness',
@@ -6844,23 +6844,23 @@ CATALOG: list[dict] = [
     },
 
     {
-        'index_code': 'UNIQ1W3',
+        'index_code': 'UNIQ2W1',
         'element': 'Uniqueness',
         'indicator': 'Unique Identifier',
         'rule_family': 'uniqueness',
         'table': 'CMS_DHOCNOTE',
         'params': {
-            'columns': ['DHOCNOTE_CNOTE_NO'],
+            'columns': ['DHOCNOTE_NO', 'DHOCNOTE_CNOTE_NO'],
             'cnote_column': 'DHOCNOTE_CNOTE_NO',
         },
         'main_impact': 'TBD',
         'impact_details': 'TBD',
         'issue_description': 'Duplicate Identifier',
-        'description': 'CMS_DHOCNOTE: DHOCNOTE_CNOTE_NO value must appear exactly once',
+        'description': 'CMS_DHOCNOTE: DHOCNOTE_NO, DHOCNOTE_CNOTE_NO combination of values must appear exactly once',
     },
 
     {
-        'index_code': 'UNIQ2U1-3-10',
+        'index_code': 'UNIQ2U1',
         'element': 'Uniqueness',
         'indicator': 'Unique Identifier',
         'rule_family': 'uniqueness',
@@ -6876,35 +6876,19 @@ CATALOG: list[dict] = [
     },
 
     {
-        'index_code': 'UNIQ1S1',
+        'index_code': 'UNIQ2S1',
         'element': 'Uniqueness',
         'indicator': 'Unique Identifier',
         'rule_family': 'uniqueness',
         'table': 'CMS_DHOV_RSHEET',
         'params': {
-            'columns': ['DHOV_RSHEET_NO'],
+            'columns': ['DHOV_RSHEET_NO', 'DHOV_RSHEET_CNOTE', 'DHOV_RSHEET_RSHEETNO'],
             'cnote_column': 'DHOV_RSHEET_CNOTE',
         },
         'main_impact': 'TBD',
         'impact_details': 'TBD',
         'issue_description': 'Duplicate Identifier',
-        'description': 'CMS_DHOV_RSHEET: DHOV_RSHEET_NO value must appear exactly once',
-    },
-
-    {
-        'index_code': 'UNIQ1S13',
-        'element': 'Uniqueness',
-        'indicator': 'Unique Identifier',
-        'rule_family': 'uniqueness',
-        'table': 'CMS_DHOV_RSHEET',
-        'params': {
-            'columns': ['DHOV_RSHEET_RSHEETNO'],
-            'cnote_column': 'DHOV_RSHEET_CNOTE',
-        },
-        'main_impact': 'TBD',
-        'impact_details': 'TBD',
-        'issue_description': 'Duplicate Identifier',
-        'description': 'CMS_DHOV_RSHEET: DHOV_RSHEET_RSHEETNO value must appear exactly once',
+        'description': 'CMS_DHOV_RSHEET: DHOV_RSHEET_NO, DHOV_RSHEET_CNOTE, DHOV_RSHEET_RSHEETNO combination of values must appear exactly once',
     },
 
     {
@@ -6940,7 +6924,7 @@ CATALOG: list[dict] = [
     },
 
     {
-        'index_code': 'UNIQ2D1-2',
+        'index_code': 'UNIQ2D1',
         'element': 'Uniqueness',
         'indicator': 'Unique Identifier',
         'rule_family': 'uniqueness',
@@ -6956,35 +6940,19 @@ CATALOG: list[dict] = [
     },
 
     {
-        'index_code': 'UNIQ1P1',
+        'index_code': 'UNIQ2P1',
         'element': 'Uniqueness',
         'indicator': 'Unique Identifier',
         'rule_family': 'uniqueness',
         'table': 'CMS_DRSHEET',
         'params': {
-            'columns': ['DRSHEET_NO'],
+            'columns': ['DRSHEET_NO', 'DRSHEET_CNOTE_NO'],
             'cnote_column': 'DRSHEET_CNOTE_NO',
         },
         'main_impact': 'TBD',
         'impact_details': 'TBD',
         'issue_description': 'Duplicate Identifier',
-        'description': 'CMS_DRSHEET: DRSHEET_NO value must appear exactly once',
-    },
-
-    {
-        'index_code': 'UNIQ1P2',
-        'element': 'Uniqueness',
-        'indicator': 'Unique Identifier',
-        'rule_family': 'uniqueness',
-        'table': 'CMS_DRSHEET',
-        'params': {
-            'columns': ['DRSHEET_CNOTE_NO'],
-            'cnote_column': 'DRSHEET_CNOTE_NO',
-        },
-        'main_impact': 'TBD',
-        'impact_details': 'TBD',
-        'issue_description': 'Duplicate Identifier',
-        'description': 'CMS_DRSHEET: DRSHEET_CNOTE_NO value must appear exactly once',
+        'description': 'CMS_DRSHEET: DRSHEET_NO, DRSHEET_CNOTE_NO combination of values must appear exactly once',
     },
 
     {
@@ -7020,7 +6988,7 @@ CATALOG: list[dict] = [
     },
 
     {
-        'index_code': 'UNIQ2AA2-3',
+        'index_code': 'UNIQ2AA2',
         'element': 'Uniqueness',
         'indicator': 'Unique Identifier',
         'rule_family': 'uniqueness',
@@ -7100,7 +7068,7 @@ CATALOG: list[dict] = [
     },
 
     {
-        'index_code': 'UNIQ2J1-2-21',
+        'index_code': 'UNIQ2J1',
         'element': 'Uniqueness',
         'indicator': 'Unique Identifier',
         'rule_family': 'uniqueness',
@@ -7116,19 +7084,19 @@ CATALOG: list[dict] = [
     },
 
     {
-        'index_code': 'UNIQ1I1',
+        'index_code': 'UNIQ2I1',
         'element': 'Uniqueness',
         'indicator': 'Unique Identifier',
         'rule_family': 'uniqueness',
         'table': 'CMS_MFCNOTE',
         'params': {
-            'columns': ['MFCNOTE_MAN_NO'],
+            'columns': ['MFCNOTE_MAN_NO', 'MFCNOTE_BAG_NO', 'MFCNOTE_NO'],
             'cnote_column': 'MFCNOTE_NO',
         },
         'main_impact': 'TBD',
         'impact_details': 'TBD',
         'issue_description': 'Duplicate Identifier',
-        'description': 'CMS_MFCNOTE: MFCNOTE_MAN_NO value must appear exactly once',
+        'description': 'CMS_MFCNOTE: MFCNOTE_MAN_NO, MFCNOTE_BAG_NO, MFCNOTE_NO combination of values must appear exactly once',
     },
 
     {
@@ -7372,12 +7340,13 @@ CATALOG: list[dict] = [
             'right_column': 'DRSHEET_STATUS',
             'left_join_key': 'CNOTE_POD_NO',
             'right_join_key': 'DRSHEET_CNOTE_NO',
+            'right_latest_by': 'DRSHEET_DATE',
             'cnote_column': 'CNOTE_POD_NO',
         },
         'main_impact': 'TBD',
         'impact_details': 'TBD',
         'issue_description': 'Status Difference (POD Status vs Runsheet Status)',
-        'description': 'POD status must match runsheet status',
+        'description': 'POD status must match the latest runsheet status by DRSHEET_DATE',
     },
 
     {
@@ -8061,7 +8030,7 @@ CATALOG: list[dict] = [
         'params': {
             'left_table': 'CMS_MRSHEET',
             'start_column': 'MRSHEET_DATE',
-            'end_column': 'CNOTE_POD_CREATION_DATE',
+            'end_column': 'CNOTE_POD_DATE',
             'joins': [
                 {
                     'table': 'CMS_DRSHEET',
@@ -8079,38 +8048,7 @@ CATALOG: list[dict] = [
         'main_impact': 'TBD',
         'impact_details': 'TBD',
         'issue_description': 'TBD',
-        'description': 'Runsheet master date must occur before POD creation date.',
-    },
-
-    {
-        'index_code': 'TIME1V9',
-        'element': 'Timeliness',
-        'indicator': 'Timestamp',
-        'rule_family': 'bridged_timeliness',
-        'table': 'CMS_MHOCNOTE',
-        'params': {
-            'left_table': 'CMS_MHOCNOTE',
-            'start_column': 'MHOCNOTE_SIGNDATE',
-            'end_column': 'MSJ_SIGNDATE',
-            'joins': [
-                {
-                    'table': 'CMS_DSJ',
-                    'left_on': 'MHOCNOTE_NO',
-                    'right_on': 'DSJ_HVO_NO',
-                },
-                {
-                    'table': 'CMS_MSJ',
-                    'left_on': 'DSJ_NO',
-                    'right_on': 'MSJ_NO',
-                },
-            ],
-            'first_start_group': 'MSJ_NO',
-            'cnote_column': 'MHOCNOTE_NO',
-        },
-        'main_impact': 'TBD',
-        'impact_details': 'TBD',
-        'issue_description': 'Timestamp Sequence Issue',
-        'description': 'First outbound handover sign date must occur before MSJ sign date.',
+        'description': 'Runsheet master date must occur before POD date.',
     },
 
     {
@@ -8238,24 +8176,6 @@ CATALOG: list[dict] = [
         'impact_details': 'TBD',
         'issue_description': 'Manifest Timestamp Sequence Issue',
         'description': 'For each CNOTE, inbound manifest creation must occur after transit manifest creation.',
-    },
-
-    {
-        'index_code': 'TIME1H15 (IM)',
-        'element': 'Timeliness',
-        'indicator': 'Timestamp',
-        'rule_family': 'cnote_im_manifest_before_msj',
-        'table': 'CMS_MANIFEST',
-        'params': {
-            'manifest_code': '3',
-            'manifest_code_column': 'MANIFEST_CODE',
-            'manifest_date_column': 'MANIFEST_CRDATE',
-            'msj_date_column': 'MSJ_SIGNDATE',
-        },
-        'main_impact': 'TBD',
-        'impact_details': 'TBD',
-        'issue_description': 'TBD',
-        'description': 'For each CNOTE, inbound manifest date must occur before MSJ sign date.',
     },
 
     {

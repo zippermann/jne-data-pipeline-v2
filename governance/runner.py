@@ -343,6 +343,7 @@ def _entry_columns(entry: dict) -> dict[str, set[str]]:
     add(params.get("left_table"), params.get("left_column"))
     add(params.get("left_table"), params.get("start_column"))
     add(params.get("right_table"), params.get("right_column"))
+    add(params.get("right_table"), params.get("right_latest_by"))
     current_table = params.get("left_table") or params.get("detail_table")
     for step in params.get("joins", []):
         add(current_table, step.get("left_on"))

@@ -104,6 +104,34 @@ def test_pair_consistency_handles_same_named_columns_after_merge():
     assert outcome.failures.iloc[0]["cnote_no"] == "C2"
 
 
+def test_pair_consistency_can_compare_latest_right_row_by_date():
+    data = {
+        "CMS_CNOTE_POD": pd.DataFrame({
+            "CNOTE_POD_NO": ["C1"],
+            "CNOTE_POD_STATUS": ["DELIVERED"],
+        }),
+        "CMS_DRSHEET": pd.DataFrame({
+            "DRSHEET_CNOTE_NO": ["C1", "C1"],
+            "DRSHEET_STATUS": ["OLD_STATUS", "DELIVERED"],
+            "DRSHEET_DATE": ["2026-05-01 08:00:00", "2026-05-02 08:00:00"],
+        }),
+    }
+
+    outcome = check_pair_consistency(data, {
+        "left_table": "CMS_CNOTE_POD",
+        "left_column": "CNOTE_POD_STATUS",
+        "right_table": "CMS_DRSHEET",
+        "right_column": "DRSHEET_STATUS",
+        "left_join_key": "CNOTE_POD_NO",
+        "right_join_key": "DRSHEET_CNOTE_NO",
+        "right_latest_by": "DRSHEET_DATE",
+        "cnote_column": "CNOTE_POD_NO",
+    })
+
+    assert outcome.total_checked == 1
+    assert outcome.total_failed == 0
+
+
 def test_conditional_completeness_only_checks_matching_condition():
     data = {
         "CMS_MANIFEST": pd.DataFrame({
