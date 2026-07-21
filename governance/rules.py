@@ -110,7 +110,7 @@ def _merge_bridge(data: dict[str, pd.DataFrame], params: dict) -> pd.DataFrame:
 
 def _merged_cnote_values(merged: pd.DataFrame, params: dict) -> pd.Series:
     column = params.get("cnote_column", params.get("left_join_key", "CNOTE_NO"))
-    for candidate in (column, f"{column}_left", f"{column}_right"):
+    for candidate in (column, f"{column}_left", f"{column}_right", "cnote_no"):
         if candidate in merged.columns:
             return merged[candidate]
     return pd.Series([""] * len(merged), index=merged.index)
@@ -676,6 +676,21 @@ def check_bridged_timeliness(data: dict[str, pd.DataFrame], params: dict) -> Rul
     merged = _merge_bridge(data, params)
     start_time = pd.to_datetime(merged[params["start_column"]], errors="coerce")
     end_time = pd.to_datetime(merged[params["end_column"]], errors="coerce")
+    if params.get("aggregate_by_cnote") == "earliest":
+        cnote_no = _merged_cnote_values(merged, params).astype("string")
+        work = pd.DataFrame({
+            "cnote_no": cnote_no,
+            "_start_time": start_time,
+            "_end_time": end_time,
+        })
+        work = work.loc[work["cnote_no"].notna() & work["cnote_no"].str.strip().ne("")]
+        grouped = work.groupby("cnote_no", dropna=True).agg(
+            _start_time=("_start_time", "min"),
+            _end_time=("_end_time", "min"),
+        )
+        start_time = grouped["_start_time"]
+        end_time = grouped["_end_time"]
+        merged = pd.DataFrame({"cnote_no": grouped.index}, index=grouped.index)
     if params.get("first_start_group"):
         merged = merged.assign(_start_time=start_time, _end_time=end_time)
         merged = (

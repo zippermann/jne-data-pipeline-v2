@@ -494,6 +494,46 @@ def test_bridged_timeliness_uses_first_start_per_group():
     assert outcome.failures.empty
 
 
+def test_bridged_timeliness_can_use_earliest_times_per_cnote():
+    data = {
+        "CMS_MRCNOTE": pd.DataFrame({
+            "MRCNOTE_NO": ["R1"],
+            "MRCNOTE_SIGNDATE": ["2026-05-01 11:19:22"],
+        }),
+        "CMS_DRCNOTE": pd.DataFrame({
+            "DRCNOTE_NO": ["R1"],
+            "DRCNOTE_CNOTE_NO": ["C1"],
+        }),
+        "CMS_MFCNOTE": pd.DataFrame({
+            "MFCNOTE_NO": ["C1", "C1"],
+            "MFCNOTE_BAG_NO": ["B1", "B2"],
+        }),
+        "CMS_MFBAG": pd.DataFrame({
+            "MFBAG_NO": ["B1", "B2"],
+            "MFBAG_CRDATE": ["2026-05-02 09:39:13", "2026-05-01 11:59:02"],
+        }),
+    }
+
+    outcome = check_bridged_timeliness(data, {
+        "left_table": "CMS_MRCNOTE",
+        "start_column": "MRCNOTE_SIGNDATE",
+        "end_column": "MFBAG_CRDATE",
+        "joins": [
+            {"table": "CMS_DRCNOTE", "left_on": "MRCNOTE_NO", "right_on": "DRCNOTE_NO"},
+            {"table": "CMS_MFCNOTE", "left_on": "DRCNOTE_CNOTE_NO", "right_on": "MFCNOTE_NO"},
+            {"table": "CMS_MFBAG", "left_on": "MFCNOTE_BAG_NO", "right_on": "MFBAG_NO"},
+        ],
+        "cnote_column": "DRCNOTE_CNOTE_NO",
+        "aggregate_by_cnote": "earliest",
+    })
+
+    assert outcome.total_checked == 1
+    assert outcome.total_failed == 0
+    assert outcome.checks.iloc[0]["cnote_no"] == "C1"
+    assert outcome.checks.iloc[0]["variable_1"] == "2026-05-01 11:19:22"
+    assert outcome.checks.iloc[0]["variable_2"] == "2026-05-01 11:59:02"
+
+
 def test_bridged_timeliness_links_msj_to_mhicnote():
     data = {
         "CMS_MSJ": pd.DataFrame({

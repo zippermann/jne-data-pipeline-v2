@@ -8044,6 +8044,7 @@ CATALOG: list[dict] = [
                 },
             ],
             'cnote_column': 'DRCNOTE_CNOTE_NO',
+            'aggregate_by_cnote': 'earliest',
         },
         'main_impact': 'TBD',
         'impact_details': 'TBD',
