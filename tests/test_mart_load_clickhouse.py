@@ -289,6 +289,7 @@ def test_clickhouse_document_links_builds_separate_governance_table(monkeypatch)
     create_sql = next(sql for sql in commands if "CREATE TABLE `governance`.`document_cnote_links_2`" in sql)
     assert "FROM `bronze`.`cms_mfcnote` mf" in create_sql
     assert "INNER JOIN `bronze`.`cms_cnote` c" in create_sql
+    assert "ORDER BY (ifNull(source_table, ''), ifNull(document_id, ''), ifNull(cnote_no, ''))" in create_sql
     assert "DROP TABLE IF EXISTS `governance`.`governance_results_2`" not in "\n".join(commands)
 
 

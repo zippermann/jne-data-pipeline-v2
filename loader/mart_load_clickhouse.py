@@ -661,7 +661,7 @@ def _build_document_cnote_links(client: Any, config: MartClickHouseConfig) -> in
         f"""
         CREATE TABLE {_qualified(governance, target_table)}
         ENGINE = MergeTree
-        ORDER BY (source_table, document_id, cnote_no)
+        ORDER BY (ifNull(source_table, ''), ifNull(document_id, ''), ifNull(cnote_no, ''))
         AS
         SELECT DISTINCT l.*
         FROM (
