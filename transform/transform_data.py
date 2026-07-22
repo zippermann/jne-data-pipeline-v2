@@ -224,8 +224,7 @@ def _build_cnote_transform_query(
     return f"""
         WITH transit_cnotes AS (
             SELECT mf.MFCNOTE_NO AS cnote_no,
-                COUNT(*) AS transit_leg_count,
-                MIN(TRY_CAST(mf.MFCNOTE_CRDATE AS TIMESTAMP)) AS first_manifest_ts
+                COUNT(*) AS transit_leg_count
             FROM read_parquet({_quote_sql(mfcnote_path)}) mf
             JOIN read_parquet({_quote_sql(manifest_path)}) m
               ON mf.MFCNOTE_MAN_NO = m.MANIFEST_NO
@@ -284,7 +283,6 @@ def _build_cnote_transform_query(
         -- cnote_no values rather than a separate POD record id.
         pod_events AS (
             SELECT CNOTE_POD_NO AS cnote_no,
-                MIN(TRY_CAST(CNOTE_POD_DATE AS TIMESTAMP)) AS pod_ts,
                 MIN(TRY_CAST(CNOTE_POD_CREATION_DATE AS TIMESTAMP)) AS cnote_pod_create_ts
             FROM read_parquet({_quote_sql(cnote_pod_path)})
             WHERE CNOTE_POD_NO IS NOT NULL
@@ -298,14 +296,12 @@ def _build_cnote_transform_query(
                 regexp_extract(upper(trim(c.CNOTE_DESTINATION)), '^[A-Z]{{3}}([0-9])', 1) AS d_digit,
                 (t.cnote_no IS NOT NULL) AS has_transit,
                 COALESCE(t.transit_leg_count, 0) AS transit_leg_count,
-                t.first_manifest_ts,
                 p.pickup_ts,
                 mb.mfbag_create_ts,
                 hi.handover_in_ts,
                 ho.handover_out_ts,
                 mh.mhocnote_create_ts,
                 rs.runsheet_ts,
-                pod.pod_ts,
                 pod.cnote_pod_create_ts
             FROM read_parquet({_quote_sql(cnote_path)}) c
             LEFT JOIN transit_cnotes t ON c.CNOTE_NO = t.cnote_no
@@ -320,8 +316,8 @@ def _build_cnote_transform_query(
         classified AS (
             SELECT * EXCLUDE (
                     o_code, d_code, o_digit, d_digit, has_transit, transit_leg_count,
-                    first_manifest_ts, pickup_ts, mfbag_create_ts, handover_in_ts, handover_out_ts,
-                    mhocnote_create_ts, runsheet_ts, pod_ts, cnote_pod_create_ts
+                    pickup_ts, mfbag_create_ts, handover_in_ts, handover_out_ts,
+                    mhocnote_create_ts, runsheet_ts, cnote_pod_create_ts
                 ),
                 TRY_CAST(CNOTE_CRDATE AS TIMESTAMP) AS cms_cnote_create_date,
                 pickup_ts AS cms_mrcnote_create_date,
@@ -341,32 +337,24 @@ def _build_cnote_transform_query(
                     + CASE WHEN handover_in_ts IS NOT NULL THEN 1 ELSE 0 END
                     + CASE WHEN handover_out_ts IS NOT NULL THEN 1 ELSE 0 END
                     + CASE WHEN runsheet_ts IS NOT NULL THEN 1 ELSE 0 END AS handover_count,
-                CASE WHEN pickup_ts IS NOT NULL AND pod_ts IS NOT NULL
-                     THEN (epoch(pod_ts) - epoch(pickup_ts)) / 3600.0
+                CASE WHEN pickup_ts IS NOT NULL AND cnote_pod_create_ts IS NOT NULL
+                     THEN (epoch(cnote_pod_create_ts) - epoch(pickup_ts)) / 3600.0
                 END AS sla_total_hours,
-                CASE WHEN pickup_ts IS NOT NULL AND first_manifest_ts IS NOT NULL
-                     THEN (epoch(first_manifest_ts) - epoch(pickup_ts)) / 3600.0
-                END AS sla_pickup_to_firstmanifest_hours,
                 CASE WHEN TRY_CAST(CNOTE_CRDATE AS TIMESTAMP) IS NOT NULL AND pickup_ts IS NOT NULL
                      THEN (epoch(pickup_ts) - epoch(TRY_CAST(CNOTE_CRDATE AS TIMESTAMP))) / 3600.0
                 END AS total_duration_hour_to_receival,
                 CASE WHEN pickup_ts IS NOT NULL AND mfbag_create_ts IS NOT NULL
                      THEN (epoch(mfbag_create_ts) - epoch(pickup_ts)) / 3600.0
                 END AS total_duration_hour_to_manifest,
-                CASE WHEN mfbag_create_ts IS NOT NULL AND mhocnote_create_ts IS NOT NULL
-                     THEN (epoch(mhocnote_create_ts) - epoch(mfbag_create_ts)) / 3600.0
+                CASE WHEN COALESCE(mfbag_create_ts, pickup_ts) IS NOT NULL AND mhocnote_create_ts IS NOT NULL
+                     THEN (epoch(mhocnote_create_ts) - epoch(COALESCE(mfbag_create_ts, pickup_ts))) / 3600.0
                 END AS total_duration_hour_to_handover,
-                CASE WHEN mhocnote_create_ts IS NOT NULL AND cnote_pod_create_ts IS NOT NULL
-                     THEN (epoch(cnote_pod_create_ts) - epoch(mhocnote_create_ts)) / 3600.0
+                CASE WHEN COALESCE(mhocnote_create_ts, mfbag_create_ts, pickup_ts) IS NOT NULL AND runsheet_ts IS NOT NULL
+                     THEN (epoch(runsheet_ts) - epoch(COALESCE(mhocnote_create_ts, mfbag_create_ts, pickup_ts))) / 3600.0
                 END AS total_duration_hour_to_runsheet,
-                to_json(struct_pack(
-                    pickup := pickup_ts,
-                    first_manifest := first_manifest_ts,
-                    handover_in := handover_in_ts,
-                    handover_out := handover_out_ts,
-                    delivery := runsheet_ts,
-                    pod := pod_ts
-                )) AS sla_per_step
+                CASE WHEN runsheet_ts IS NOT NULL AND cnote_pod_create_ts IS NOT NULL
+                     THEN (epoch(cnote_pod_create_ts) - epoch(runsheet_ts)) / 3600.0
+                END AS total_duration_hour_to_delivery
             FROM parts
         )
         SELECT *,

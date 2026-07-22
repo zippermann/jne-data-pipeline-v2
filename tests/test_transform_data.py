@@ -46,6 +46,7 @@ def test_cnote_transform_query_includes_stage_duration_columns():
         "total_duration_hour_to_manifest",
         "total_duration_hour_to_handover",
         "total_duration_hour_to_runsheet",
+        "total_duration_hour_to_delivery",
         "cms_cnote_create_date",
         "cms_mrcnote_create_date",
         "cms_mfbag_create_date",
@@ -56,6 +57,11 @@ def test_cnote_transform_query_includes_stage_duration_columns():
     assert "MFBAG_CRDATE" in query
     assert "MHOCNOTE_DATE" in query
     assert "CNOTE_POD_CREATION_DATE" in query
+    assert "COALESCE(mfbag_create_ts, pickup_ts)" in query
+    assert "COALESCE(mhocnote_create_ts, mfbag_create_ts, pickup_ts)" in query
+    assert "epoch(cnote_pod_create_ts) - epoch(runsheet_ts)" in query
+    assert "sla_pickup_to_firstmanifest_hours" not in query
+    assert "sla_per_step" not in query
 
 
 def test_update_manifest_replaces_existing_derived_entry(tmp_path):
