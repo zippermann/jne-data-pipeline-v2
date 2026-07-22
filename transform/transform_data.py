@@ -219,6 +219,7 @@ def _build_cnote_transform_query(
     dhocnote_path: str,
     mhocnote_path: str,
     drsheet_path: str,
+    mrsheet_path: str,
     cnote_pod_path: str,
 ) -> str:
     return f"""
@@ -272,18 +273,19 @@ def _build_cnote_transform_query(
             GROUP BY d.DHOCNOTE_CNOTE_NO
         ),
         runsheet_events AS (
-            SELECT DRSHEET_CNOTE_NO AS cnote_no,
-                MIN(TRY_CAST(DRSHEET_DATE AS TIMESTAMP)) AS runsheet_ts
-            FROM read_parquet({_quote_sql(drsheet_path)})
-            WHERE DRSHEET_CNOTE_NO IS NOT NULL
-            GROUP BY DRSHEET_CNOTE_NO
+            SELECT d.DRSHEET_CNOTE_NO AS cnote_no,
+                MIN(TRY_CAST(m.MRSHEET_DATE AS TIMESTAMP)) AS mrsheet_create_ts
+            FROM read_parquet({_quote_sql(drsheet_path)}) d
+            JOIN read_parquet({_quote_sql(mrsheet_path)}) m ON d.DRSHEET_NO = m.MRSHEET_NO
+            WHERE d.DRSHEET_CNOTE_NO IS NOT NULL
+            GROUP BY d.DRSHEET_CNOTE_NO
         ),
         -- CMS_CNOTE_POD.CNOTE_POD_NO is joined directly to CMS_DRSHEET.DRSHEET_CNOTE_NO
         -- elsewhere in the governance catalog (rule TIME1C9), confirming it holds
         -- cnote_no values rather than a separate POD record id.
         pod_events AS (
             SELECT CNOTE_POD_NO AS cnote_no,
-                MIN(TRY_CAST(CNOTE_POD_CREATION_DATE AS TIMESTAMP)) AS cnote_pod_create_ts
+                MIN(TRY_CAST(CNOTE_POD_DATE AS TIMESTAMP)) AS cnote_pod_date_ts
             FROM read_parquet({_quote_sql(cnote_pod_path)})
             WHERE CNOTE_POD_NO IS NOT NULL
             GROUP BY CNOTE_POD_NO
@@ -301,8 +303,8 @@ def _build_cnote_transform_query(
                 hi.handover_in_ts,
                 ho.handover_out_ts,
                 mh.mhocnote_create_ts,
-                rs.runsheet_ts,
-                pod.cnote_pod_create_ts
+                rs.mrsheet_create_ts,
+                pod.cnote_pod_date_ts
             FROM read_parquet({_quote_sql(cnote_path)}) c
             LEFT JOIN transit_cnotes t ON c.CNOTE_NO = t.cnote_no
             LEFT JOIN pickup_events p ON c.CNOTE_NO = p.cnote_no
@@ -317,13 +319,14 @@ def _build_cnote_transform_query(
             SELECT * EXCLUDE (
                     o_code, d_code, o_digit, d_digit, has_transit, transit_leg_count,
                     pickup_ts, mfbag_create_ts, handover_in_ts, handover_out_ts,
-                    mhocnote_create_ts, runsheet_ts, cnote_pod_create_ts
+                    mhocnote_create_ts, mrsheet_create_ts, cnote_pod_date_ts
                 ),
                 TRY_CAST(CNOTE_CRDATE AS TIMESTAMP) AS cms_cnote_create_date,
                 pickup_ts AS cms_mrcnote_create_date,
                 mfbag_create_ts AS cms_mfbag_create_date,
                 mhocnote_create_ts AS cms_mhocnote_create_date,
-                cnote_pod_create_ts AS cms_cnote_pod_create_date,
+                mrsheet_create_ts AS cms_mrsheet_create_date,
+                cnote_pod_date_ts AS cms_cnote_pod_create_date,
                 CASE WHEN has_transit THEN 'Transit' ELSE 'Direct' END AS delivery_type,
                 CASE
                     WHEN o_code = '' OR d_code = '' OR o_digit = '' OR d_digit = '' THEN 'Unknown'
@@ -336,9 +339,9 @@ def _build_cnote_transform_query(
                     + CASE WHEN pickup_ts IS NOT NULL THEN 1 ELSE 0 END
                     + CASE WHEN handover_in_ts IS NOT NULL THEN 1 ELSE 0 END
                     + CASE WHEN handover_out_ts IS NOT NULL THEN 1 ELSE 0 END
-                    + CASE WHEN runsheet_ts IS NOT NULL THEN 1 ELSE 0 END AS handover_count,
-                CASE WHEN pickup_ts IS NOT NULL AND cnote_pod_create_ts IS NOT NULL
-                     THEN (epoch(cnote_pod_create_ts) - epoch(pickup_ts)) / 3600.0
+                    + CASE WHEN mrsheet_create_ts IS NOT NULL THEN 1 ELSE 0 END AS handover_count,
+                CASE WHEN pickup_ts IS NOT NULL AND cnote_pod_date_ts IS NOT NULL
+                     THEN (epoch(cnote_pod_date_ts) - epoch(pickup_ts)) / 3600.0
                 END AS sla_total_hours,
                 CASE WHEN TRY_CAST(CNOTE_CRDATE AS TIMESTAMP) IS NOT NULL AND pickup_ts IS NOT NULL
                      THEN (epoch(pickup_ts) - epoch(TRY_CAST(CNOTE_CRDATE AS TIMESTAMP))) / 3600.0
@@ -349,11 +352,11 @@ def _build_cnote_transform_query(
                 CASE WHEN COALESCE(mfbag_create_ts, pickup_ts) IS NOT NULL AND mhocnote_create_ts IS NOT NULL
                      THEN (epoch(mhocnote_create_ts) - epoch(COALESCE(mfbag_create_ts, pickup_ts))) / 3600.0
                 END AS total_duration_hour_to_handover,
-                CASE WHEN COALESCE(mhocnote_create_ts, mfbag_create_ts, pickup_ts) IS NOT NULL AND runsheet_ts IS NOT NULL
-                     THEN (epoch(runsheet_ts) - epoch(COALESCE(mhocnote_create_ts, mfbag_create_ts, pickup_ts))) / 3600.0
+                CASE WHEN COALESCE(mhocnote_create_ts, mfbag_create_ts, pickup_ts) IS NOT NULL AND mrsheet_create_ts IS NOT NULL
+                     THEN (epoch(mrsheet_create_ts) - epoch(COALESCE(mhocnote_create_ts, mfbag_create_ts, pickup_ts))) / 3600.0
                 END AS total_duration_hour_to_runsheet,
-                CASE WHEN runsheet_ts IS NOT NULL AND cnote_pod_create_ts IS NOT NULL
-                     THEN (epoch(cnote_pod_create_ts) - epoch(runsheet_ts)) / 3600.0
+                CASE WHEN mrsheet_create_ts IS NOT NULL AND cnote_pod_date_ts IS NOT NULL
+                     THEN (epoch(cnote_pod_date_ts) - epoch(mrsheet_create_ts)) / 3600.0
                 END AS total_duration_hour_to_delivery
             FROM parts
         )
@@ -549,6 +552,7 @@ def transform_data(source: DerivedSource, config: dict, tmpdir: Path | None = No
     dhocnote_path = _parquet_glob(source, "CMS_DHOCNOTE")
     mhocnote_path = _parquet_glob(source, "CMS_MHOCNOTE")
     drsheet_path = _parquet_glob(source, "CMS_DRSHEET")
+    mrsheet_path = _parquet_glob(source, "CMS_MRSHEET")
     cnote_pod_path = _parquet_glob(source, "CMS_CNOTE_POD")
     query = _build_cnote_transform_query(
         cnote_path,
@@ -561,6 +565,7 @@ def transform_data(source: DerivedSource, config: dict, tmpdir: Path | None = No
         dhocnote_path,
         mhocnote_path,
         drsheet_path,
+        mrsheet_path,
         cnote_pod_path,
     )
 

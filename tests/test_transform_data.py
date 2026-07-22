@@ -38,6 +38,7 @@ def test_cnote_transform_query_includes_stage_duration_columns():
         "cms_dhocnote/*.parquet",
         "cms_mhocnote/*.parquet",
         "cms_drsheet/*.parquet",
+        "cms_mrsheet/*.parquet",
         "cms_cnote_pod/*.parquet",
     )
 
@@ -51,15 +52,19 @@ def test_cnote_transform_query_includes_stage_duration_columns():
         "cms_mrcnote_create_date",
         "cms_mfbag_create_date",
         "cms_mhocnote_create_date",
+        "cms_mrsheet_create_date",
         "cms_cnote_pod_create_date",
     ):
         assert column in query
     assert "MFBAG_CRDATE" in query
     assert "MHOCNOTE_DATE" in query
-    assert "CNOTE_POD_CREATION_DATE" in query
+    assert "MRSHEET_DATE" in query
+    assert "d.DRSHEET_NO = m.MRSHEET_NO" in query
+    assert "CNOTE_POD_DATE" in query
+    assert "CNOTE_POD_CREATION_DATE" not in query
     assert "COALESCE(mfbag_create_ts, pickup_ts)" in query
     assert "COALESCE(mhocnote_create_ts, mfbag_create_ts, pickup_ts)" in query
-    assert "epoch(cnote_pod_create_ts) - epoch(runsheet_ts)" in query
+    assert "epoch(cnote_pod_date_ts) - epoch(mrsheet_create_ts)" in query
     assert "sla_pickup_to_firstmanifest_hours" not in query
     assert "sla_per_step" not in query
 
