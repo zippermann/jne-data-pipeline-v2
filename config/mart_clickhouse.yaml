@@ -28,11 +28,11 @@ governance:
   results_path: "governance/outputs/${RUN_ID}/governance_results.csv"
   result_cnotes_path: "governance/outputs/${RUN_ID}/governance_result_cnotes.csv"
   summary_path: "governance/outputs/${RUN_ID}/governance_rule_summary.csv"
-  results_table: "governance_results_2"
-  result_cnotes_table: "governance_result_cnotes_2"
-  summary_table: "governance_rule_summary_2"
-  build_document_links: true
-  document_links_table: "document_cnote_links_2"
+  results_table: "governance_results"
+  result_cnotes_table: "governance_result_cnotes"
+  summary_table: "governance_rule_summary"
+  build_document_links: false
+  document_links_table: "document_cnote_links"
 
 unified_mart:
   enabled: true

@@ -81,11 +81,11 @@ governance:
   results_path: "governance/outputs/${RUN_ID}/governance_results.csv"
   result_cnotes_path: "governance/outputs/${RUN_ID}/governance_result_cnotes.csv"
   summary_path: "governance/outputs/${RUN_ID}/governance_rule_summary.csv"
-  results_table: "governance_results_2"
-  result_cnotes_table: "governance_result_cnotes_2"
-  summary_table: "governance_rule_summary_2"
-  build_document_links: true
-  document_links_table: "document_cnote_links_2"
+  results_table: "governance_results"
+  result_cnotes_table: "governance_result_cnotes"
+  summary_table: "governance_rule_summary"
+  build_document_links: false
+  document_links_table: "document_cnote_links"
 unified_mart:
   enabled: true
   schema: "mart"
@@ -108,11 +108,11 @@ mart:
     assert config.governance.results_path.as_posix() == "governance/outputs/R_TEST/governance_results.csv"
     assert config.governance.result_cnotes_path.as_posix() == "governance/outputs/R_TEST/governance_result_cnotes.csv"
     assert config.governance.summary_path.as_posix() == "governance/outputs/R_TEST/governance_rule_summary.csv"
-    assert config.governance.results_table == "governance_results_2"
-    assert config.governance.result_cnotes_table == "governance_result_cnotes_2"
-    assert config.governance.summary_table == "governance_rule_summary_2"
-    assert config.governance.build_document_links is True
-    assert config.governance.document_links_table == "document_cnote_links_2"
+    assert config.governance.results_table == "governance_results"
+    assert config.governance.result_cnotes_table == "governance_result_cnotes"
+    assert config.governance.summary_table == "governance_rule_summary"
+    assert config.governance.build_document_links is False
+    assert config.governance.document_links_table == "document_cnote_links"
     assert config.unified_mart.enabled is True
     assert config.unified_mart.schema == "mart"
     assert config.unified_mart.table == "unified_shipments"
@@ -243,9 +243,9 @@ def test_clickhouse_governance_load_replaces_only_managed_tables(monkeypatch, tm
             results_path,
             result_cnotes_path,
             summary_path,
-            "governance_results_2",
-            "governance_result_cnotes_2",
-            "governance_rule_summary_2",
+            "governance_results",
+            "governance_result_cnotes",
+            "governance_rule_summary",
         ),
         config.unified_mart,
         config.skip_stages,
@@ -266,31 +266,49 @@ def test_clickhouse_governance_load_replaces_only_managed_tables(monkeypatch, tm
     assert rows == 3
     assert not any("DROP DATABASE" in sql for sql in client.commands)
     assert any("CREATE DATABASE IF NOT EXISTS `governance`" in sql for sql in client.commands)
-    assert any("DROP TABLE IF EXISTS `governance`.`governance_results_2`" in sql for sql in client.commands)
+    assert any("DROP TABLE IF EXISTS `governance`.`governance_results`" in sql for sql in client.commands)
     assert loaded_tables == [
-        "governance_results_2",
-        "governance_result_cnotes_2",
-        "governance_rule_summary_2",
+        "governance_results",
+        "governance_result_cnotes",
+        "governance_rule_summary",
     ]
 
 
 def test_clickhouse_document_links_builds_separate_governance_table(monkeypatch):
     commands = []
+    config = _config()
+    config = MartClickHouseConfig(
+        config.minio,
+        config.bronze,
+        config.clickhouse,
+        config.schemas,
+        GovernanceConfig(
+            True,
+            config.governance.results_path,
+            config.governance.result_cnotes_path,
+            config.governance.summary_path,
+            build_document_links=True,
+        ),
+        config.unified_mart,
+        config.skip_stages,
+        config.reuse_existing_stages,
+        config.load_mode,
+    )
 
     monkeypatch.setattr("loader.mart_load_clickhouse._table_exists", lambda client, schema, table: True)
     monkeypatch.setattr("loader.mart_load_clickhouse._command", lambda client, sql: commands.append(sql))
     monkeypatch.setattr("loader.mart_load_clickhouse._query_scalar", lambda client, sql: 123)
 
-    rows = _build_document_cnote_links(object(), _config())
+    rows = _build_document_cnote_links(object(), config)
 
     assert rows == 123
     assert any("CREATE DATABASE IF NOT EXISTS `governance`" in sql for sql in commands)
-    assert any("DROP TABLE IF EXISTS `governance`.`document_cnote_links_2`" in sql for sql in commands)
-    create_sql = next(sql for sql in commands if "CREATE TABLE `governance`.`document_cnote_links_2`" in sql)
+    assert any("DROP TABLE IF EXISTS `governance`.`document_cnote_links`" in sql for sql in commands)
+    create_sql = next(sql for sql in commands if "CREATE TABLE `governance`.`document_cnote_links`" in sql)
     assert "FROM `bronze`.`cms_mfcnote` mf" in create_sql
     assert "INNER JOIN `bronze`.`cms_cnote` c" in create_sql
     assert "ORDER BY (ifNull(source_table, ''), ifNull(document_id, ''), ifNull(cnote_no, ''))" in create_sql
-    assert "DROP TABLE IF EXISTS `governance`.`governance_results_2`" not in "\n".join(commands)
+    assert "DROP TABLE IF EXISTS `governance`.`governance_results`" not in "\n".join(commands)
 
 
 def test_unified_mart_sql_template_renders_qualified_names(tmp_path):

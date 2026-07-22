@@ -1007,7 +1007,8 @@ def _check_rows_frame(
         rows["_linked_cnotes"] = rows["document_id"].map(lambda value: [str(value)] if str(value) in cnotes else [])
         rows["_link_method"] = "direct_cnote_value"
 
-    rows["cnote_no"] = rows["_linked_cnotes"].map(lambda values: values[0] if len(values) == 1 else "")
+    rows = rows.explode("_linked_cnotes", ignore_index=True)
+    rows["cnote_no"] = _string_key_values(rows["_linked_cnotes"])
     rows["document_no"] = rows["document_id"].where(rows["document_id"].ne(rows["cnote_no"]), "")
     contexts = cnote_contexts or {}
     row_contexts = rows.apply(lambda row: _single_cnote_context(row, contexts), axis=1)
@@ -1035,17 +1036,14 @@ def _result_cnote_rows(rows: pd.DataFrame) -> pd.DataFrame:
     for _, row in rows.iterrows():
         result_id = str(row["result_id"])
         link_method = str(row["_link_method"])
-        cnotes = row["_linked_cnotes"]
-        if not isinstance(cnotes, list):
+        cnote_no = str(row.get("cnote_no", "") or "").strip()
+        if not cnote_no:
             continue
-        if len(cnotes) <= 1:
-            continue
-        for cnote_no in cnotes:
-            link_rows.append({
-                "result_id": result_id,
-                "cnote_no": str(cnote_no),
-                "link_method": link_method,
-            })
+        link_rows.append({
+            "result_id": result_id,
+            "cnote_no": cnote_no,
+            "link_method": link_method,
+        })
     return pd.DataFrame(link_rows, columns=RESULT_CNOTE_COLUMNS)
 
 

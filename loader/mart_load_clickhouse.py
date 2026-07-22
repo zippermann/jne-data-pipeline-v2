@@ -78,11 +78,11 @@ class GovernanceConfig:
     results_path: Path
     result_cnotes_path: Path
     summary_path: Path
-    results_table: str = "governance_results_2"
-    result_cnotes_table: str = "governance_result_cnotes_2"
-    summary_table: str = "governance_rule_summary_2"
-    build_document_links: bool = True
-    document_links_table: str = "document_cnote_links_2"
+    results_table: str = "governance_results"
+    result_cnotes_table: str = "governance_result_cnotes"
+    summary_table: str = "governance_rule_summary"
+    build_document_links: bool = False
+    document_links_table: str = "document_cnote_links"
 
 
 @dataclass(frozen=True)
@@ -190,11 +190,11 @@ def load_config(path: str | Path = "config/mart_clickhouse.yaml") -> MartClickHo
             results_path=Path(governance.get("results_path") or default_governance_path),
             result_cnotes_path=Path(governance.get("result_cnotes_path") or default_result_cnotes_path),
             summary_path=Path(governance.get("summary_path") or default_summary_path),
-            results_table=governance.get("results_table", "governance_results_2"),
-            result_cnotes_table=governance.get("result_cnotes_table", "governance_result_cnotes_2"),
-            summary_table=governance.get("summary_table", "governance_rule_summary_2"),
-            build_document_links=_as_bool(governance.get("build_document_links", True)),
-            document_links_table=governance.get("document_links_table", "document_cnote_links_2"),
+            results_table=governance.get("results_table", "governance_results"),
+            result_cnotes_table=governance.get("result_cnotes_table", "governance_result_cnotes"),
+            summary_table=governance.get("summary_table", "governance_rule_summary"),
+            build_document_links=_as_bool(governance.get("build_document_links", False)),
+            document_links_table=governance.get("document_links_table", "document_cnote_links"),
         ),
         unified_mart=UnifiedMartConfig(
             enabled=_as_bool(unified_mart.get("enabled", False)),

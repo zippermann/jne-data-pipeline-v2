@@ -306,7 +306,7 @@ def test_cnote_contexts_bucket_service_type_from_first_three_characters():
     assert contexts["CNOTE3"]["cnote_service_code"] == "Other"
 
 
-def test_result_cnote_bridge_only_keeps_multi_cnote_links():
+def test_result_cnote_bridge_keeps_result_to_cnote_links():
     entry = {
         "index_code": "COMP_TEST",
         "indicator": "Unique Identifier",
@@ -331,7 +331,9 @@ def test_result_cnote_bridge_only_keeps_multi_cnote_links():
 
     assert rows.loc[0, "cnote_no"] == "CNOTE1"
     assert rows.loc[0, "document_no"] == ""
-    assert link_rows.empty
+    assert link_rows["result_id"].tolist() == ["R000000000001"]
+    assert link_rows["cnote_no"].tolist() == ["CNOTE1"]
+    assert link_rows["link_method"].tolist() == ["direct_cnote"]
     assert link_rows.columns.tolist() == ["result_id", "cnote_no", "link_method"]
 
 
@@ -347,8 +349,15 @@ def test_mhi_hoc_uses_mhi_no_as_document_key():
             assert entry["params"].get("cnote_column") == "MHI_NO"
 
 
-def test_bag_governance_rows_keep_document_id_and_links_cnotes_separately():
+def test_bag_governance_rows_expand_to_linked_cnotes():
     data = {
+        "CMS_CNOTE": pd.DataFrame({
+            "CNOTE_NO": ["CNOTE1", "CNOTE2"],
+            "CNOTE_ORIGIN": ["CGK10000", "BDO10000"],
+            "CNOTE_DESTINATION": ["BKI10000", "CGK20000"],
+            "CNOTE_SERVICES_CODE": ["YES19", "REG23"],
+            "delivery_category": ["Direct Domestic", "Intercity"],
+        }),
         "CMS_MFCNOTE": pd.DataFrame({
             "MFCNOTE_NO": ["CNOTE1", "CNOTE2"],
             "MFCNOTE_BAG_NO": ["BAG1", "BAG1"],
@@ -376,17 +385,21 @@ def test_bag_governance_rows_keep_document_id_and_links_cnotes_separately():
         }),
     )
 
-    rows = _check_rows_frame(entry, outcome, _document_bridges(data), {"CNOTE1", "CNOTE2"})
-    rows.insert(0, "result_id", ["R000000000001"])
+    rows = _check_rows_frame(entry, outcome, _document_bridges(data), {"CNOTE1", "CNOTE2"}, _cnote_contexts(data))
+    rows.insert(0, "result_id", ["R000000000001", "R000000000002"])
     link_rows = _result_cnote_rows(rows)
 
-    assert rows["cnote_no"].tolist() == [""]
-    assert rows["document_no"].tolist() == ["BAG1"]
-    assert rows["document_id"].tolist() == ["BAG1"]
-    assert rows["document_type"].tolist() == ["DMBAG"]
-    assert rows["level"].tolist() == ["bag"]
-    assert rows["stage"].tolist() == ["Warehouse Manifest"]
-    assert link_rows["result_id"].tolist() == ["R000000000001", "R000000000001"]
+    assert rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
+    assert rows["document_no"].tolist() == ["BAG1", "BAG1"]
+    assert rows["document_id"].tolist() == ["BAG1", "BAG1"]
+    assert rows["document_type"].tolist() == ["DMBAG", "DMBAG"]
+    assert rows["level"].tolist() == ["bag", "bag"]
+    assert rows["stage"].tolist() == ["Warehouse Manifest", "Warehouse Manifest"]
+    assert rows["cnote_origin"].tolist() == ["CGK10000", "BDO10000"]
+    assert rows["cnote_destination"].tolist() == ["BKI10000", "CGK20000"]
+    assert rows["cnote_service_code"].tolist() == ["YES", "REG"]
+    assert rows["shipment_type"].tolist() == ["Direct Domestic", "Intercity"]
+    assert link_rows["result_id"].tolist() == ["R000000000001", "R000000000002"]
     assert link_rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
     assert link_rows.columns.tolist() == ["result_id", "cnote_no", "link_method"]
 
@@ -451,12 +464,12 @@ def test_mmbag_links_to_cnotes_through_dmbag():
     )
 
     rows = _check_rows_frame(entry, outcome, _document_bridges(data), {"CNOTE1", "CNOTE2"})
-    rows.insert(0, "result_id", ["R000000000001"])
+    rows.insert(0, "result_id", ["R000000000001", "R000000000002"])
     link_rows = _result_cnote_rows(rows)
 
     assert rows.loc[0, "document_id"] == "MMBAG1"
     assert rows.loc[0, "document_no"] == "MMBAG1"
-    assert rows.loc[0, "cnote_no"] == ""
+    assert rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
     assert rows.loc[0, "level"] == "bag"
     assert rows.loc[0, "stage"] == "Warehouse Manifest"
     assert link_rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
