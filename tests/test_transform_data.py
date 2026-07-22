@@ -49,6 +49,7 @@ def test_cnote_transform_query_includes_stage_duration_columns():
         "cms_cnote_create_date",
         "cms_mrcnote_create_date",
         "cms_mfbag_create_date",
+        "cms_mhocnote_create_date",
         "cms_cnote_pod_create_date",
     ):
         assert column in query

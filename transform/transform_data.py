@@ -326,6 +326,7 @@ def _build_cnote_transform_query(
                 TRY_CAST(CNOTE_CRDATE AS TIMESTAMP) AS cms_cnote_create_date,
                 pickup_ts AS cms_mrcnote_create_date,
                 mfbag_create_ts AS cms_mfbag_create_date,
+                mhocnote_create_ts AS cms_mhocnote_create_date,
                 cnote_pod_create_ts AS cms_cnote_pod_create_date,
                 CASE WHEN has_transit THEN 'Transit' ELSE 'Direct' END AS delivery_type,
                 CASE
