@@ -34,6 +34,7 @@ def test_cnote_transform_query_includes_stage_duration_columns():
         "cms_manifest/*.parquet",
         "cms_drcnote/*.parquet",
         "cms_mrcnote/*.parquet",
+        "cms_mhi_hoc/*.parquet",
         "cms_dhicnote/*.parquet",
         "cms_dhocnote/*.parquet",
         "cms_mhocnote/*.parquet",
@@ -50,6 +51,8 @@ def test_cnote_transform_query_includes_stage_duration_columns():
         "total_duration_hour_to_delivery",
         "cms_cnote_create_date",
         "cms_mrcnote_create_date",
+        "cms_mhi_hoc_approve_date",
+        "cms_receival_create_date",
         "cms_mfbag_create_date",
         "cms_mhocnote_create_date",
         "cms_mrsheet_create_date",
@@ -57,13 +60,16 @@ def test_cnote_transform_query_includes_stage_duration_columns():
     ):
         assert column in query
     assert "MFBAG_CRDATE" in query
+    assert "MHI_APPROVE_DATE" in query
+    assert "d.DHI_NO = m.MHI_NO" in query
+    assert "COALESCE(p.pickup_ts, mhi.mhi_hoc_approve_ts) AS receival_ts" in query
     assert "MHOCNOTE_DATE" in query
     assert "MRSHEET_DATE" in query
     assert "d.DRSHEET_NO = m.MRSHEET_NO" in query
     assert "CNOTE_POD_DATE" in query
     assert "CNOTE_POD_CREATION_DATE" not in query
-    assert "COALESCE(mfbag_create_ts, pickup_ts)" in query
-    assert "COALESCE(mhocnote_create_ts, mfbag_create_ts, pickup_ts)" in query
+    assert "COALESCE(mfbag_create_ts, receival_ts)" in query
+    assert "COALESCE(mhocnote_create_ts, mfbag_create_ts, receival_ts)" in query
     assert "epoch(cnote_pod_date_ts) - epoch(mrsheet_create_ts)" in query
     assert "sla_pickup_to_firstmanifest_hours" not in query
     assert "sla_per_step" not in query

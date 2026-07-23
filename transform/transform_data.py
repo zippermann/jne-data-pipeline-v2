@@ -215,6 +215,7 @@ def _build_cnote_transform_query(
     manifest_path: str,
     drcnote_path: str,
     mrcnote_path: str,
+    mhi_hoc_path: str,
     dhicnote_path: str,
     dhocnote_path: str,
     mhocnote_path: str,
@@ -241,6 +242,14 @@ def _build_cnote_transform_query(
             JOIN read_parquet({_quote_sql(mrcnote_path)}) r ON d.DRCNOTE_NO = r.MRCNOTE_NO
             WHERE d.DRCNOTE_CNOTE_NO IS NOT NULL
             GROUP BY d.DRCNOTE_CNOTE_NO
+        ),
+        mhi_hoc_events AS (
+            SELECT d.DHI_CNOTE_NO AS cnote_no,
+                MIN(TRY_CAST(m.MHI_APPROVE_DATE AS TIMESTAMP)) AS mhi_hoc_approve_ts
+            FROM read_parquet({_quote_sql(dhicnote_path)}) d
+            JOIN read_parquet({_quote_sql(mhi_hoc_path)}) m ON d.DHI_NO = m.MHI_NO
+            WHERE d.DHI_CNOTE_NO IS NOT NULL
+            GROUP BY d.DHI_CNOTE_NO
         ),
         manifest_bag_events AS (
             SELECT mf.MFCNOTE_NO AS cnote_no,
@@ -299,6 +308,8 @@ def _build_cnote_transform_query(
                 (t.cnote_no IS NOT NULL) AS has_transit,
                 COALESCE(t.transit_leg_count, 0) AS transit_leg_count,
                 p.pickup_ts,
+                mhi.mhi_hoc_approve_ts,
+                COALESCE(p.pickup_ts, mhi.mhi_hoc_approve_ts) AS receival_ts,
                 mb.mfbag_create_ts,
                 hi.handover_in_ts,
                 ho.handover_out_ts,
@@ -308,6 +319,7 @@ def _build_cnote_transform_query(
             FROM read_parquet({_quote_sql(cnote_path)}) c
             LEFT JOIN transit_cnotes t ON c.CNOTE_NO = t.cnote_no
             LEFT JOIN pickup_events p ON c.CNOTE_NO = p.cnote_no
+            LEFT JOIN mhi_hoc_events mhi ON c.CNOTE_NO = mhi.cnote_no
             LEFT JOIN manifest_bag_events mb ON c.CNOTE_NO = mb.cnote_no
             LEFT JOIN handover_in_events hi ON c.CNOTE_NO = hi.cnote_no
             LEFT JOIN handover_out_events ho ON c.CNOTE_NO = ho.cnote_no
@@ -318,11 +330,13 @@ def _build_cnote_transform_query(
         classified AS (
             SELECT * EXCLUDE (
                     o_code, d_code, o_digit, d_digit, has_transit, transit_leg_count,
-                    pickup_ts, mfbag_create_ts, handover_in_ts, handover_out_ts,
+                    pickup_ts, mhi_hoc_approve_ts, receival_ts, mfbag_create_ts, handover_in_ts, handover_out_ts,
                     mhocnote_create_ts, mrsheet_create_ts, cnote_pod_date_ts
                 ),
                 TRY_CAST(CNOTE_CRDATE AS TIMESTAMP) AS cms_cnote_create_date,
                 pickup_ts AS cms_mrcnote_create_date,
+                mhi_hoc_approve_ts AS cms_mhi_hoc_approve_date,
+                receival_ts AS cms_receival_create_date,
                 mfbag_create_ts AS cms_mfbag_create_date,
                 mhocnote_create_ts AS cms_mhocnote_create_date,
                 mrsheet_create_ts AS cms_mrsheet_create_date,
@@ -336,24 +350,24 @@ def _build_cnote_transform_query(
                 END AS shipment_scope,
                 transit_leg_count AS transit_manifest_count,
                 transit_leg_count
-                    + CASE WHEN pickup_ts IS NOT NULL THEN 1 ELSE 0 END
+                    + CASE WHEN receival_ts IS NOT NULL THEN 1 ELSE 0 END
                     + CASE WHEN handover_in_ts IS NOT NULL THEN 1 ELSE 0 END
                     + CASE WHEN handover_out_ts IS NOT NULL THEN 1 ELSE 0 END
                     + CASE WHEN mrsheet_create_ts IS NOT NULL THEN 1 ELSE 0 END AS handover_count,
-                CASE WHEN pickup_ts IS NOT NULL AND cnote_pod_date_ts IS NOT NULL
-                     THEN (epoch(cnote_pod_date_ts) - epoch(pickup_ts)) / 3600.0
+                CASE WHEN receival_ts IS NOT NULL AND cnote_pod_date_ts IS NOT NULL
+                     THEN (epoch(cnote_pod_date_ts) - epoch(receival_ts)) / 3600.0
                 END AS sla_total_hours,
-                CASE WHEN TRY_CAST(CNOTE_CRDATE AS TIMESTAMP) IS NOT NULL AND pickup_ts IS NOT NULL
-                     THEN (epoch(pickup_ts) - epoch(TRY_CAST(CNOTE_CRDATE AS TIMESTAMP))) / 3600.0
+                CASE WHEN TRY_CAST(CNOTE_CRDATE AS TIMESTAMP) IS NOT NULL AND receival_ts IS NOT NULL
+                     THEN (epoch(receival_ts) - epoch(TRY_CAST(CNOTE_CRDATE AS TIMESTAMP))) / 3600.0
                 END AS total_duration_hour_to_receival,
-                CASE WHEN pickup_ts IS NOT NULL AND mfbag_create_ts IS NOT NULL
-                     THEN (epoch(mfbag_create_ts) - epoch(pickup_ts)) / 3600.0
+                CASE WHEN receival_ts IS NOT NULL AND mfbag_create_ts IS NOT NULL
+                     THEN (epoch(mfbag_create_ts) - epoch(receival_ts)) / 3600.0
                 END AS total_duration_hour_to_manifest,
-                CASE WHEN COALESCE(mfbag_create_ts, pickup_ts) IS NOT NULL AND mhocnote_create_ts IS NOT NULL
-                     THEN (epoch(mhocnote_create_ts) - epoch(COALESCE(mfbag_create_ts, pickup_ts))) / 3600.0
+                CASE WHEN COALESCE(mfbag_create_ts, receival_ts) IS NOT NULL AND mhocnote_create_ts IS NOT NULL
+                     THEN (epoch(mhocnote_create_ts) - epoch(COALESCE(mfbag_create_ts, receival_ts))) / 3600.0
                 END AS total_duration_hour_to_handover,
-                CASE WHEN COALESCE(mhocnote_create_ts, mfbag_create_ts, pickup_ts) IS NOT NULL AND mrsheet_create_ts IS NOT NULL
-                     THEN (epoch(mrsheet_create_ts) - epoch(COALESCE(mhocnote_create_ts, mfbag_create_ts, pickup_ts))) / 3600.0
+                CASE WHEN COALESCE(mhocnote_create_ts, mfbag_create_ts, receival_ts) IS NOT NULL AND mrsheet_create_ts IS NOT NULL
+                     THEN (epoch(mrsheet_create_ts) - epoch(COALESCE(mhocnote_create_ts, mfbag_create_ts, receival_ts))) / 3600.0
                 END AS total_duration_hour_to_runsheet,
                 CASE WHEN mrsheet_create_ts IS NOT NULL AND cnote_pod_date_ts IS NOT NULL
                      THEN (epoch(cnote_pod_date_ts) - epoch(mrsheet_create_ts)) / 3600.0
@@ -548,6 +562,7 @@ def transform_data(source: DerivedSource, config: dict, tmpdir: Path | None = No
     manifest_path = _parquet_glob(source, "CMS_MANIFEST")
     drcnote_path = _parquet_glob(source, "CMS_DRCNOTE")
     mrcnote_path = _parquet_glob(source, "CMS_MRCNOTE")
+    mhi_hoc_path = _parquet_glob(source, "CMS_MHI_HOC")
     dhicnote_path = _parquet_glob(source, "CMS_DHICNOTE")
     dhocnote_path = _parquet_glob(source, "CMS_DHOCNOTE")
     mhocnote_path = _parquet_glob(source, "CMS_MHOCNOTE")
@@ -561,6 +576,7 @@ def transform_data(source: DerivedSource, config: dict, tmpdir: Path | None = No
         manifest_path,
         drcnote_path,
         mrcnote_path,
+        mhi_hoc_path,
         dhicnote_path,
         dhocnote_path,
         mhocnote_path,
