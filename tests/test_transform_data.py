@@ -35,6 +35,7 @@ def test_cnote_transform_query_includes_stage_duration_columns():
         "cms_drcnote/*.parquet",
         "cms_mrcnote/*.parquet",
         "cms_mhi_hoc/*.parquet",
+        "cms_dhi_hoc/*.parquet",
         "cms_dhicnote/*.parquet",
         "cms_dhocnote/*.parquet",
         "cms_mhocnote/*.parquet",

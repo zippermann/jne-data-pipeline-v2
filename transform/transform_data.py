@@ -216,6 +216,7 @@ def _build_cnote_transform_query(
     drcnote_path: str,
     mrcnote_path: str,
     mhi_hoc_path: str,
+    dhi_hoc_path: str,
     dhicnote_path: str,
     dhocnote_path: str,
     mhocnote_path: str,
@@ -246,7 +247,7 @@ def _build_cnote_transform_query(
         mhi_hoc_events AS (
             SELECT d.DHI_CNOTE_NO AS cnote_no,
                 MIN(TRY_CAST(m.MHI_APPROVE_DATE AS TIMESTAMP)) AS mhi_hoc_approve_ts
-            FROM read_parquet({_quote_sql(dhicnote_path)}) d
+            FROM read_parquet({_quote_sql(dhi_hoc_path)}) d
             JOIN read_parquet({_quote_sql(mhi_hoc_path)}) m ON d.DHI_NO = m.MHI_NO
             WHERE d.DHI_CNOTE_NO IS NOT NULL
             GROUP BY d.DHI_CNOTE_NO
@@ -563,6 +564,7 @@ def transform_data(source: DerivedSource, config: dict, tmpdir: Path | None = No
     drcnote_path = _parquet_glob(source, "CMS_DRCNOTE")
     mrcnote_path = _parquet_glob(source, "CMS_MRCNOTE")
     mhi_hoc_path = _parquet_glob(source, "CMS_MHI_HOC")
+    dhi_hoc_path = _parquet_glob(source, "CMS_DHI_HOC")
     dhicnote_path = _parquet_glob(source, "CMS_DHICNOTE")
     dhocnote_path = _parquet_glob(source, "CMS_DHOCNOTE")
     mhocnote_path = _parquet_glob(source, "CMS_MHOCNOTE")
@@ -577,6 +579,7 @@ def transform_data(source: DerivedSource, config: dict, tmpdir: Path | None = No
         drcnote_path,
         mrcnote_path,
         mhi_hoc_path,
+        dhi_hoc_path,
         dhicnote_path,
         dhocnote_path,
         mhocnote_path,
