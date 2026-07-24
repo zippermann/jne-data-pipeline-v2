@@ -394,7 +394,7 @@ def test_bag_governance_rows_expand_to_linked_cnotes():
     assert rows["document_id"].tolist() == ["BAG1", "BAG1"]
     assert rows["document_type"].tolist() == ["DMBAG", "DMBAG"]
     assert rows["level"].tolist() == ["bag", "bag"]
-    assert rows["stage"].tolist() == ["Warehouse Manifest", "Warehouse Manifest"]
+    assert rows["stage"].tolist() == ["2. Manifest", "2. Manifest"]
     assert rows["cnote_origin"].tolist() == ["CGK10000", "BDO10000"]
     assert rows["cnote_destination"].tolist() == ["BKI10000", "CGK20000"]
     assert rows["cnote_service_code"].tolist() == ["YES", "REG"]
@@ -471,7 +471,7 @@ def test_mmbag_links_to_cnotes_through_dmbag():
     assert rows.loc[0, "document_no"] == "MMBAG1"
     assert rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
     assert rows.loc[0, "level"] == "bag"
-    assert rows.loc[0, "stage"] == "Warehouse Manifest"
+    assert rows.loc[0, "stage"] == "2. Manifest"
     assert link_rows["cnote_no"].tolist() == ["CNOTE1", "CNOTE2"]
 
 
@@ -594,7 +594,7 @@ def test_non_cnote_document_only_populates_cnote_when_in_sample():
     assert rows["cnote_no"].tolist() == ["", "CNOTE1"]
     assert rows["document_no"].tolist() == ["MANIFEST1", ""]
     assert rows["level"].tolist() == ["bag", "bag"]
-    assert rows["stage"].tolist() == ["Warehouse Manifest", "Warehouse Manifest"]
+    assert rows["stage"].tolist() == ["2. Manifest", "2. Manifest"]
 
 
 def test_regular_cnote_governance_rows_are_cnote_level_with_stage():
@@ -620,17 +620,19 @@ def test_regular_cnote_governance_rows_are_cnote_level_with_stage():
 
     assert rows.loc[0, "level"] == "cnote"
     assert rows.loc[0, "document_no"] == ""
-    assert rows.loc[0, "stage"] == "Pick up/Drop Off"
+    assert rows.loc[0, "stage"] == ""
 
 
 def test_document_tags_cover_level_and_operational_stage():
     examples = {
-        "CMS_APICUST": ("cnote", "Shipper"),
-        "CMS_CNOTE": ("cnote", "Pick up/Drop Off"),
-        "CMS_DRCNOTE": ("bag", "Warehouse Receival"),
-        "CMS_MFCNOTE": ("bag", "Warehouse Manifest"),
-        "CMS_DHOCNOTE": ("bag", "Cabang"),
-        "CMS_DRSHEET": ("bag", "Receiver"),
+        "CMS_APICUST": ("cnote", ""),
+        "CMS_CNOTE": ("cnote", ""),
+        "CMS_DRCNOTE": ("bag", "1. Receival"),
+        "CMS_DHI_HOC": ("bag", "1. Receival"),
+        "CMS_MFCNOTE": ("bag", "2. Manifest"),
+        "CMS_DHOCNOTE": ("bag", "3. Handover"),
+        "CMS_DRSHEET": ("bag", "4. Runsheet"),
+        "CMS_CNOTE_POD": ("bag", "4. Runsheet"),
     }
 
     for table_name, (expected_level, expected_stage) in examples.items():
