@@ -29,6 +29,7 @@ def test_delivery_category_combines_domestic_only():
 def test_cnote_transform_query_includes_stage_duration_columns():
     query = _build_cnote_transform_query(
         "cms_cnote/*.parquet",
+        "cms_drourate/*.parquet",
         "cms_mfcnote/*.parquet",
         "cms_mfbag/*.parquet",
         "cms_manifest/*.parquet",
@@ -58,8 +59,22 @@ def test_cnote_transform_query_includes_stage_duration_columns():
         "cms_mhocnote_create_date",
         "cms_mrsheet_create_date",
         "cms_cnote_pod_create_date",
+        "drourate_etd_from",
+        "drourate_etd_thru",
+        "drourate_time",
+        "drourate_etd_from_days",
+        "drourate_etd_thru_days",
     ):
         assert column in query
+    assert "DROURATE_ETD_FROM" in query
+    assert "DROURATE_ETD_THRU" in query
+    assert "DROURATE_TIME" in query
+    assert "DROURATE_SERVICE" in query
+    assert "DROURATE_CODE" in query
+    assert "CNOTE_SERVICES_CODE" in query
+    assert "CNOTE_ROUTE_CODE" in query
+    assert "TRY_CAST(drourate_etd_from AS DOUBLE) / 24.0" in query
+    assert "TRY_CAST(drourate_etd_thru AS DOUBLE) / 24.0" in query
     assert "MFBAG_CRDATE" in query
     assert "MHI_APPROVE_DATE" in query
     assert "d.DHI_NO = m.MHI_NO" in query

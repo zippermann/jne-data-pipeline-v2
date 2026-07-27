@@ -210,6 +210,7 @@ def _derived_prefix(source: DerivedSource, output_name: str = DERIVED_TABLE) -> 
 
 def _build_cnote_transform_query(
     cnote_path: str,
+    drourate_path: str,
     mfcnote_path: str,
     mfbag_path: str,
     manifest_path: str,
@@ -300,6 +301,18 @@ def _build_cnote_transform_query(
             WHERE CNOTE_POD_NO IS NOT NULL
             GROUP BY CNOTE_POD_NO
         ),
+        drourate_lookup AS (
+            SELECT
+                upper(trim(CAST(DROURATE_SERVICE AS VARCHAR))) AS drourate_service,
+                upper(trim(CAST(DROURATE_CODE AS VARCHAR))) AS drourate_code,
+                any_value(DROURATE_ETD_FROM) AS drourate_etd_from,
+                any_value(DROURATE_ETD_THRU) AS drourate_etd_thru,
+                any_value(DROURATE_TIME) AS drourate_time
+            FROM read_parquet({_quote_sql(drourate_path)})
+            WHERE DROURATE_SERVICE IS NOT NULL
+              AND DROURATE_CODE IS NOT NULL
+            GROUP BY 1, 2
+        ),
         parts AS (
             SELECT c.*,
                 regexp_extract(upper(trim(c.CNOTE_ORIGIN)), '^([A-Z]{{3}})', 1) AS o_code,
@@ -316,7 +329,10 @@ def _build_cnote_transform_query(
                 ho.handover_out_ts,
                 mh.mhocnote_create_ts,
                 rs.mrsheet_create_ts,
-                pod.cnote_pod_date_ts
+                pod.cnote_pod_date_ts,
+                dr.drourate_etd_from,
+                dr.drourate_etd_thru,
+                dr.drourate_time
             FROM read_parquet({_quote_sql(cnote_path)}) c
             LEFT JOIN transit_cnotes t ON c.CNOTE_NO = t.cnote_no
             LEFT JOIN pickup_events p ON c.CNOTE_NO = p.cnote_no
@@ -327,12 +343,16 @@ def _build_cnote_transform_query(
             LEFT JOIN mhocnote_events mh ON c.CNOTE_NO = mh.cnote_no
             LEFT JOIN runsheet_events rs ON c.CNOTE_NO = rs.cnote_no
             LEFT JOIN pod_events pod ON c.CNOTE_NO = pod.cnote_no
+            LEFT JOIN drourate_lookup dr
+              ON upper(trim(CAST(c.CNOTE_SERVICES_CODE AS VARCHAR))) = dr.drourate_service
+             AND upper(trim(CAST(c.CNOTE_ROUTE_CODE AS VARCHAR))) = dr.drourate_code
         ),
         classified AS (
             SELECT * EXCLUDE (
                     o_code, d_code, o_digit, d_digit, has_transit, transit_leg_count,
                     pickup_ts, mhi_hoc_approve_ts, receival_ts, mfbag_create_ts, handover_in_ts, handover_out_ts,
-                    mhocnote_create_ts, mrsheet_create_ts, cnote_pod_date_ts
+                    mhocnote_create_ts, mrsheet_create_ts, cnote_pod_date_ts,
+                    drourate_etd_from, drourate_etd_thru, drourate_time
                 ),
                 TRY_CAST(CNOTE_CRDATE AS TIMESTAMP) AS cms_cnote_create_date,
                 pickup_ts AS cms_mrcnote_create_date,
@@ -342,6 +362,23 @@ def _build_cnote_transform_query(
                 mhocnote_create_ts AS cms_mhocnote_create_date,
                 mrsheet_create_ts AS cms_mrsheet_create_date,
                 cnote_pod_date_ts AS cms_cnote_pod_create_date,
+                drourate_etd_from,
+                drourate_etd_thru,
+                drourate_time,
+                CASE
+                    WHEN upper(trim(CAST(drourate_time AS VARCHAR))) IN ('H', 'HR', 'HOUR', 'HOURS', 'JAM')
+                         THEN TRY_CAST(drourate_etd_from AS DOUBLE) / 24.0
+                    WHEN upper(trim(CAST(drourate_time AS VARCHAR))) IN ('D', 'DAY', 'DAYS', 'HARI')
+                         THEN TRY_CAST(drourate_etd_from AS DOUBLE)
+                    ELSE TRY_CAST(drourate_etd_from AS DOUBLE)
+                END AS drourate_etd_from_days,
+                CASE
+                    WHEN upper(trim(CAST(drourate_time AS VARCHAR))) IN ('H', 'HR', 'HOUR', 'HOURS', 'JAM')
+                         THEN TRY_CAST(drourate_etd_thru AS DOUBLE) / 24.0
+                    WHEN upper(trim(CAST(drourate_time AS VARCHAR))) IN ('D', 'DAY', 'DAYS', 'HARI')
+                         THEN TRY_CAST(drourate_etd_thru AS DOUBLE)
+                    ELSE TRY_CAST(drourate_etd_thru AS DOUBLE)
+                END AS drourate_etd_thru_days,
                 CASE WHEN has_transit THEN 'Transit' ELSE 'Direct' END AS delivery_type,
                 CASE
                     WHEN o_code = '' OR d_code = '' OR o_digit = '' OR d_digit = '' THEN 'Unknown'
@@ -558,6 +595,7 @@ def transform_data(source: DerivedSource, config: dict, tmpdir: Path | None = No
         _configure_s3(con, source.settings)
 
     cnote_path = _parquet_glob(source, "CMS_CNOTE")
+    drourate_path = _parquet_glob(source, "CMS_DROURATE")
     mfcnote_path = _parquet_glob(source, "CMS_MFCNOTE")
     mfbag_path = _parquet_glob(source, "CMS_MFBAG")
     manifest_path = _parquet_glob(source, "CMS_MANIFEST")
@@ -573,6 +611,7 @@ def transform_data(source: DerivedSource, config: dict, tmpdir: Path | None = No
     cnote_pod_path = _parquet_glob(source, "CMS_CNOTE_POD")
     query = _build_cnote_transform_query(
         cnote_path,
+        drourate_path,
         mfcnote_path,
         mfbag_path,
         manifest_path,
