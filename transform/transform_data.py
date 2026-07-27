@@ -362,9 +362,6 @@ def _build_cnote_transform_query(
                 mhocnote_create_ts AS cms_mhocnote_create_date,
                 mrsheet_create_ts AS cms_mrsheet_create_date,
                 cnote_pod_date_ts AS cms_cnote_pod_create_date,
-                drourate_etd_from,
-                drourate_etd_thru,
-                drourate_time,
                 CASE
                     WHEN upper(trim(CAST(drourate_time AS VARCHAR))) IN ('H', 'HR', 'HOUR', 'HOURS', 'JAM')
                          THEN TRY_CAST(drourate_etd_from AS DOUBLE) / 24.0

@@ -59,9 +59,6 @@ def test_cnote_transform_query_includes_stage_duration_columns():
         "cms_mhocnote_create_date",
         "cms_mrsheet_create_date",
         "cms_cnote_pod_create_date",
-        "drourate_etd_from",
-        "drourate_etd_thru",
-        "drourate_time",
         "drourate_etd_from_days",
         "drourate_etd_thru_days",
     ):
