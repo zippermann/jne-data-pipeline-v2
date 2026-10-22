@@ -305,10 +305,15 @@ def _s3_url(config: MartClickHouseConfig, prefix: str, pattern: str = "part-*.pa
     return f"{protocol}://{endpoint}/{config.bronze.bucket}/{object_prefix}/{pattern}"
 
 
-def _s3_table_expr(config: MartClickHouseConfig, prefix: str, fmt: str = "Parquet") -> str:
+def _s3_table_expr(
+    config: MartClickHouseConfig,
+    prefix: str,
+    fmt: str = "Parquet",
+    pattern: str = "part-*.parquet",
+) -> str:
     return (
         "s3("
-        f"{_quote_sql(_s3_url(config, prefix))}, "
+        f"{_quote_sql(_s3_url(config, prefix, pattern))}, "
         f"{_quote_sql(config.minio.access_key)}, "
         f"{_quote_sql(config.minio.secret_key)}, "
         f"{_quote_sql(fmt)}"
@@ -744,14 +749,92 @@ def _load_governance_csv(
     return row_count
 
 
-def _load_governance_results(client: Any, config: MartClickHouseConfig, batch_size: int = 100_000) -> int:
+def _governance_parquet_object(config: MartClickHouseConfig, filename: str) -> str:
+    return f"{config.bronze.run_prefix}/governance/{filename}"
+
+
+def _minio_object_exists(minio_client: Any, bucket: str, object_name: str) -> bool:
+    from minio.error import S3Error
+
+    try:
+        minio_client.stat_object(bucket, object_name)
+        return True
+    except S3Error:
+        return False
+
+
+def _describe_s3_columns(client: Any, s3_expr: str) -> list[str]:
+    result = client.query(f"DESCRIBE TABLE {s3_expr}")
+    return [row[0] for row in result.result_rows]
+
+
+def _load_governance_parquet(
+    client: Any,
+    config: MartClickHouseConfig,
+    schema: str,
+    table: str,
+    filename: str,
+) -> int:
+    started = time.monotonic()
+    prefix = f"{config.bronze.run_prefix}/governance"
+    s3_expr = _s3_table_expr(config, prefix, pattern=filename)
+    columns = _describe_s3_columns(client, s3_expr)
+    column_defs = ", ".join(f"{_quote_ident(column)} Nullable(String)" for column in columns)
+    select_cols = ", ".join(
+        f"CAST(nullIf(toString({_quote_ident(column)}), '') AS Nullable(String)) AS {_quote_ident(column)}"
+        for column in columns
+    )
+    _command(
+        client,
+        f"CREATE TABLE {_qualified(schema, table)} ({column_defs}) ENGINE = MergeTree ORDER BY tuple()",
+    )
+    _command(client, f"INSERT INTO {_qualified(schema, table)} SELECT {select_cols} FROM {s3_expr}")
+    row_count = int(_query_scalar(client, f"SELECT count() FROM {_qualified(schema, table)}"))
+    _log(
+        f"Loaded ClickHouse {schema}.{table}: {row_count:,} rows from MinIO parquet "
+        f"in {time.monotonic() - started:.1f}s"
+    )
+    return row_count
+
+
+def _load_governance_table(
+    client: Any,
+    minio_client: Any,
+    config: MartClickHouseConfig,
+    schema: str,
+    table: str,
+    parquet_filename: str,
+    csv_path: Path,
+    required: bool,
+    batch_size: int,
+) -> int:
+    object_name = _governance_parquet_object(config, parquet_filename)
+    if _minio_object_exists(minio_client, config.bronze.bucket, object_name):
+        _log(f"Loading ClickHouse {schema}.{table} from s3://{config.bronze.bucket}/{object_name}")
+        return _load_governance_parquet(client, config, schema, table, parquet_filename)
+    if csv_path.exists():
+        _log(
+            f"MinIO parquet not found at s3://{config.bronze.bucket}/{object_name}; "
+            f"falling back to CSV {csv_path}"
+        )
+        return _load_governance_csv(client, schema, table, csv_path, batch_size=batch_size)
+    if required:
+        raise FileNotFoundError(
+            f"Governance {table} not found as MinIO parquet ({object_name}) or local CSV ({csv_path})"
+        )
+    _log(f"Governance {table} not found as MinIO parquet or local CSV, skipping: {csv_path}")
+    return 0
+
+
+def _load_governance_results(
+    client: Any,
+    minio_client: Any,
+    config: MartClickHouseConfig,
+    batch_size: int = 100_000,
+) -> int:
     if not config.governance.enabled:
         _log("Skipping ClickHouse governance results load because governance.enabled=false")
         return 0
-
-    path = config.governance.results_path
-    if not path.exists():
-        raise FileNotFoundError(f"Governance results file not found: {path}")
 
     _create_database(client, config.schemas.governance)
     for table in (
@@ -760,33 +843,39 @@ def _load_governance_results(client: Any, config: MartClickHouseConfig, batch_si
         config.governance.summary_table,
     ):
         _command(client, f"DROP TABLE IF EXISTS {_qualified(config.schemas.governance, table)}")
-    row_count = _load_governance_csv(
+    row_count = _load_governance_table(
         client,
+        minio_client,
+        config,
         config.schemas.governance,
         config.governance.results_table,
-        path,
+        "governance_results.parquet",
+        config.governance.results_path,
+        required=True,
         batch_size=batch_size,
     )
-    if config.governance.result_cnotes_path.exists():
-        row_count += _load_governance_csv(
-            client,
-            config.schemas.governance,
-            config.governance.result_cnotes_table,
-            config.governance.result_cnotes_path,
-            batch_size=batch_size,
-        )
-    else:
-        _log(f"Governance result CNOTE bridge file not found, skipping: {config.governance.result_cnotes_path}")
-    if config.governance.summary_path.exists():
-        row_count += _load_governance_csv(
-            client,
-            config.schemas.governance,
-            config.governance.summary_table,
-            config.governance.summary_path,
-            batch_size=batch_size,
-        )
-    else:
-        _log(f"Governance rule summary file not found, skipping: {config.governance.summary_path}")
+    row_count += _load_governance_table(
+        client,
+        minio_client,
+        config,
+        config.schemas.governance,
+        config.governance.result_cnotes_table,
+        "governance_result_cnotes.parquet",
+        config.governance.result_cnotes_path,
+        required=False,
+        batch_size=batch_size,
+    )
+    row_count += _load_governance_table(
+        client,
+        minio_client,
+        config,
+        config.schemas.governance,
+        config.governance.summary_table,
+        "governance_rule_summary.parquet",
+        config.governance.summary_path,
+        required=False,
+        batch_size=batch_size,
+    )
     return row_count
 
 
@@ -955,7 +1044,7 @@ def run(config_path: str = "config/mart_clickhouse.yaml") -> None:
 
         document_link_rows = _build_document_cnote_links(client, config)
         unified_rows = _load_unified_mart(client, config)
-        governance_rows = _load_governance_results(client, config)
+        governance_rows = _load_governance_results(client, minio_client, config)
         total_rows = (
             sum(loaded_tables.values())
             + sum(loaded_derived.values())
