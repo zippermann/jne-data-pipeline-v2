@@ -18,8 +18,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from random import Random
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
+import numpy as np
 import pandas as pd
 
 from extractor.bronze import MinioSettings, load_config
@@ -64,6 +65,16 @@ CNOTE_CONTEXT_COLUMNS = {
     "delivery_type",
     "shipment_scope",
 }
+CNOTE_CONTEXT_FIELDS = (
+    "cnote_origin",
+    "cnote_destination",
+    "cnote_service_code",
+    "shipment_type",
+    "origin_region",
+    "destination_region",
+)
+# Upper bound on expanded result rows held in memory per write.
+CHECK_ROW_CHUNK_SIZE = 250_000
 
 
 def _as_bool(value: Any) -> bool:
@@ -968,20 +979,20 @@ def _cnote_contexts(data: dict[str, pd.DataFrame]) -> dict[str, dict[str, str]]:
     return contexts
 
 
-def _single_cnote_context(row: pd.Series, contexts: dict[str, dict[str, str]]) -> dict[str, str]:
-    cnote_no = str(row.get("cnote_no", "") or "")
-    if not cnote_no:
-        return {}
-    return contexts.get(cnote_no, {})
+def _cnote_context_frame(contexts: dict[str, dict[str, str]] | pd.DataFrame | None) -> pd.DataFrame:
+    if isinstance(contexts, pd.DataFrame):
+        return contexts
+    frame = pd.DataFrame.from_dict(contexts or {}, orient="index")
+    return frame.reindex(columns=list(CNOTE_CONTEXT_FIELDS))
 
 
-def _check_rows_frame(
+def _document_check_rows(
     entry: dict,
     outcome: RuleOutcome,
     document_bridges: dict[str, dict[str, list[str]]] | None = None,
     cnote_universe: set[str] | None = None,
-    cnote_contexts: dict[str, dict[str, str]] | None = None,
 ) -> pd.DataFrame:
+    """Return one row per checked document, with its linked CNOTEs as a list."""
     checks = outcome.checks
     if checks is None or checks.empty:
         return pd.DataFrame()
@@ -1005,18 +1016,18 @@ def _check_rows_frame(
     else:
         rows["_linked_cnotes"] = rows["document_id"].map(lambda value: [str(value)] if str(value) in cnotes else [])
         rows["_link_method"] = "direct_cnote_value"
+    return rows
 
+
+def _expand_check_rows(entry: dict, rows: pd.DataFrame, context_frame: pd.DataFrame) -> pd.DataFrame:
+    """Expand document rows to one row per linked CNOTE and attach CNOTE context."""
     rows = rows.explode("_linked_cnotes", ignore_index=True)
     rows["cnote_no"] = _string_key_values(rows["_linked_cnotes"])
     rows["document_no"] = rows["document_id"].where(rows["document_id"].ne(rows["cnote_no"]), "")
-    contexts = cnote_contexts or {}
-    row_contexts = rows.apply(lambda row: _single_cnote_context(row, contexts), axis=1)
-    rows["cnote_origin"] = row_contexts.map(lambda context: context.get("cnote_origin", ""))
-    rows["cnote_destination"] = row_contexts.map(lambda context: context.get("cnote_destination", ""))
-    rows["cnote_service_code"] = row_contexts.map(lambda context: context.get("cnote_service_code", ""))
-    rows["shipment_type"] = row_contexts.map(lambda context: context.get("shipment_type", ""))
-    rows["origin_region"] = row_contexts.map(lambda context: context.get("origin_region", ""))
-    rows["destination_region"] = row_contexts.map(lambda context: context.get("destination_region", ""))
+    # Vectorized lookup; unknown or blank CNOTEs get empty context values.
+    context = context_frame.reindex(rows["cnote_no"].to_numpy())
+    for field in CNOTE_CONTEXT_FIELDS:
+        rows[field] = context[field].fillna("").to_numpy()
 
     rows["index_code"] = entry["index_code"]
     rows["element"] = entry.get("element", "")
@@ -1030,20 +1041,58 @@ def _check_rows_frame(
     return rows
 
 
+def _check_rows_frame(
+    entry: dict,
+    outcome: RuleOutcome,
+    document_bridges: dict[str, dict[str, list[str]]] | None = None,
+    cnote_universe: set[str] | None = None,
+    cnote_contexts: dict[str, dict[str, str]] | pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    rows = _document_check_rows(entry, outcome, document_bridges, cnote_universe)
+    if rows.empty:
+        return rows
+    return _expand_check_rows(entry, rows, _cnote_context_frame(cnote_contexts))
+
+
+def _iter_check_row_chunks(
+    entry: dict,
+    outcome: RuleOutcome,
+    document_bridges: dict[str, dict[str, list[str]]],
+    cnote_universe: set[str],
+    context_frame: pd.DataFrame,
+    chunk_rows: int = CHECK_ROW_CHUNK_SIZE,
+) -> Iterator[pd.DataFrame]:
+    """Yield expanded check rows in bounded chunks.
+
+    A single manifest or master-bag document can link to hundreds of CNOTEs, so
+    expanding a whole rule at once can exceed worker memory. Chunks are cut on
+    document boundaries by expanded row count, so output order is unchanged.
+    """
+    rows = _document_check_rows(entry, outcome, document_bridges, cnote_universe)
+    if rows.empty:
+        return
+    # explode() keeps a document with no links as one row.
+    weights = rows["_linked_cnotes"].map(len).clip(lower=1).to_numpy()
+    chunk_ids = (np.cumsum(weights) - 1) // max(int(chunk_rows), 1)
+    starts = np.flatnonzero(np.r_[True, chunk_ids[1:] != chunk_ids[:-1]])
+    ends = np.r_[starts[1:], len(rows)]
+    for start, end in zip(starts, ends):
+        yield _expand_check_rows(entry, rows.iloc[start:end], context_frame)
+
+
 def _result_cnote_rows(rows: pd.DataFrame) -> pd.DataFrame:
-    link_rows: list[dict[str, str]] = []
-    for _, row in rows.iterrows():
-        result_id = str(row["result_id"])
-        link_method = str(row["_link_method"])
-        cnote_no = str(row.get("cnote_no", "") or "").strip()
-        if not cnote_no:
-            continue
-        link_rows.append({
-            "result_id": result_id,
-            "cnote_no": cnote_no,
-            "link_method": link_method,
-        })
-    return pd.DataFrame(link_rows, columns=RESULT_CNOTE_COLUMNS)
+    if rows.empty:
+        return pd.DataFrame(columns=RESULT_CNOTE_COLUMNS)
+    cnote_no = rows["cnote_no"].fillna("").astype(str).str.strip()
+    linked = cnote_no.ne("")
+    return pd.DataFrame(
+        {
+            "result_id": rows.loc[linked, "result_id"].astype(str).to_numpy(),
+            "cnote_no": cnote_no[linked].to_numpy(),
+            "link_method": rows.loc[linked, "_link_method"].astype(str).to_numpy(),
+        },
+        columns=RESULT_CNOTE_COLUMNS,
+    )
 
 
 def _rule_summary_row(
@@ -1102,7 +1151,7 @@ def _run_entries(
     result_cnotes_parquet_path = output_dir / "governance_result_cnotes.parquet"
     bridges = _document_bridges(data, allow_python_fallback=allow_python_document_links)
     cnotes = _cnote_universe(data)
-    contexts = _cnote_contexts(data)
+    context_frame = _cnote_context_frame(_cnote_contexts(data))
     next_result_number = 1
 
     with (
@@ -1143,14 +1192,15 @@ def _run_entries(
                 outcome = _error_outcome(error_message)
 
             status_counts[status] = status_counts.get(status, 0) + 1
-            check_rows = _check_rows_frame(entry, outcome, bridges, cnotes, contexts)
-            result_rows = len(check_rows)
-            if not check_rows.empty:
+            result_rows = 0
+            for check_rows in _iter_check_row_chunks(entry, outcome, bridges, cnotes, context_frame):
+                chunk_size = len(check_rows)
                 result_ids = [
                     f"R{result_number:012d}"
-                    for result_number in range(next_result_number, next_result_number + result_rows)
+                    for result_number in range(next_result_number, next_result_number + chunk_size)
                 ]
-                next_result_number += result_rows
+                next_result_number += chunk_size
+                result_rows += chunk_size
                 check_rows.insert(0, "result_id", result_ids)
                 result_cnote_rows = _result_cnote_rows(check_rows)
                 check_rows = check_rows.drop(columns=["_linked_cnotes", "_link_method"])
@@ -1158,6 +1208,7 @@ def _run_entries(
                     row_status_counts[str(row_status)] = row_status_counts.get(str(row_status), 0) + int(count)
                 result_row_total += result_writer.write(check_rows)
                 result_cnote_writer.write(result_cnote_rows)
+                del check_rows, result_cnote_rows
             summary_rows.append(
                 _rule_summary_row(
                     entry,
