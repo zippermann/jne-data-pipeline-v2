@@ -11,17 +11,20 @@ oracle:
 
 extraction:
   anchor_table: "CMS_CNOTE"
-  anchor_date_column: "CNOTE_DATE"
+  anchor_date_column: "CNOTE_CRDATE"
   # Empty list means extract every table in the inventory.
   # For smoke tests, use e.g. ["CMS_CNOTE"] or ["cms_cnote"].
   tables: []
-  cnote_limit: 100000
+  cnote_limit:   
+  area_filter:
+    enabled: true
+    codes: ["CGK"]                     # SUBSTR 3 digit awal
   window:
     mode: "explicit"
     anchor_month: "2026-05"
     num_months: 1
-    start_date: "2026-05-01"
-    end_date: "2026-06-01"
+    start_date: "2026-10-21"
+    end_date: "2026-10-22"
 
 output:
   root: "data/bronze"

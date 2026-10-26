@@ -1,0 +1,148 @@
+# JNE AI Control Centre — prototype
+
+A working simulation of the AI Control Centre scoped for Milestone 2 of the JNE Data
+Governance production project. The point of this prototype is to prove the concept and
+de-risk the vendor's scope before they quote it — not to be the production system.
+
+## What it does
+
+Three capabilities, in this order of importance:
+
+1. **Answer questions in plain language** about the Data Governance index results and
+   the operational data behind them.
+2. **Explain why an index failed** — what the rule tests, what it found, and where in
+   the package journey it broke.
+3. **Flag what moved** — day-over-day and week-over-week change, surfaced without being
+   asked.
+
+Explicitly **out of scope for the prototype**: drafting process-improvement
+recommendations. That is Milestone 2 proper, not the simulation.
+
+## The one architectural rule
+
+**RAG is for knowledge. SQL is for numbers.**
+
+- Anything about *what a rule means* — its logic, its business meaning, which table and
+  column it touches, what the issue label signifies — comes from retrieval over `kb/`.
+- Anything about *how many, how often, which ones, what changed* — comes from a
+  ClickHouse query.
+- The model must never compute a rate, a count or a trend from retrieved text. If a
+  number is stated, a query produced it.
+
+Getting this boundary wrong is the single most likely failure mode: a fluent answer with
+an invented percentage in it.
+
+## Data
+
+ClickHouse holds both the index results and the 31 operational tables, so a failure can
+be joined back to the actual package record.
+
+### Index results
+
+One row per check per record. The columns, from the pilot's output shape:
+
+| column | meaning |
+|---|---|
+| `cnote_no` | the package |
+| `shipment_type` | Intracity / Intercity / Direct Domestic / Transit Domestic |
+| `cnote_origin`, `cnote_destination` | branch codes |
+| `origin_region`, `destination_region` | region names |
+| `cnote_service_code` | JNE service type |
+| `index_code` | the rule that ran — joins to `kb/indexes.jsonl` |
+| `element` | one of the six |
+| `logic_description` | the rule text as run |
+| `table_name`, `column_name` | what it tested |
+| `level` | `cnote` or `bag` |
+| `stage` | receival / manifest / runsheet / handover; null at cnote level |
+| `variable_1`, `variable_2` | the values compared |
+| `main_indicator` | business concept (Weight, Origin, Timestamp, …) |
+| `main_impact`, `impact_details`, `issue_description` | impact mapping |
+| `status` | `PASS` or `FAIL` |
+| `document_id`, `result_id` | keys |
+
+Confirm the production table name and whether a run date / partition column exists —
+"flag what moved" needs one, and the pilot extract does not appear to carry it.
+
+### Grain, and why it matters
+
+A single `index_code` can appear **up to 164 times for one cnote** because bag-level
+checks repeat per bag. Any count of failures is therefore a count of *records*, not of
+*packages*. State which one you mean, every time.
+
+The agreed score is: **passed rows ÷ all rows for that cnote**, cnote and bag level
+together.
+
+## Query patterns to implement as tools
+
+Give the model a small set of typed, parameterised queries rather than free-form SQL.
+Free-form SQL against 31 operational tables plus a large result table is where a
+prototype turns into an incident.
+
+- `score_for_cnote(cnote_no)` — pass/fail counts and rate, split by level and element.
+- `failing_indexes_for_cnote(cnote_no)` — every failing index with its values, ordered
+  by journey stage.
+- `fail_rate(group_by, filters, date_range)` — where `group_by` is one of element,
+  index_code, table_name, main_indicator, stage, shipment_type, origin, destination,
+  service_code.
+- `movement(group_by, period_a, period_b)` — the delta between two periods, with the
+  record counts behind it, so a rate change from a tiny base is visible as such.
+- `sample_failures(index_code, n)` — actual failing rows for a rule, to ground an
+  explanation in real values.
+- `package_record(cnote_no)` — the operational rows behind a package, for the join back.
+
+Every tool returns the row count it was computed from. An answer that cannot state its
+denominator should not be given.
+
+## Knowledge pack — `kb/`
+
+| file | what it holds |
+|---|---|
+| `00_domain.md` | the primer: journeys, elements, index code scheme, levels, scoring |
+| `01_journeys.md` | which tables each of the four journeys touches, by stage |
+| `02_tables.md` | 31 measured + 7 reference tables, with business definitions |
+| `03_columns.md` | 462 column definitions, flagged where a check exists |
+| `04_logic_glossary.md` | the 84 distinct logic statements, Indonesian and English |
+| `05_indexes.md` | all 499 rules, one block per rule — **the retrieval unit** |
+| `06_issues.md` | the issue taxonomy with check and failure counts |
+| `07_decisions_and_guardrails.md` | **read this before answering anything** |
+| `indexes.jsonl` | the same 499 rules, structured, for filtering and joins |
+
+**Chunk `05_indexes.md` on `##` headings, one chunk per index code, and do not split a
+rule across chunks.** A half-retrieved rule is worse than none — it produces an
+explanation of a check that does not exist.
+
+## Guardrails
+
+`kb/07_decisions_and_guardrails.md` is binding. The ones that will bite first:
+
+- The pilot's **Uniqueness figures are stale** — all 564 failures came from retired
+  `UNIQ1*` logic. Never present them as current.
+- **No score is good or bad.** No threshold has been agreed.
+- **Never infer business impact** for a check marked `TBD`. 444 of 499 are unmapped.
+- **Never state a monetary value.** No cost model exists.
+- **`VALD13P7` is a known open case** — flag it, do not explain it as a defect.
+- **Always cite the index code** so any claim can be traced back to the library.
+
+## Smoke tests
+
+If these three work, the prototype is worth showing:
+
+1. *"Why did cnote 21730025792826 fail?"* — should return the failing index codes with
+   their rule text and the actual compared values, ordered by journey stage, and should
+   not invent an impact for the `TBD` ones.
+2. *"Which routes have the worst weight accuracy?"* — should query rather than retrieve,
+   should say whether it is counting records or packages, and should give the
+   denominator.
+3. *"What got worse this week?"* — should compare two periods, and should not report a
+   large percentage move off a handful of records without saying so.
+
+## Known data caveats
+
+- The 100-cnote sample fired 379 of 499 indexes; the full 100,000-cnote run hits all of
+  them. Absence of a code in a small extract is not evidence of a dead rule.
+- 16 columns have no business definition, mostly in `ORA_ZONE`.
+- 177 of 462 column definitions are not yet marked validated.
+- Two consistency rules say *weight* in their text but are applied to a quantity column
+  (see `04_logic_glossary.md`). The column is authoritative.
+- There is no remediation loop: a FAIL is a snapshot of the record as scored, not an
+  open ticket.

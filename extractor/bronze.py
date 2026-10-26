@@ -392,6 +392,34 @@ def _cnote_limit(config: dict) -> int | None:
     return limit
 
 
+def _area_filter_config(config: dict) -> dict[str, Any]:
+    extraction = config.get("extraction", {}) or {}
+    return extraction.get("area_filter", {}) or {}
+
+
+def _area_filter_enabled(config: dict) -> bool:
+    area_cfg = _area_filter_config(config)
+    return _as_bool(area_cfg.get("enabled", False)) and bool(area_cfg.get("codes"))
+
+
+def _area_filter_predicate(config: dict, alias: str | None = None) -> str:
+    if not _area_filter_enabled(config):
+        return ""
+    area_cfg = _area_filter_config(config)
+    raw_codes = area_cfg.get("codes", [])
+    if isinstance(raw_codes, str):
+        raw_codes = [raw_codes]
+    codes = [str(c).strip().upper() for c in raw_codes if str(c).strip()]
+    if not codes:
+        return ""
+    prefix = f"{alias}." if alias else ""
+    if len(codes) == 1:
+        code_literal = f"'{codes[0]}'"
+        return f"(SUBSTR({prefix}CNOTE_ORIGIN, 1, 3) = {code_literal} OR SUBSTR({prefix}CNOTE_DESTINATION, 1, 3) = {code_literal})"
+    codes_in = ", ".join(f"'{c}'" for c in codes)
+    return f"(SUBSTR({prefix}CNOTE_ORIGIN, 1, 3) IN ({codes_in}) OR SUBSTR({prefix}CNOTE_DESTINATION, 1, 3) IN ({codes_in}))"
+
+
 def _scope_date_filter(alias: str, column: str, window: Window, lookback_days: int, lookahead_days: int) -> str:
     return (
         f"{alias}.{column} >= DATE '{window.start_label}' - {lookback_days} "
@@ -539,6 +567,7 @@ def materialize_scope_tables(
     date_guard_lookahead_days: int = 30,
     ctas_parallel_degree: int = 1,
     scope_workers: int = 1,
+    area_filter_predicate: str | None = None,
 ) -> dict[str, int]:
     required_scopes = _expand_required_scopes(required_scopes or _all_scope_names())
     if not required_scopes:
@@ -552,11 +581,17 @@ def materialize_scope_tables(
     counts = {}
     ctas_parallel_degree = max(int(ctas_parallel_degree), 1)
     if "CNOTE" in required_scopes:
+        where_conditions = [
+            f"{anchor_date_column} >= {start_literal}",
+            f"{anchor_date_column} < {end_literal}",
+        ]
+        if area_filter_predicate:
+            where_conditions.append(area_filter_predicate)
+        where_sql = "\n              AND ".join(where_conditions)
         cnote_query = f"""
             SELECT CNOTE_NO
             FROM {src}.{anchor_table}
-            WHERE {anchor_date_column} >= {start_literal}
-              AND {anchor_date_column} < {end_literal}
+            WHERE {where_sql}
             ORDER BY {anchor_date_column}, CNOTE_NO
             """
         if cnote_limit is not None:
@@ -1209,7 +1244,10 @@ def _build_sql(
     if spec.stage == Stage.ANCHOR:
         date_col = config["extraction"]["anchor_date_column"]
         predicates.append(f"{alias}.{date_col} >= :start_date AND {alias}.{date_col} < :end_date")
-        if _cnote_limit(config) is not None:
+        area_predicate = _area_filter_predicate(config, alias)
+        if area_predicate:
+            predicates.append(area_predicate)
+        if _cnote_limit(config) is not None or _area_filter_enabled(config):
             predicates.append(scope_predicate(scope, alias, "CNOTE", "CNOTE_NO"))
     elif spec.stage != Stage.REFERENCE:
         if not spec.scope_name or not spec.scope_column:
@@ -1548,7 +1586,7 @@ def run(config_path: str, run_id: str, keep_scope: bool = False, extract_date: s
     started = time.monotonic()
 
     logger.info(
-        "Bronze run %s code_version=%s window=[%s, %s) workers=%s scope_workers=%s ctas_parallel_degree=%s cnote_limit=%s",
+        "Bronze run %s code_version=%s window=[%s, %s) workers=%s scope_workers=%s ctas_parallel_degree=%s cnote_limit=%s area_filter=%s",
         safe_run_id,
         CODE_VERSION,
         window.start_label,
@@ -1557,12 +1595,13 @@ def run(config_path: str, run_id: str, keep_scope: bool = False, extract_date: s
         scope_workers,
         ctas_parallel_degree,
         f"{cnote_limit:,}" if cnote_limit is not None else "none",
+        _area_filter_config(config).get("codes") if _area_filter_enabled(config) else "none",
     )
     logger.info("Selected tables: %s", ", ".join(spec.table for spec in specs))
 
     with connect(oracle_settings) as conn:
         required_scopes = required_scopes_for_specs(specs)
-        if cnote_limit is not None:
+        if cnote_limit is not None or _area_filter_enabled(config):
             required_scopes.add("CNOTE")
         counts = materialize_scope_tables(
             conn,
@@ -1577,6 +1616,7 @@ def run(config_path: str, run_id: str, keep_scope: bool = False, extract_date: s
             date_guard_lookahead_days,
             ctas_parallel_degree,
             scope_workers,
+            area_filter_predicate=_area_filter_predicate(config),
         )
         manifest.set_scope_counts(counts)
         logger.info("Scope counts: %s", counts)
